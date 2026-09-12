@@ -234,49 +234,124 @@
 
 
   /* ---------- hint solver ----------
-     Breadth-first, so the route it shows is the shortest one available.
-     Falls back to the depth-first search if the board is unusually large. */
+     A* over pour states, so the route it shows is the shortest one available.
 
-  function shortestSolution(tubes, nodeCap){
-    nodeCap = nodeCap || 400000;
-    var start = tubes.map(function(t){ return t.slice(); });
-    var q = [{ s:start, path:[] }], head = 0, seen = {}, nodes = 0;
-    seen[stateKey(start)] = 1;
-    while(head < q.length){
-      if(++nodes > nodeCap) return { path:null, capped:true };
-      var cur = q[head++];
-      if(solved(cur.s)) return { path:cur.path };
-      for(var a = 0; a < cur.s.length; a++){
-        for(var b = 0; b < cur.s.length; b++){
-          if(!canPour(cur.s, a, b)) continue;
-          var n = cur.s.map(function(t){ return t.slice(); });
-          pour(n, a, b);
-          var k = stateKey(n);
-          if(!seen[k]){ seen[k] = 1; q.push({ s:n, path:cur.path.concat([[a,b]]) }); }
-        }
-      }
-    }
-    return { path:null };
+     Heuristic: a run is a maximal block of one colour. A solved board has
+     exactly one run per colour, and a single pour can merge at most one run
+     into another, so (total runs - colours) never overstates the moves left.
+     That makes it admissible and consistent, so the first solution A* reaches
+     is optimal and closed states never need reopening.
+
+     The search runs in short slices off the main thread's timer rather than
+     in one blocking call: a fresh Hard board is the worst case at roughly
+     30k states, which is seconds of work on a phone and would otherwise
+     freeze the tab mid-tap. */
+
+  function runCount(t){
+    if(!t.length) return 0;
+    var n = 1;
+    for(var i = 1; i < t.length; i++) if(t[i] !== t[i-1]) n++;
+    return n;
   }
-  function anySolution(tubes){
-    var start = tubes.map(function(t){ return t.slice(); });
-    var st = [{ s:start, path:[] }], seen = {}, nodes = 0;
-    seen[stateKey(start)] = 1;
-    while(st.length){
-      if(++nodes > 400000) return null;
-      var cur = st.pop();
-      if(solved(cur.s)) return cur.path;
-      for(var a = 0; a < cur.s.length; a++){
-        for(var b = 0; b < cur.s.length; b++){
-          if(!canPour(cur.s, a, b)) continue;
-          var n = cur.s.map(function(t){ return t.slice(); });
-          pour(n, a, b);
-          var k = stateKey(n);
-          if(!seen[k]){ seen[k] = 1; st.push({ s:n, path:cur.path.concat([[a,b]]) }); }
-        }
+  function colourCount(tubes){
+    var seen = {}, n = 0;
+    for(var i = 0; i < tubes.length; i++)
+      for(var j = 0; j < tubes[i].length; j++)
+        if(!seen[tubes[i][j]]){ seen[tubes[i][j]] = 1; n++; }
+    return n;
+  }
+  function heuristic(tubes, colours){
+    var r = 0;
+    for(var i = 0; i < tubes.length; i++) r += runCount(tubes[i]);
+    return r - colours;
+  }
+
+  function Heap(){ this.a = []; }
+  Heap.prototype.push = function(node){
+    var a = this.a, i = a.length, t;
+    a.push(node);
+    while(i > 0){
+      var p = (i-1) >> 1;
+      if(a[p].f <= a[i].f) break;
+      t = a[p]; a[p] = a[i]; a[i] = t;
+      i = p;
+    }
+  };
+  Heap.prototype.pop = function(){
+    var a = this.a, top = a[0], last = a.pop(), t;
+    if(a.length){
+      a[0] = last;
+      var i = 0;
+      for(;;){
+        var l = 2*i+1, r = l+1, m = i;
+        if(l < a.length && a[l].f < a[m].f) m = l;
+        if(r < a.length && a[r].f < a[m].f) m = r;
+        if(m === i) break;
+        t = a[m]; a[m] = a[i]; a[i] = t;
+        i = m;
       }
     }
-    return null;
+    return top;
+  };
+
+  var SOLVER_CAP = 300000;
+
+  function makeSolver(tubes){
+    var colours = colourCount(tubes);
+    var start = tubes.map(function(t){ return t.slice(); });
+    var open = new Heap(), best = {}, nodes = 0;
+    best[stateKey(start)] = 0;
+    open.push({ s:start, path:[], g:0, f:heuristic(start, colours) });
+
+    // Expands states until the time budget runs out, then hands control back.
+    return function runSlice(budgetMs){
+      var until = Date.now() + budgetMs;
+      do{
+        // Expanding one state on a big board is not cheap, so check the clock
+        // often enough that a slice can't run long past its budget.
+        for(var guard = 0; guard < 24; guard++){
+          if(!open.a.length) return { done:true, path:null };
+          if(++nodes > SOLVER_CAP) return { done:true, path:null, capped:true };
+          var cur = open.pop();
+          if(solved(cur.s)) return { done:true, path:cur.path };
+          if(cur.g > best[stateKey(cur.s)]) continue;
+          for(var a = 0; a < cur.s.length; a++){
+            for(var b = 0; b < cur.s.length; b++){
+              if(!canPour(cur.s, a, b)) continue;
+              var n = cur.s.map(function(t){ return t.slice(); });
+              pour(n, a, b);
+              var k = stateKey(n), g = cur.g + 1, prev = best[k];
+              if(prev !== undefined && prev <= g) continue;
+              best[k] = g;
+              open.push({ s:n, path:cur.path.concat([[a,b]]), g:g, f:g + heuristic(n, colours) });
+            }
+          }
+        }
+      }while(Date.now() < until);
+      return { done:false };
+    };
+  }
+
+  var searchTimer = null;
+
+  function solveAsync(tubes, done){
+    stopSearch();
+    var runSlice = makeSolver(tubes);
+    (function tick(){
+      var r = runSlice(12);
+      if(r.done){ searchTimer = null; done(r); }
+      else searchTimer = setTimeout(tick, 0);
+    })();
+  }
+  function stopSearch(){
+    if(searchTimer){ clearTimeout(searchTimer); searchTimer = null; }
+  }
+  // Any move invalidates a search in flight, so drop it and free the button.
+  function cancelSearch(){
+    if(!searchTimer) return;
+    stopSearch();
+    el("hint").textContent = "Hint";
+    el("hint").disabled = false;
   }
 
   /* ---------- state ---------- */
@@ -337,6 +412,7 @@
   /* ---------- render ---------- */
 
   function clearHint(){
+    cancelSearch();
     hintPath = null;
     el("hintbar").hidden = true;
   }
@@ -420,9 +496,10 @@
       save();
       render();
     }else{
-      shake(i);
+      // render() rebuilds the board, so shake the new node, not the old one
       selected = tubes[i].length ? i : -1;
       render();
+      shake(i);
     }
   }
 
@@ -470,31 +547,29 @@
   el("hint").addEventListener("click", function(){
     if(solved(tubes)) return;
     if(hintPath && hintPath.length) return;   // already showing one
+    if(searchTimer){ cancelSearch(); return; }
 
     var btn = el("hint");
     btn.textContent = "Thinking\u2026";
-    btn.disabled = true;
+    btn.disabled = false;                     // tap again to give up on it
 
-    // let the label paint before the search blocks the thread
-    setTimeout(function(){
-      var r = shortestSolution(tubes);
-      var path = r.path;
-      if(!path && r.capped) path = anySolution(tubes);
-
+    solveAsync(tubes, function(r){
       btn.textContent = "Hint";
       btn.disabled = false;
 
-      if(!path){
-        el("hint-text").textContent = "No way through from here \u2014 undo or restart";
+      if(!r.path){
+        el("hint-text").textContent = r.capped
+          ? "Couldn't work this one out \u2014 undo or restart"
+          : "No way through from here \u2014 undo or restart";
         el("hint-play").hidden = true;
         el("hintbar").hidden = false;
         return;
       }
       el("hint-play").hidden = false;
-      hintPath = path;
+      hintPath = r.path;
       showHintBar();
       render();
-    }, 20);
+    });
   });
 
   el("hint-hide").addEventListener("click", function(){
