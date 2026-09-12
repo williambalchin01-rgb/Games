@@ -1,4 +1,4 @@
-var CACHE = "arcade-v5";
+var CACHE = "arcade-v6";
 var FILES = ["./","./index.html","./decant.html","./blocks.html","./app.css",
              "./manifest.json","./apple-touch-icon.png","./icon-192.png","./icon-512.png"];
 

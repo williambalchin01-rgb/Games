@@ -17,22 +17,26 @@
 
   /* Nested grids: a 3x3 of boxes, each a 3x3 of cells. The wider gap between
      boxes is what makes the box-clear rule readable at a glance. */
+  /* Every gap on the board is the same size, which is what lets the dragged
+     piece snap into exact alignment with the squares it will land on. The
+     3x3 boxes are read from the alternating shading instead of a gutter. */
   .grid{
-    display:grid;grid-template-columns:repeat(3,1fr);gap:11px;
+    display:grid;grid-template-columns:repeat(3,1fr);gap:3px;
     width:100%;aspect-ratio:1;touch-action:none;
   }
-  .box{
-    display:grid;grid-template-columns:repeat(3,1fr);gap:3px;
-    background:rgba(255,255,255,.022);border-radius:7px;
-  }
+  .box{display:grid;grid-template-columns:repeat(3,1fr);gap:3px}
+  /* Tint the squares themselves rather than the space behind them: a
+     background on the box would swallow the gaps and turn it into one slab.
+     Carried as a variable so [data-fill] still wins on specificity. */
+  .box:nth-child(odd){--cellbg:#2B3846}
   .cell{
-    aspect-ratio:1;border-radius:4px;background:var(--surface);
+    aspect-ratio:1;border-radius:4px;background:var(--cellbg, var(--surface));
     transition:background-color .12s ease, transform .12s ease;
   }
   .cell[data-fill]{background:var(--c)}
-  .cell[data-preview="ok"]{background:var(--c);opacity:.45}
-  .cell[data-preview="bad"]{background:#E0574A;opacity:.3}
-  .cell[data-willclear]{box-shadow:inset 0 0 0 2px var(--ink)}
+  .cell[data-preview="ok"]{background:var(--c);opacity:.7;box-shadow:inset 0 0 0 2px var(--ink)}
+  .cell[data-preview="bad"]{background:#E0574A;opacity:.45}
+  .cell[data-willclear]{box-shadow:inset 0 0 0 2px var(--sel);background:var(--sel);opacity:.85}
   .cell.pop{animation:pop .26s ease}
   @keyframes pop{
     0%{transform:scale(1)}
@@ -56,7 +60,7 @@
   /* the piece that follows your finger while dragging */
   .ghost{
     position:fixed;left:0;top:0;pointer-events:none;z-index:50;
-    display:grid;gap:3px;opacity:.9;filter:drop-shadow(0 6px 14px rgba(0,0,0,.5));
+    display:grid;gap:3px;opacity:.55;filter:drop-shadow(0 6px 14px rgba(0,0,0,.5));
   }
   .ghost div{border-radius:4px;background:var(--c)}
   .ghost div[data-off]{background:transparent}
@@ -66,6 +70,10 @@
   .statline .score{margin:0}
   .best{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-variant-numeric:tabular-nums}
   .combo{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--sel)}
+  .howto{
+    margin:0;text-align:center;font-size:12.5px;color:var(--muted);
+    border:1px dashed var(--line);border-radius:var(--radius);padding:10px 12px;
+  }
 </style>
 </head>
 <body>
@@ -86,6 +94,7 @@
 <div class="wrap">
   <div class="grid" id="grid"></div>
   <div class="tray" id="tray"></div>
+  <p class="howto" id="howto" hidden>Drag a shape onto the board &mdash; or tap it, then tap a square.</p>
 </div>
 
 <div class="win" id="over" hidden>
@@ -260,6 +269,7 @@
 
   var storageOK = true, memory = null;
   var grid, tray, score, best = 0, combo = 0, held = null, dragging = false;
+  var placedEver = false;
 
   function load(){
     try{
@@ -268,7 +278,7 @@
     }catch(e){ storageOK = false; return memory; }
   }
   function save(){
-    var s = { grid:grid, tray:tray, score:score, best:best, combo:combo };
+    var s = { grid:grid, tray:tray, score:score, best:best, combo:combo, placedEver:placedEver };
     memory = s;
     try{ localStorage.setItem(KEY, JSON.stringify(s)); }
     catch(e){ storageOK = false; }
@@ -302,6 +312,7 @@
       score = s.score || 0;
       best = s.best || 0;
       combo = s.combo || 0;
+      placedEver = !!s.placedEver;
       if(!tray.some(function(p){ return p; })) tray = dealTray();
       return;
     }
@@ -388,6 +399,7 @@
     cEl.hidden = combo < 2;
     cEl.textContent = combo + "x combo";
     document.getElementById("note").hidden = storageOK;
+    document.getElementById("howto").hidden = placedEver;
 
     var dead = isGameOver();
     document.getElementById("over").hidden = !dead;
@@ -411,6 +423,7 @@
       grid[(r+p[0])*N + (c+p[1])] = piece.colour;
     });
     score += piece.cells.length;
+    placedEver = true;
     tray[i] = null;
 
     var units = fullUnits(grid);
@@ -491,15 +504,28 @@
 
   function makeGhost(piece){
     removeGhost();
-    ghost = pieceEl(piece, 26, "ghost");
+    // measured, not guessed: a piece drawn at any other scale would not match
+    // the squares it is about to fill
+    var probe = cells[0].getBoundingClientRect();
+    ghost = pieceEl(piece, Math.max(10, Math.round(probe.width)), "ghost");
     document.body.appendChild(ghost);
   }
   function removeGhost(){
     if(ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost);
     ghost = null;
   }
-  function moveGhost(x, y){
+  // Over the board the piece locks onto the squares it would fill, so what you
+  // see is what you get. Off the board it just follows the finger.
+  function moveGhost(x, y, anchor){
     if(!ghost) return;
+    if(anchor && anchor[0] >= 0 && anchor[1] >= 0 && anchor[0] < N && anchor[1] < N){
+      var cell = cells[anchor[0]*N + anchor[1]];
+      if(cell){
+        var r = cell.getBoundingClientRect();
+        ghost.style.transform = "translate(" + r.left + "px," + r.top + "px)";
+        return;
+      }
+    }
     var w = ghost.offsetWidth, h = ghost.offsetHeight;
     ghost.style.transform = "translate(" + (x - w/2) + "px," + (y - LIFT - h/2) + "px)";
   }
@@ -543,14 +569,15 @@
       dragging = true;
       makeGhost(held.piece);
     }
-    moveGhost(e.clientX, e.clientY);
     var hit = cellFromPoint(e.clientX, e.clientY - LIFT);
+    var anchor = null;
     if(hit){
-      var a = anchorFrom(hit[0], hit[1], held.piece);
-      showPreview(held.piece, a[0], a[1]);
+      anchor = anchorFrom(hit[0], hit[1], held.piece);
+      showPreview(held.piece, anchor[0], anchor[1]);
     }else{
       clearPreview();
     }
+    moveGhost(e.clientX, e.clientY, anchor);
     e.preventDefault();
   }, { passive:false });
 
