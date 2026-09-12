@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#151C24">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Arcade">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<link rel="icon" href="./icon-192.png">
+<title>Decant</title>
+<link rel="stylesheet" href="./app.css">
+<style>
+  .board{
+    flex:1;display:flex;flex-wrap:wrap;align-content:center;justify-content:center;
+    gap:18px 10px;padding:24px 0;
+  }
+  .tube{
+    position:relative;width:46px;padding:0;
+    display:flex;flex-direction:column-reverse;
+    height:124px;border:2px solid var(--line);
+    border-top:none;border-radius:0 0 22px 22px;
+    background:rgba(255,255,255,.02);
+    transition:transform .12s ease, border-color .12s ease;
+  }
+  .tube[data-selected="true"]{border-color:var(--sel);transform:translateY(-10px)}
+  .tube[data-complete="true"]{border-color:var(--accent)}
+  .seg{width:100%;height:25%;transition:height .12s ease}
+  .seg:first-child{border-radius:0 0 19px 19px}
+  .tube.nope{animation:nope .3s ease}
+  @keyframes nope{
+    0%,100%{transform:translateX(0)}
+    25%{transform:translateX(-4px)}
+    75%{transform:translateX(4px)}
+  }
+
+  .tube[data-hint="from"]{border-color:var(--sel);box-shadow:0 0 0 2px rgba(224,164,88,.25)}
+  .tube[data-hint="to"]{border-color:var(--accent);box-shadow:0 0 0 2px rgba(79,168,139,.25)}
+  .hintbar{
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    padding:11px 12px;margin-bottom:8px;font-size:13px;
+  }
+  .hintbar .txt{color:var(--muted);font-variant-numeric:tabular-nums}
+  .hint-btns{display:flex;gap:6px;flex:none}
+  .hintbar button{
+    font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+    border:1px solid var(--line);border-radius:20px;padding:6px 12px;flex:none;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <a class="back" href="./index.html">&larr; Arcade</a>
+    <div class="eyebrow">Decant</div>
+    <div class="score"><span id="moves-n">0</span><span>moves</span></div>
+  </div>
+  <button class="chip" id="new-game">New</button>
+</header>
+
+<div class="chiprow" id="levels"></div>
+
+<div class="board" id="board"></div>
+
+<div class="win" id="win" hidden>
+  <h2>Solved</h2>
+  <p id="win-text"></p>
+</div>
+
+<div class="hintbar" id="hintbar" hidden>
+  <span class="txt" id="hint-text"></span>
+  <span class="hint-btns">
+    <button id="hint-play">Play it</button>
+    <button id="hint-hide">Hide</button>
+  </span>
+</div>
+
+<div class="controls">
+  <button class="ctrl" id="undo" disabled>Undo</button>
+  <button class="ctrl" id="hint">Hint</button>
+  <button class="ctrl" id="restart">Restart</button>
+</div>
+
+<p class="note" id="note" hidden>Storage is blocked here, so your game won't be saved between sessions.</p>
+
+<script>
+(function(){
+  "use strict";
+
+  var CAP = 4;
+  var KEY = "decant.v1";
+
+  var COLOURS = [
+    "#E0574A","#E8894A","#E8CF5C","#8FCB52","#3F9E63","#4FA88B",
+    "#4FB6C4","#4A86D1","#7B6FD1","#C86FC0","#9C6B4A"
+  ];
+
+  var LEVELS = [
+    { id:"easy",   label:"Easy",   colours:5,  empties:2 },
+    { id:"medium", label:"Medium", colours:8,  empties:2 },
+    { id:"hard",   label:"Hard",   colours:11, empties:2 },
+    { id:"tricky", label:"Tricky", colours:8,  empties:1 }
+  ];
+
+  /* ---------- rules ---------- */
+
+  function topRun(t){
+    if(!t.length) return 0;
+    var c = t[t.length-1], n = 1;
+    for(var i = t.length-2; i >= 0 && t[i] === c; i--) n++;
+    return n;
+  }
+  function canPour(tubes, a, b){
+    if(a === b) return false;
+    var A = tubes[a], B = tubes[b];
+    if(!A.length) return false;
+    if(B.length >= CAP) return false;
+    if(B.length && B[B.length-1] !== A[A.length-1]) return false;
+    if(!B.length && topRun(A) === A.length) return false;
+    return true;
+  }
+  function pour(tubes, a, b){
+    var A = tubes[a], B = tubes[b];
+    var n = Math.min(topRun(A), CAP - B.length);
+    for(var i = 0; i < n; i++) B.push(A.pop());
+    return n;
+  }
+  function isComplete(t){
+    return t.length === CAP && t.every(function(x){ return x === t[0]; });
+  }
+  function solved(tubes){
+    return tubes.every(function(t){ return t.length === 0 || isComplete(t); });
+  }
+  function stateKey(tubes){
+    return tubes.map(function(t){ return t.join(","); }).sort().join("|");
+  }
+
+  /* ---------- generation ----------
+     Random deals are checked with a depth-first search before being served,
+     so every puzzle is guaranteed solvable. With one spare tube most random
+     deals are not, which is what this is for. */
+
+  function solvable(tubes, cap){
+    cap = cap || 200000;
+    var start = tubes.map(function(t){ return t.slice(); });
+    var stack = [start], seen = {}, nodes = 0;
+    seen[stateKey(start)] = 1;
+    while(stack.length){
+      if(++nodes > cap) return false;
+      var s = stack.pop();
+      if(solved(s)) return true;
+      for(var a = 0; a < s.length; a++){
+        for(var b = 0; b < s.length; b++){
+          if(!canPour(s, a, b)) continue;
+          var n = s.map(function(t){ return t.slice(); });
+          pour(n, a, b);
+          var k = stateKey(n);
+          if(!seen[k]){ seen[k] = 1; stack.push(n); }
+        }
+      }
+    }
+    return false;
+  }
+  function deal(colours, empties){
+    var pool = [];
+    for(var c = 0; c < colours; c++) for(var i = 0; i < CAP; i++) pool.push(c);
+    for(var i = pool.length - 1; i > 0; i--){
+      var j = Math.floor(Math.random() * (i+1));
+      var t = pool[i]; pool[i] = pool[j]; pool[j] = t;
+    }
+    var tubes = [];
+    for(var c2 = 0; c2 < colours; c2++) tubes.push(pool.slice(c2*CAP, c2*CAP+CAP));
+    for(var e = 0; e < empties; e++) tubes.push([]);
+    return tubes;
+  }
+  function generate(level){
+    for(var attempt = 0; attempt < 400; attempt++){
+      var t = deal(level.colours, level.empties);
+      if(solved(t)) continue;
+      if(solvable(t)) return t;
+    }
+    return deal(level.colours, level.empties);
+  }
+
+
+  /* ---------- hint solver ----------
+     A* over pour states, so the route it shows is the shortest one available.
+
+     Heuristic: a run is a maximal block of one colour. A solved board has
+     exactly one run per colour, and a single pour can merge at most one run
+     into another, so (total runs - colours) never overstates the moves left.
+     That makes it admissible and consistent, so the first solution A* reaches
+     is optimal and closed states never need reopening.
+
+     The search runs in short slices off the main thread's timer rather than
+     in one blocking call: a fresh Hard board is the worst case at roughly
+     30k states, which is seconds of work on a phone and would otherwise
+     freeze the tab mid-tap. */
+
+  function runCount(t){
+    if(!t.length) return 0;
+    var n = 1;
+    for(var i = 1; i < t.length; i++) if(t[i] !== t[i-1]) n++;
+    return n;
+  }
+  function colourCount(tubes){
+    var seen = {}, n = 0;
+    for(var i = 0; i < tubes.length; i++)
+      for(var j = 0; j < tubes[i].length; j++)
+        if(!seen[tubes[i][j]]){ seen[tubes[i][j]] = 1; n++; }
+    return n;
+  }
+  function heuristic(tubes, colours){
+    var r = 0;
+    for(var i = 0; i < tubes.length; i++) r += runCount(tubes[i]);
+    return r - colours;
+  }
+
+  function Heap(){ this.a = []; }
+  Heap.prototype.push = function(node){
+    var a = this.a, i = a.length, t;
+    a.push(node);
+    while(i > 0){
+      var p = (i-1) >> 1;
+      if(a[p].f <= a[i].f) break;
+      t = a[p]; a[p] = a[i]; a[i] = t;
+      i = p;
+    }
+  };
+  Heap.prototype.pop = function(){
+    var a = this.a, top = a[0], last = a.pop(), t;
+    if(a.length){
+      a[0] = last;
+      var i = 0;
+      for(;;){
+        var l = 2*i+1, r = l+1, m = i;
+        if(l < a.length && a[l].f < a[m].f) m = l;
+        if(r < a.length && a[r].f < a[m].f) m = r;
+        if(m === i) break;
+        t = a[m]; a[m] = a[i]; a[i] = t;
+        i = m;
+      }
+    }
+    return top;
+  };
+
+  var SOLVER_CAP = 300000;
+
+  function makeSolver(tubes){
+    var colours = colourCount(tubes);
+    var start = tubes.map(function(t){ return t.slice(); });
+    var open = new Heap(), best = {}, nodes = 0;
+    best[stateKey(start)] = 0;
+    open.push({ s:start, path:[], g:0, f:heuristic(start, colours) });
+
+    // Expands states until the time budget runs out, then hands control back.
+    return function runSlice(budgetMs){
+      var until = Date.now() + budgetMs;
+      do{
+        // Expanding one state on a big board is not cheap, so check the clock
+        // often enough that a slice can't run long past its budget.
+        for(var guard = 0; guard < 24; guard++){
+          if(!open.a.length) return { done:true, path:null };
+          if(++nodes > SOLVER_CAP) return { done:true, path:null, capped:true };
+          var cur = open.pop();
+          if(solved(cur.s)) return { done:true, path:cur.path };
+          if(cur.g > best[stateKey(cur.s)]) continue;
+          for(var a = 0; a < cur.s.length; a++){
+            for(var b = 0; b < cur.s.length; b++){
+              if(!canPour(cur.s, a, b)) continue;
+              var n = cur.s.map(function(t){ return t.slice(); });
+              pour(n, a, b);
+              var k = stateKey(n), g = cur.g + 1, prev = best[k];
+              if(prev !== undefined && prev <= g) continue;
+              best[k] = g;
+              open.push({ s:n, path:cur.path.concat([[a,b]]), g:g, f:g + heuristic(n, colours) });
+            }
+          }
+        }
+      }while(Date.now() < until);
+      return { done:false };
+    };
+  }
+
+  var searchTimer = null;
+
+  function solveAsync(tubes, done){
+    stopSearch();
+    var runSlice = makeSolver(tubes);
+    (function tick(){
+      var r = runSlice(12);
+      if(r.done){ searchTimer = null; done(r); }
+      else searchTimer = setTimeout(tick, 0);
+    })();
+  }
+  function stopSearch(){
+    if(searchTimer){ clearTimeout(searchTimer); searchTimer = null; }
+  }
+  // Any move invalidates a search in flight, so drop it and free the button.
+  function cancelSearch(){
+    if(!searchTimer) return;
+    stopSearch();
+    el("hint").textContent = "Hint";
+    el("hint").disabled = false;
+  }
+
+  /* ---------- state ---------- */
+
+  var storageOK = true, memory = null;
+  function load(){
+    try{
+      var raw = localStorage.getItem(KEY);
+      return raw ? JSON.parse(raw) : null;
+    }catch(e){ storageOK = false; return memory; }
+  }
+  function save(){
+    var s = { level: level.id, start: start, tubes: tubes, history: history };
+    memory = s;
+    try{ localStorage.setItem(KEY, JSON.stringify(s)); }
+    catch(e){ storageOK = false; }
+  }
+
+  var level = LEVELS[0], start = null, tubes = [], history = [], selected = -1;
+  var hintPath = null, playing = null;
+
+  var saved = load();
+  if(saved && saved.tubes){
+    var found = LEVELS.filter(function(l){ return l.id === saved.level; })[0];
+    level   = found || LEVELS[0];
+    start   = saved.start;
+    tubes   = saved.tubes;
+    history = saved.history || [];
+  }else{
+    start = generate(level);
+    tubes = start.map(function(t){ return t.slice(); });
+  }
+
+  function el(id){ return document.getElementById(id); }
+
+  /* ---------- level chips ---------- */
+
+  var chiprow = el("levels");
+  LEVELS.forEach(function(l){
+    var b = document.createElement("button");
+    b.className = "chip";
+    b.textContent = l.label;
+    b.setAttribute("aria-pressed", l.id === level.id);
+    b.addEventListener("click", function(){
+      if(l.id === level.id) return;
+      level = l;
+      newGame();
+    });
+    chiprow.appendChild(b);
+  });
+  function syncChips(){
+    var kids = chiprow.children;
+    for(var i = 0; i < kids.length; i++){
+      kids[i].setAttribute("aria-pressed", LEVELS[i].id === level.id);
+    }
+  }
+
+  /* ---------- render ---------- */
+
+  function clearHint(){
+    cancelSearch();
+    hintPath = null;
+    el("hintbar").hidden = true;
+  }
+  function stopPlaying(){
+    if(playing){ clearTimeout(playing); playing = null; }
+    el("hint-play").textContent = "Play it";
+  }
+
+  function render(){
+    var board = el("board");
+    board.textContent = "";
+    syncChips();
+
+    tubes.forEach(function(t, i){
+      var b = document.createElement("button");
+      b.className = "tube";
+      if(i === selected) b.dataset.selected = "true";
+      if(isComplete(t)) b.dataset.complete = "true";
+      b.setAttribute("aria-label",
+        "Tube " + (i+1) + ", " + (t.length ? t.length + " of " + CAP + " full" : "empty"));
+
+      t.forEach(function(c){
+        var s = document.createElement("span");
+        s.className = "seg";
+        s.style.background = COLOURS[c % COLOURS.length];
+        b.appendChild(s);
+      });
+
+      if(hintPath && hintPath.length){
+        if(hintPath[0][0] === i) b.dataset.hint = "from";
+        if(hintPath[0][1] === i) b.dataset.hint = "to";
+      }
+
+      b.addEventListener("click", function(){ tap(i); });
+      board.appendChild(b);
+    });
+
+    el("moves-n").textContent = history.length;
+    el("undo").disabled = history.length === 0;
+
+    var done = solved(tubes);
+    el("win").hidden = !done;
+    if(done){
+      el("win-text").textContent =
+        level.label + " solved in " + history.length +
+        (history.length === 1 ? " move" : " moves");
+    }
+    el("note").hidden = storageOK;
+  }
+
+  function shake(i){
+    var node = el("board").children[i];
+    if(!node) return;
+    node.classList.remove("nope");
+    void node.offsetWidth;
+    node.classList.add("nope");
+  }
+
+  function tap(i){
+    if(solved(tubes)) return;
+    if(selected === -1){
+      if(tubes[i].length){ selected = i; render(); }
+      return;
+    }
+    if(selected === i){ selected = -1; render(); return; }
+
+    if(canPour(tubes, selected, i)){
+      var from = selected;
+      var n = pour(tubes, from, i);
+      history.push({ from: from, to: i, n: n });
+      selected = -1;
+      // a move that follows the hint just advances it; anything else voids it
+      if(hintPath && hintPath.length && hintPath[0][0] === from && hintPath[0][1] === i){
+        hintPath = hintPath.slice(1);
+        if(hintPath.length) showHintBar();
+        else clearHint();
+      }else{
+        stopPlaying();
+        clearHint();
+      }
+      save();
+      render();
+    }else{
+      // render() rebuilds the board, so shake the new node, not the old one
+      selected = tubes[i].length ? i : -1;
+      render();
+      shake(i);
+    }
+  }
+
+  function undo(){
+    stopPlaying(); clearHint();
+    var m = history.pop();
+    if(!m) return;
+    for(var i = 0; i < m.n; i++) tubes[m.from].push(tubes[m.to].pop());
+    selected = -1;
+    save();
+    render();
+  }
+  function restart(){
+    stopPlaying(); clearHint();
+    tubes = start.map(function(t){ return t.slice(); });
+    history = [];
+    selected = -1;
+    save();
+    render();
+  }
+  function newGame(){
+    stopPlaying(); clearHint();
+    start = generate(level);
+    tubes = start.map(function(t){ return t.slice(); });
+    history = [];
+    selected = -1;
+    save();
+    render();
+  }
+
+  el("undo").addEventListener("click", undo);
+  el("restart").addEventListener("click", restart);
+  el("new-game").addEventListener("click", newGame);
+
+  /* ---------- hint controls ---------- */
+
+  function showHintBar(){
+    var m = hintPath[0];
+    el("hint-text").textContent =
+      "Tube " + (m[0]+1) + " \u2192 tube " + (m[1]+1) +
+      " \u00B7 " + hintPath.length + (hintPath.length === 1 ? " move left" : " moves left");
+    el("hintbar").hidden = false;
+  }
+
+  el("hint").addEventListener("click", function(){
+    if(solved(tubes)) return;
+    if(hintPath && hintPath.length) return;   // already showing one
+    if(searchTimer){ cancelSearch(); return; }
+
+    var btn = el("hint");
+    btn.textContent = "Thinking\u2026";
+    btn.disabled = false;                     // tap again to give up on it
+
+    solveAsync(tubes, function(r){
+      btn.textContent = "Hint";
+      btn.disabled = false;
+
+      if(!r.path){
+        el("hint-text").textContent = r.capped
+          ? "Couldn't work this one out \u2014 undo or restart"
+          : "No way through from here \u2014 undo or restart";
+        el("hint-play").hidden = true;
+        el("hintbar").hidden = false;
+        return;
+      }
+      el("hint-play").hidden = false;
+      hintPath = r.path;
+      showHintBar();
+      render();
+    });
+  });
+
+  el("hint-hide").addEventListener("click", function(){
+    stopPlaying();
+    clearHint();
+    render();
+  });
+
+  el("hint-play").addEventListener("click", function(){
+    if(!hintPath || !hintPath.length) return;
+    if(playing){ stopPlaying(); return; }
+
+    el("hint-play").textContent = "Stop";
+    (function step(){
+      if(!hintPath || !hintPath.length){ stopPlaying(); clearHint(); render(); return; }
+      var m = hintPath[0];
+      var n = pour(tubes, m[0], m[1]);
+      history.push({ from:m[0], to:m[1], n:n });
+      hintPath = hintPath.slice(1);
+      if(hintPath.length) showHintBar();
+      save();
+      render();
+      if(hintPath.length) playing = setTimeout(step, 420);
+      else { stopPlaying(); clearHint(); render(); }
+    })();
+  });
+
+  render();
+
+  if("serviceWorker" in navigator){
+    window.addEventListener("load", function(){
+      navigator.serviceWorker.register("./sw.js").catch(function(){});
+    });
+  }
+  if(navigator.storage && navigator.storage.persist){
+    navigator.storage.persist().catch(function(){});
+  }
+})();
+</script>
+</body>
+</html>

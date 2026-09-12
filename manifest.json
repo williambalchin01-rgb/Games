@@ -1,6 +1,6 @@
 {
-  "name": "Decant",
-  "short_name": "Decant",
+  "name": "Arcade",
+  "short_name": "Arcade",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

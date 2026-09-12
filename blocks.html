@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#151C24">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Arcade">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<link rel="icon" href="./icon-192.png">
+<title>Blocks</title>
+<link rel="stylesheet" href="./app.css">
+<style>
+  .wrap{flex:1;display:flex;flex-direction:column;justify-content:center;gap:16px;padding:10px 0}
+
+  /* Nested grids: a 3x3 of boxes, each a 3x3 of cells. The wider gap between
+     boxes is what makes the box-clear rule readable at a glance. */
+  .grid{
+    display:grid;grid-template-columns:repeat(3,1fr);gap:11px;
+    width:100%;aspect-ratio:1;touch-action:none;
+  }
+  .box{
+    display:grid;grid-template-columns:repeat(3,1fr);gap:3px;
+    background:rgba(255,255,255,.022);border-radius:7px;
+  }
+  .cell{
+    aspect-ratio:1;border-radius:4px;background:var(--surface);
+    transition:background-color .12s ease, transform .12s ease;
+  }
+  .cell[data-fill]{background:var(--c)}
+  .cell[data-preview="ok"]{background:var(--c);opacity:.45}
+  .cell[data-preview="bad"]{background:#E0574A;opacity:.3}
+  .cell[data-willclear]{box-shadow:inset 0 0 0 2px var(--ink)}
+  .cell.pop{animation:pop .26s ease}
+  @keyframes pop{
+    0%{transform:scale(1)}
+    40%{transform:scale(1.18)}
+    100%{transform:scale(1)}
+  }
+
+  .tray{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;touch-action:none}
+  .slot{
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    height:92px;display:flex;align-items:center;justify-content:center;padding:10px;
+    transition:border-color .12s ease, opacity .12s ease;
+  }
+  .slot[data-empty="true"]{background:transparent;border-color:transparent}
+  .slot[data-held="true"]{border-color:var(--sel)}
+  .slot[data-dead="true"]{opacity:.3}
+  .pieceview{display:grid;gap:2px}
+  .pc{border-radius:3px;background:var(--c)}
+  .pc[data-off]{background:transparent}
+
+  /* the piece that follows your finger while dragging */
+  .ghost{
+    position:fixed;left:0;top:0;pointer-events:none;z-index:50;
+    display:grid;gap:3px;opacity:.9;filter:drop-shadow(0 6px 14px rgba(0,0,0,.5));
+  }
+  .ghost div{border-radius:4px;background:var(--c)}
+  .ghost div[data-off]{background:transparent}
+
+  .statline{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:0 2px 12px;border-bottom:1px solid var(--line)}
+  .righthand{display:flex;align-items:baseline;gap:12px}
+  .statline .score{margin:0}
+  .best{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-variant-numeric:tabular-nums}
+  .combo{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--sel)}
+</style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="./index.html">&larr; Arcade</a>
+  <button class="chip" id="new-game">New</button>
+</header>
+
+<div class="statline">
+  <span class="score"><span id="score-n">0</span><span>points</span></span>
+  <span class="righthand">
+    <span class="combo" id="combo" hidden></span>
+    <span class="best">Best <span id="best-n">0</span></span>
+  </span>
+</div>
+
+<div class="wrap">
+  <div class="grid" id="grid"></div>
+  <div class="tray" id="tray"></div>
+</div>
+
+<div class="win" id="over" hidden>
+  <h2>No room left</h2>
+  <p id="over-text"></p>
+</div>
+
+<div class="controls">
+  <button class="ctrl" id="again">New game</button>
+</div>
+
+<p class="note" id="note" hidden>Storage is blocked here, so your score won't be saved between sessions.</p>
+
+<script>
+(function(){
+  "use strict";
+
+  var N = 9, KEY = "arcade.blocks.v1";
+
+  var COLOURS = [
+    "#E0574A","#E8894A","#E8CF5C","#8FCB52","#3F9E63","#4FA88B",
+    "#4FB6C4","#4A86D1","#7B6FD1","#C86FC0","#9C6B4A"
+  ];
+
+  /* ---------- pieces ----------
+     Each base shape is listed once and its distinct rotations are derived, so
+     a square contributes one orientation and an L contributes four. Weights
+     are per base shape and shared across its rotations: big awkward shapes
+     stay rare, and the 1x1 rescue piece rarest of all. */
+
+  function normalise(cells){
+    var minR = Infinity, minC = Infinity, i;
+    for(i = 0; i < cells.length; i++){
+      if(cells[i][0] < minR) minR = cells[i][0];
+      if(cells[i][1] < minC) minC = cells[i][1];
+    }
+    var out = cells.map(function(p){ return [p[0]-minR, p[1]-minC]; });
+    out.sort(function(a,b){ return a[0]-b[0] || a[1]-b[1]; });
+    return out;
+  }
+  function rotate(cells){
+    return normalise(cells.map(function(p){ return [p[1], -p[0]]; }));
+  }
+  function key(cells){ return cells.map(function(p){ return p[0]+":"+p[1]; }).join(","); }
+
+  function rotations(cells){
+    var seen = {}, out = [], cur = normalise(cells);
+    for(var i = 0; i < 4; i++){
+      var k = key(cur);
+      if(!seen[k]){ seen[k] = 1; out.push(cur); }
+      cur = rotate(cur);
+    }
+    return out;
+  }
+
+  function line(n, vertical){
+    var c = [];
+    for(var i = 0; i < n; i++) c.push(vertical ? [i,0] : [0,i]);
+    return c;
+  }
+  function rect(h, w){
+    var c = [];
+    for(var r = 0; r < h; r++) for(var k = 0; k < w; k++) c.push([r,k]);
+    return c;
+  }
+
+  var BASES = [
+    { w:2,  cells:[[0,0]] },                                    // single
+    { w:9,  cells:line(2) },                                    // domino
+    { w:9,  cells:line(3) },
+    { w:7,  cells:line(4) },
+    { w:4,  cells:line(5) },
+    { w:9,  cells:rect(2,2) },                                  // square
+    { w:2,  cells:rect(3,3) },                                  // big square
+    { w:10, cells:[[0,0],[1,0],[1,1]] },                        // small L (3)
+    { w:6,  cells:[[0,0],[1,0],[2,0],[2,1],[2,2]] },            // big L (5)
+    { w:6,  cells:[[0,0],[1,0],[1,1],[1,2]] },                  // J (4)
+    { w:5,  cells:[[0,0],[0,1],[1,1],[1,2]] },                  // S
+    { w:5,  cells:[[0,1],[0,2],[1,0],[1,1]] },                  // Z
+    { w:5,  cells:[[0,0],[0,1],[0,2],[1,1]] },                  // T
+    // Rotating a diagonal gives the anti-diagonal, so each is listed once and
+    // both orientations fall out of rotations() below.
+    { w:5,  cells:[[0,0],[1,1]] },                              // diagonal 2
+    { w:3,  cells:[[0,0],[1,1],[2,2]] }                         // diagonal 3
+  ];
+
+  var PIECES = [];
+  BASES.forEach(function(b){
+    rotations(b.cells).forEach(function(cells){
+      var h = 0, w = 0;
+      cells.forEach(function(p){ if(p[0]+1 > h) h = p[0]+1; if(p[1]+1 > w) w = p[1]+1; });
+      PIECES.push({ cells:cells, h:h, w:w, weight:b.w });
+    });
+  });
+  var TOTAL_WEIGHT = PIECES.reduce(function(s,p){ return s + p.weight; }, 0);
+
+  function randomPiece(){
+    var r = Math.random() * TOTAL_WEIGHT;
+    for(var i = 0; i < PIECES.length; i++){
+      r -= PIECES[i].weight;
+      if(r <= 0) return spawn(PIECES[i]);
+    }
+    return spawn(PIECES[PIECES.length-1]);
+  }
+  function spawn(def){
+    return {
+      cells: def.cells, h: def.h, w: def.w,
+      colour: COLOURS[Math.floor(Math.random() * COLOURS.length)]
+    };
+  }
+
+  /* ---------- rules ---------- */
+
+  function emptyGrid(){
+    var g = [];
+    for(var i = 0; i < N*N; i++) g.push(null);
+    return g;
+  }
+  function at(g, r, c){ return g[r*N + c]; }
+
+  function canPlace(g, piece, r, c){
+    for(var i = 0; i < piece.cells.length; i++){
+      var rr = r + piece.cells[i][0], cc = c + piece.cells[i][1];
+      if(rr < 0 || rr >= N || cc < 0 || cc >= N) return false;
+      if(at(g, rr, cc) !== null) return false;
+    }
+    return true;
+  }
+  function fitsAnywhere(g, piece){
+    for(var r = 0; r <= N - piece.h; r++)
+      for(var c = 0; c <= N - piece.w; c++)
+        if(canPlace(g, piece, r, c)) return true;
+    return false;
+  }
+
+  // Rows, columns and 3x3 boxes are all scored the same way. A cell sitting in
+  // two full units clears once, so collect cells in a set before wiping them.
+  function fullUnits(g){
+    var units = [], r, c, i, ok;
+
+    for(r = 0; r < N; r++){
+      ok = true;
+      for(c = 0; c < N; c++) if(at(g,r,c) === null){ ok = false; break; }
+      if(ok){ var row = []; for(c = 0; c < N; c++) row.push(r*N+c); units.push(row); }
+    }
+    for(c = 0; c < N; c++){
+      ok = true;
+      for(r = 0; r < N; r++) if(at(g,r,c) === null){ ok = false; break; }
+      if(ok){ var col = []; for(r = 0; r < N; r++) col.push(r*N+c); units.push(col); }
+    }
+    for(var br = 0; br < 3; br++){
+      for(var bc = 0; bc < 3; bc++){
+        ok = true; var box = [];
+        for(r = br*3; r < br*3+3 && ok; r++)
+          for(c = bc*3; c < bc*3+3; c++){
+            if(at(g,r,c) === null){ ok = false; break; }
+            box.push(r*N+c);
+          }
+        if(ok) units.push(box);
+      }
+    }
+    return units;
+  }
+
+  /* Scoring: a placement is worth its cell count, so bigger shapes pay more.
+     Clearing n units at once pays 18 x (1+2+...+n), which rewards setting up
+     a double or triple far more than clearing one line at a time. Clearing on
+     consecutive placements adds a further 10 per step of the streak. */
+  function clearScore(n){ return 18 * n * (n + 1) / 2; }
+
+  /* ---------- state ---------- */
+
+  var storageOK = true, memory = null;
+  var grid, tray, score, best = 0, combo = 0, held = null, dragging = false;
+
+  function load(){
+    try{
+      var raw = localStorage.getItem(KEY);
+      return raw ? JSON.parse(raw) : null;
+    }catch(e){ storageOK = false; return memory; }
+  }
+  function save(){
+    var s = { grid:grid, tray:tray, score:score, best:best, combo:combo };
+    memory = s;
+    try{ localStorage.setItem(KEY, JSON.stringify(s)); }
+    catch(e){ storageOK = false; }
+  }
+
+  // A fresh trio always contains at least one piece that fits somewhere. The
+  // stock game can hand you three dead shapes and end the run through no fault
+  // of yours; this makes every deal survivable, and you still lose when your
+  // own placements leave the later pieces with nowhere to go.
+  function dealTray(){
+    for(var attempt = 0; attempt < 200; attempt++){
+      var t = [randomPiece(), randomPiece(), randomPiece()];
+      for(var i = 0; i < 3; i++) if(fitsAnywhere(grid, t[i])) return t;
+    }
+    return [randomPiece(), randomPiece(), randomPiece()];
+  }
+
+  function newGame(){
+    grid = emptyGrid();
+    score = 0; combo = 0; held = null;
+    tray = dealTray();
+    save();
+    renderAll();
+  }
+
+  function restore(){
+    var s = load();
+    if(s && s.grid && s.grid.length === N*N && s.tray){
+      grid = s.grid;
+      tray = s.tray.map(function(p){ return p ? p : null; });
+      score = s.score || 0;
+      best = s.best || 0;
+      combo = s.combo || 0;
+      if(!tray.some(function(p){ return p; })) tray = dealTray();
+      return;
+    }
+    grid = emptyGrid(); score = 0; combo = 0;
+    tray = dealTray();
+  }
+
+  /* ---------- board DOM ---------- */
+
+  var cells = [];
+  function buildGrid(){
+    var g = document.getElementById("grid");
+    g.textContent = "";
+    var boxes = [];
+    for(var b = 0; b < 9; b++){
+      var box = document.createElement("div");
+      box.className = "box";
+      boxes.push(box);
+      g.appendChild(box);
+    }
+    for(var r = 0; r < N; r++){
+      for(var c = 0; c < N; c++){
+        var cell = document.createElement("div");
+        cell.className = "cell";
+        cell.dataset.r = r; cell.dataset.c = c;
+        cells[r*N+c] = cell;
+        boxes[Math.floor(r/3)*3 + Math.floor(c/3)].appendChild(cell);
+      }
+    }
+  }
+
+  function renderGrid(){
+    for(var i = 0; i < N*N; i++){
+      var cell = cells[i], v = grid[i];
+      if(v){ cell.dataset.fill = "1"; cell.style.setProperty("--c", v); }
+      else { delete cell.dataset.fill; cell.style.removeProperty("--c"); }
+      delete cell.dataset.preview;
+      delete cell.dataset.willclear;
+    }
+  }
+
+  function pieceEl(piece, cellPx, cls){
+    var el = document.createElement("div");
+    el.className = cls;
+    el.style.gridTemplateColumns = "repeat(" + piece.w + ", " + cellPx + "px)";
+    var filled = {};
+    piece.cells.forEach(function(p){ filled[p[0]+":"+p[1]] = 1; });
+    for(var r = 0; r < piece.h; r++){
+      for(var c = 0; c < piece.w; c++){
+        var d = document.createElement("div");
+        d.style.width = cellPx + "px";
+        d.style.height = cellPx + "px";
+        if(filled[r+":"+c]) d.style.setProperty("--c", piece.colour);
+        else d.dataset.off = "1";
+        if(cls === "pieceview") d.className = "pc";
+        el.appendChild(d);
+      }
+    }
+    return el;
+  }
+
+  function renderTray(){
+    var t = document.getElementById("tray");
+    t.textContent = "";
+    tray.forEach(function(piece, i){
+      var slot = document.createElement("div");
+      slot.className = "slot";
+      slot.dataset.i = i;
+      if(!piece){ slot.dataset.empty = "true"; t.appendChild(slot); return; }
+      if(held && held.i === i) slot.dataset.held = "true";
+      if(!fitsAnywhere(grid, piece)) slot.dataset.dead = "true";
+      var size = Math.max(9, Math.min(19, Math.floor(64 / Math.max(piece.w, piece.h))));
+      slot.appendChild(pieceEl(piece, size, "pieceview"));
+      t.appendChild(slot);
+    });
+  }
+
+  function renderAll(){
+    renderGrid();
+    renderTray();
+    document.getElementById("score-n").textContent = score;
+    document.getElementById("best-n").textContent = best;
+    var cEl = document.getElementById("combo");
+    cEl.hidden = combo < 2;
+    cEl.textContent = combo + "x combo";
+    document.getElementById("note").hidden = storageOK;
+
+    var dead = isGameOver();
+    document.getElementById("over").hidden = !dead;
+    if(dead){
+      document.getElementById("over-text").textContent =
+        score + (score === 1 ? " point" : " points") +
+        (score >= best ? " — a new best" : " — best " + best);
+    }
+  }
+
+  function isGameOver(){
+    for(var i = 0; i < tray.length; i++)
+      if(tray[i] && fitsAnywhere(grid, tray[i])) return false;
+    return true;
+  }
+
+  /* ---------- placing ---------- */
+
+  function commit(piece, i, r, c){
+    piece.cells.forEach(function(p){
+      grid[(r+p[0])*N + (c+p[1])] = piece.colour;
+    });
+    score += piece.cells.length;
+    tray[i] = null;
+
+    var units = fullUnits(grid);
+    if(units.length){
+      var wipe = {};
+      units.forEach(function(u){ u.forEach(function(idx){ wipe[idx] = 1; }); });
+      combo++;
+      score += clearScore(units.length) + (combo > 1 ? 10 * (combo - 1) : 0);
+      Object.keys(wipe).forEach(function(idx){
+        grid[idx] = null;
+        var cell = cells[idx];
+        cell.classList.remove("pop");
+        void cell.offsetWidth;
+        cell.classList.add("pop");
+      });
+    }else{
+      combo = 0;
+    }
+
+    if(!tray.some(function(p){ return p; })) tray = dealTray();
+    if(score > best) best = score;
+    save();
+    renderAll();
+  }
+
+  /* ---------- preview ---------- */
+
+  function clearPreview(){
+    for(var i = 0; i < N*N; i++){
+      delete cells[i].dataset.preview;
+      delete cells[i].dataset.willclear;
+    }
+  }
+
+  function showPreview(piece, r, c){
+    clearPreview();
+    var ok = canPlace(grid, piece, r, c);
+    piece.cells.forEach(function(p){
+      var rr = r + p[0], cc = c + p[1];
+      if(rr < 0 || rr >= N || cc < 0 || cc >= N) return;
+      var cell = cells[rr*N + cc];
+      cell.dataset.preview = ok ? "ok" : "bad";
+      if(ok) cell.style.setProperty("--c", piece.colour);
+    });
+    if(!ok) return;
+
+    // show which lines the drop would take out, on a copy so the board is untouched
+    var trial = grid.slice();
+    piece.cells.forEach(function(p){ trial[(r+p[0])*N + (c+p[1])] = piece.colour; });
+    fullUnits(trial).forEach(function(u){
+      u.forEach(function(idx){ cells[idx].dataset.willclear = "1"; });
+    });
+  }
+
+  // Anchor the piece by its bounding-box centre so it sits under the finger
+  // the way it looks in the tray, rather than hanging off one corner.
+  function anchorFrom(r, c, piece){
+    return [r - Math.floor((piece.h - 1) / 2), c - Math.floor((piece.w - 1) / 2)];
+  }
+
+  function cellFromPoint(x, y){
+    var el = document.elementFromPoint(x, y);
+    if(!el) return null;
+    var cell = el.closest(".cell");
+    if(!cell) return null;
+    return [parseInt(cell.dataset.r, 10), parseInt(cell.dataset.c, 10)];
+  }
+
+  /* ---------- pointer handling ----------
+     One gesture model covers both habits: drag a piece onto the board, or tap
+     it once and tap where it goes. A press becomes a drag only after the
+     finger travels far enough, so a sloppy tap still selects rather than
+     dropping the piece somewhere random. */
+
+  var ghost = null, startX = 0, startY = 0, pointerDown = false;
+  var LIFT = 46;      // px the dragged piece floats above the fingertip
+  var SLOP = 8;       // px of movement before a press counts as a drag
+
+  function makeGhost(piece){
+    removeGhost();
+    ghost = pieceEl(piece, 26, "ghost");
+    document.body.appendChild(ghost);
+  }
+  function removeGhost(){
+    if(ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost);
+    ghost = null;
+  }
+  function moveGhost(x, y){
+    if(!ghost) return;
+    var w = ghost.offsetWidth, h = ghost.offsetHeight;
+    ghost.style.transform = "translate(" + (x - w/2) + "px," + (y - LIFT - h/2) + "px)";
+  }
+
+  function release(){
+    if(held && held.slot) delete held.slot.dataset.held;
+    held = null; dragging = false;
+    removeGhost();
+    clearPreview();
+    renderAll();
+  }
+
+  document.getElementById("tray").addEventListener("pointerdown", function(e){
+    if(isGameOver()) return;
+    var slot = e.target.closest(".slot");
+    if(!slot) return;
+    var i = parseInt(slot.dataset.i, 10);
+    if(!tray[i]) return;
+
+    // tapping the held piece again puts it back
+    if(held && held.i === i && !dragging){ release(); return; }
+
+    held = { i:i, piece:tray[i], slot:slot };
+    dragging = false;
+    startX = e.clientX; startY = e.clientY;
+
+    // Touch pointers are implicitly captured by the element that received
+    // pointerdown, so the slot must survive the gesture - rebuilding the tray
+    // here would drop the capture and strand the drag half way. Mark it in
+    // place and capture explicitly so move and up always reach us.
+    slot.dataset.held = "true";
+    pointerDown = true;
+    try{ slot.setPointerCapture(e.pointerId); }catch(err){}
+    e.preventDefault();
+  });
+
+  window.addEventListener("pointermove", function(e){
+    if(!held || !pointerDown) return;
+    if(!dragging){
+      if(Math.abs(e.clientX - startX) < SLOP && Math.abs(e.clientY - startY) < SLOP) return;
+      dragging = true;
+      makeGhost(held.piece);
+    }
+    moveGhost(e.clientX, e.clientY);
+    var hit = cellFromPoint(e.clientX, e.clientY - LIFT);
+    if(hit){
+      var a = anchorFrom(hit[0], hit[1], held.piece);
+      showPreview(held.piece, a[0], a[1]);
+    }else{
+      clearPreview();
+    }
+    e.preventDefault();
+  }, { passive:false });
+
+  window.addEventListener("pointerup", function(e){
+    pointerDown = false;
+    if(!held) return;
+    if(!dragging) return;              // a tap: keep it selected for tap-to-place
+    var hit = cellFromPoint(e.clientX, e.clientY - LIFT);
+    if(hit){
+      var a = anchorFrom(hit[0], hit[1], held.piece);
+      if(canPlace(grid, held.piece, a[0], a[1])){
+        var piece = held.piece, i = held.i;
+        if(held.slot) delete held.slot.dataset.held;
+        held = null; dragging = false;
+        removeGhost(); clearPreview();
+        commit(piece, i, a[0], a[1]);
+        return;
+      }
+    }
+    release();
+  });
+
+  window.addEventListener("pointercancel", function(){
+    pointerDown = false;
+    if(held && dragging) release();
+  });
+
+  // tap-to-place: with a piece selected, tapping a cell drops it there
+  document.getElementById("grid").addEventListener("pointerdown", function(e){
+    if(!held || dragging) return;
+    var cell = e.target.closest(".cell");
+    if(!cell) return;
+    var a = anchorFrom(parseInt(cell.dataset.r,10), parseInt(cell.dataset.c,10), held.piece);
+    if(canPlace(grid, held.piece, a[0], a[1])){
+      var piece = held.piece, i = held.i;
+      if(held.slot) delete held.slot.dataset.held;
+      held = null;
+      clearPreview();
+      commit(piece, i, a[0], a[1]);
+    }else{
+      showPreview(held.piece, a[0], a[1]);
+      setTimeout(clearPreview, 260);
+    }
+    e.preventDefault();
+  });
+
+  document.getElementById("new-game").addEventListener("click", newGame);
+  document.getElementById("again").addEventListener("click", newGame);
+
+  buildGrid();
+  restore();
+  renderAll();
+
+  if("serviceWorker" in navigator){
+    window.addEventListener("load", function(){
+      navigator.serviceWorker.register("./sw.js").catch(function(){});
+    });
+  }
+})();
+</script>
+</body>
+</html>
