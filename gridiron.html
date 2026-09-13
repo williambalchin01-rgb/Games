@@ -73,7 +73,7 @@
     <button class="act" id="punt">Punt</button>
   </div>
 
-  <p class="howto" id="howto" hidden>Dashed lines show the routes. Snap, then pull back and release to throw &mdash; the further you pull, the further it flies.</p>
+  <p class="howto" id="howto" hidden>Dashed lines show the routes. Snap, then pull back and release to throw &mdash; the ball flies the opposite way, and further the harder you pull.</p>
 </div>
 
 <div class="win" id="over" hidden>
@@ -620,12 +620,15 @@
       if(play.phase === "carry" && play.carrier) return play.carrier.y + 4;
       if(play.phase === "air") return (play.ball.ty + play.los) / 2 + 4;
       if(play.phase === "live" && aim){
-        // A deep throw can land past the top of the view, and a landing spot you
-        // cannot see is no better than no preview at all. Lift the camera only
-        // as far as it takes to bring the target on screen, so it stays still
-        // for every throw that already fits.
+        // A landing spot you cannot see is no better than no preview at all, and
+        // pulling the wrong way puts it behind the line where it would otherwise
+        // fall off the bottom, looking for all the world like nothing happened.
+        // Shift only as far as it takes to bring the target into frame.
         var t = aimTarget();
-        if(t) return Math.max(play.los + 9, t.y + 3 - viewYards / 2);
+        if(t){
+          var half = viewYards / 2;
+          return clamp(play.los + 9, t.y + 3 - half, t.y - 3 + half);
+        }
       }
       return play.los + 9;
     }
@@ -695,9 +698,13 @@
 
       if(t){
         var tx = sx(t.x), ty = sy(t.y);
-        var strong = "rgba(232,207,92,.9)";
+        // A throw landing behind the line of scrimmage is almost always a
+        // mis-pull, so it is coloured as a warning rather than left to look
+        // like a normal throw that simply did nothing.
+        var back = t.y < play.los;
+        var strong = back ? "rgba(224,87,74,.95)" : "rgba(232,207,92,.9)";
 
-        ctx.strokeStyle = "rgba(232,207,92,.5)";
+        ctx.strokeStyle = back ? "rgba(224,87,74,.5)" : "rgba(232,207,92,.5)";
         ctx.lineWidth = 2;
         ctx.setLineDash([6,6]);
         ctx.beginPath();
@@ -711,14 +718,31 @@
         ctx.strokeStyle = strong;
         ctx.lineWidth = 2.5;
         ctx.beginPath(); ctx.arc(tx, ty, CATCH_R * scale, 0, Math.PI*2); ctx.stroke();
-        ctx.fillStyle = "rgba(232,207,92,.14)";
+        ctx.fillStyle = back ? "rgba(224,87,74,.16)" : "rgba(232,207,92,.14)";
+        ctx.fill();
+
+        // an arrowhead on the flight path, so which end the ball travels to is
+        // never in question
+        var qx = sx(play.qb.x), qy = sy(play.qb.y);
+        var adx = tx - qx, ady = ty - qy, alen = Math.sqrt(adx*adx + ady*ady) || 1;
+        var ux = adx/alen, uy = ady/alen;
+        var hx = tx - ux * (CATCH_R * scale + 3), hy = ty - uy * (CATCH_R * scale + 3);
+        ctx.fillStyle = strong;
+        ctx.beginPath();
+        ctx.moveTo(hx + ux*10, hy + uy*10);
+        ctx.lineTo(hx - uy*6, hy + ux*6);
+        ctx.lineTo(hx + uy*6, hy - ux*6);
+        ctx.closePath();
         ctx.fill();
 
         // power read-out under the crosshair
         ctx.fillStyle = strong;
         ctx.font = "600 11px -apple-system,system-ui,sans-serif";
         ctx.textAlign = "center";
-        ctx.fillText(Math.round(t.power * 100) + "%", tx, ty + CATCH_R * scale + 14);
+        // flip the label above the circle when it would drop off the bottom edge
+        var labelY = ty + CATCH_R * scale + 14;
+        if(labelY > h - 4) labelY = ty - CATCH_R * scale - 7;
+        ctx.fillText(Math.round(t.power * 100) + "%", tx, labelY);
         ctx.textAlign = "left";
       }
     }
@@ -871,23 +895,26 @@
     };
   }
 
-  canvas.addEventListener("pointerdown", function(ev){
+  /* The gesture is expressed once and driven from either event family. Touch
+     events are the primary path where they exist: Safari readily fires
+     pointercancel the instant it suspects a drag might be a scroll, and a
+     cancelled pointer used to bin the throw without a word, which is exactly
+     what a broken drag looks like from the sofa. */
+
+  function beginAim(x, y){
     if(!play) return;
     pointerDown = true;
-    try{ canvas.setPointerCapture(ev.pointerId); }catch(e){}
-    var lp = localPoint(ev);
-    if(play.phase === "live") aim = { ox: lp.x, oy: lp.y, cx: lp.x, cy: lp.y };
-    if(play.phase === "carry") play.steerX = fieldX(lp.x);
-    ev.preventDefault();
-  });
-  canvas.addEventListener("pointermove", function(ev){
+    if(play.phase === "live") aim = { ox:x, oy:y, cx:x, cy:y };
+    if(play.phase === "carry") play.steerX = fieldX(x);
+  }
+  function moveAim(x, y){
     if(!play || !pointerDown) return;
-    var lp = localPoint(ev);
-    if(play.phase === "live" && aim){ aim.cx = lp.x; aim.cy = lp.y; }
-    if(play.phase === "carry") play.steerX = fieldX(lp.x);
-    ev.preventDefault();
-  });
-  canvas.addEventListener("pointerup", function(ev){
+    if(play.phase === "live" && aim){ aim.cx = x; aim.cy = y; }
+    if(play.phase === "carry") play.steerX = fieldX(x);
+  }
+  // Releasing and being cancelled do the same thing: a pull that was far enough
+  // to count is thrown. Losing it silently is the worse failure by far.
+  function endAim(){
     pointerDown = false;
     if(!play){ aim = null; return; }
     if(play.phase === "live"){
@@ -896,12 +923,50 @@
         throwBall(st, play, t.x, t.y);
         st.playedEver = true;
         save();
+        syncChrome();          // the buttons must follow the ball leaving his hand
       }
       aim = null;
     }
+  }
+
+  var touchDriven = false;     // once touch is seen, ignore the pointer path
+
+  canvas.addEventListener("touchstart", function(ev){
+    touchDriven = true;
+    var rect = canvas.getBoundingClientRect(), t = ev.changedTouches[0];
+    beginAim(t.clientX - rect.left, t.clientY - rect.top);
+    ev.preventDefault();
+  }, { passive:false });
+  canvas.addEventListener("touchmove", function(ev){
+    var rect = canvas.getBoundingClientRect(), t = ev.changedTouches[0];
+    moveAim(t.clientX - rect.left, t.clientY - rect.top);
+    ev.preventDefault();
+  }, { passive:false });
+  canvas.addEventListener("touchend", function(ev){ endAim(); ev.preventDefault(); }, { passive:false });
+  canvas.addEventListener("touchcancel", function(){ endAim(); });
+
+  canvas.addEventListener("pointerdown", function(ev){
+    if(touchDriven) return;
+    try{ canvas.setPointerCapture(ev.pointerId); }catch(e){}
+    var lp = localPoint(ev);
+    beginAim(lp.x, lp.y);
     ev.preventDefault();
   });
-  canvas.addEventListener("pointercancel", function(){ pointerDown = false; aim = null; });
+  canvas.addEventListener("pointermove", function(ev){
+    if(touchDriven) return;
+    var lp = localPoint(ev);
+    moveAim(lp.x, lp.y);
+    ev.preventDefault();
+  });
+  canvas.addEventListener("pointerup", function(ev){
+    if(touchDriven) return;
+    endAim();
+    ev.preventDefault();
+  });
+  canvas.addEventListener("pointercancel", function(){
+    if(touchDriven) return;
+    endAim();
+  });
 
   // A play is set up as soon as the down begins so its routes can be studied;
   // pressing snap only starts the clock.
@@ -920,7 +985,7 @@
     if(snapBall(play)){ st.playedEver = true; save(); syncChrome(); }
   });
   el("run").addEventListener("click", function(){
-    if(play && play.phase === "live"){ scramble(st, play); aim = null; syncChrome(); }
+    if(play && play.phase === "live"){ scramble(st, play); aim = null; pointerDown = false; syncChrome(); }
   });
   el("punt").addEventListener("click", function(){
     if(!st.driveIsYours || st.over) return;
