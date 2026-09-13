@@ -628,9 +628,13 @@
     var w = canvas.clientWidth;
     if(!w) return;
     scale = w / FIELD_W;
-    // As much field as fits without pushing the controls off a phone screen:
-    // seeing further downfield is what lets you pick a receiver before throwing.
-    var h = Math.min(Math.round(window.innerHeight * 0.57), Math.round(w * 1.45));
+    // As much field as actually fits: measure the page with no pitch in it and
+    // take what is left. A fixed fraction of the viewport pushed the controls
+    // off the bottom of a shorter phone.
+    canvas.style.height = "0px";
+    var chrome = document.documentElement.scrollHeight;
+    var avail = window.innerHeight - chrome - 6;
+    var h = Math.max(240, Math.min(avail, Math.round(w * 1.45)));
     viewYards = h / scale;
     var dpr = window.devicePixelRatio || 1;
     canvas.style.height = h + "px";

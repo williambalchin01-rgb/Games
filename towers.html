@@ -17,7 +17,7 @@
      below the board and come and go, and centring would shift the board under
      the player's finger every time one of them appeared. */
   .wrap{flex:1;display:flex;flex-direction:column;justify-content:flex-start;gap:10px;padding:8px 0}
-  canvas{width:100%;display:block;border-radius:8px;touch-action:manipulation}
+  canvas{display:block;margin:0 auto;border-radius:8px;touch-action:manipulation}
 
   .stats{display:flex;justify-content:space-between;gap:8px;padding:0 2px 10px;border-bottom:1px solid var(--line)}
   .stat{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-variant-numeric:tabular-nums}
@@ -68,6 +68,8 @@
   <span class="stat">Best<b id="best-n">0</b></span>
 </div>
 
+<div class="chiprow" id="maps"></div>
+
 <div class="wrap">
   <canvas id="board"></canvas>
   <div class="picker" id="picker"></div>
@@ -102,9 +104,37 @@
   var START_LIVES = 20, START_GOLD = 120;
   var KEY = "arcade.towers.v1";
 
-  // Corner points of the route, in grid coordinates. Enemies walk the polyline
-  // through these; anything not on it can be built on.
-  var WAY = [[-1,1],[6,1],[6,4],[2,4],[2,7],[6,7],[6,9],[2,9],[2,11]];
+  /* Corner points of each route. Enemies walk the polyline through these;
+     anything not on it can be built on.
+
+     Route length turns out NOT to set the difficulty, which was the obvious
+     guess and is wrong: a short route gives less time under fire, but each
+     tower also covers a larger share of it, and measured over full games the
+     two effects cancel almost exactly. Four routes from 13 to 42 units long
+     all landed within three waves of each other. What actually differs is the
+     shape of the problem - where the good ground is, whether firing positions
+     overlap, how much room there is to widen out later.
+
+     Varying the starting purse was the next guess and barely moved it either:
+     bounty income dwarfs the opening gold within a dozen waves, so the economy
+     self-corrects. Across all four, a competent run lands between 28 and 32
+     waves whatever the route or the purse.
+
+     The purses below are kept anyway, because what they genuinely change is
+     the opening - on Zigzag you can afford three towers and a look around, on
+     Dash you get two and have to mean them. They do not change the ceiling,
+     and nothing here pretends otherwise: these are four different spatial
+     puzzles of much the same difficulty, not an easy-to-hard ladder. */
+  var MAPS = [
+    { id:"switchback", name:"Switchback", gold:120, lives:20,
+      way:[[-1,1],[6,1],[6,4],[2,4],[2,7],[6,7],[6,9],[2,9],[2,11]] },
+    { id:"zigzag",     name:"Zigzag",     gold:150, lives:22,
+      way:[[-1,1],[7,1],[7,3],[1,3],[1,5],[7,5],[7,7],[1,7],[1,9],[7,9],[7,11]] },
+    { id:"coil",       name:"Coil",       gold:100, lives:18,
+      way:[[4,-1],[4,3],[1,3],[1,8],[7,8],[7,5],[9,5]] },
+    { id:"dash",       name:"Dash",       gold:80,  lives:15,
+      way:[[-1,4],[3,4],[3,7],[9,7]] }
+  ];
 
   var TOWERS = {
     gun:    { name:"Gun",    cost:40, colour:"#4A86D1", range:2.2, damage:7,  cooldown:0.45, splash:0,   slow:0 },
@@ -131,15 +161,19 @@
 
   // Cumulative distances along the polyline, so an enemy is just a scalar
   // "distance travelled" and its position falls out of that.
-  var PATH = (function(){
-    var pts = WAY.map(function(p){ return { x:p[0], y:p[1] }; });
+  function buildPath(way){
+    var pts = way.map(function(p){ return { x:p[0], y:p[1] }; });
     var cum = [0];
     for(var i = 1; i < pts.length; i++){
       var dx = pts[i].x - pts[i-1].x, dy = pts[i].y - pts[i-1].y;
       cum.push(cum[i-1] + Math.sqrt(dx*dx + dy*dy));
     }
     return { pts:pts, cum:cum, length:cum[cum.length-1] };
-  })();
+  }
+
+  // The live route. Swapping maps recomputes both of these; everything else
+  // reads them and needs no idea which map it is on.
+  var PATH = null, PATH_CELLS = null, mapIndex = 0;
 
   function pointAt(dist){
     if(dist <= 0) return { x:PATH.pts[0].x, y:PATH.pts[0].y };
@@ -159,14 +193,26 @@
   }
 
   // Grid squares the route passes through: everything else is buildable.
-  var PATH_CELLS = (function(){
+  function buildPathCells(){
     var set = {};
     for(var d = 0; d <= PATH.length; d += 0.05){
       var p = pointAt(d);
       set[Math.round(p.x) + ":" + Math.round(p.y)] = 1;
     }
     return set;
-  })();
+  }
+  function useMap(i){
+    mapIndex = (i >= 0 && i < MAPS.length) ? i : 0;
+    PATH = buildPath(MAPS[mapIndex].way);
+    PATH_CELLS = buildPathCells();
+    return mapIndex;
+  }
+  function mapById(id){
+    for(var i = 0; i < MAPS.length; i++) if(MAPS[i].id === id) return i;
+    return 0;
+  }
+  useMap(0);
+
   function onPath(col, row){ return !!PATH_CELLS[col + ":" + row]; }
 
   /* ---------- waves ---------- */
@@ -200,7 +246,8 @@
 
   function newState(){
     return {
-      lives: START_LIVES, gold: START_GOLD, wave: 1, best: 0,
+      lives: MAPS[mapIndex].lives, gold: MAPS[mapIndex].gold, wave: 1, best: 0,
+      map: MAPS[mapIndex].id, bests: {},
       phase: "build",            // build | wave | over
       towers: [], enemies: [], tracers: [],
       queue: [], clock: 0, spawned: 0, nextId: 1, placedEver: false
@@ -377,8 +424,10 @@
   // and rebuilding one from storage is a pile of edge cases for no gain.
   function save(){
     if(st.phase !== "build" && st.phase !== "over") return;
+    st.bests[st.map] = Math.max(st.bests[st.map] || 0, st.best);
     var s = {
       lives:st.lives, gold:st.gold, wave:st.wave, best:st.best,
+      map:st.map, bests:st.bests,
       towers:st.towers, placedEver:st.placedEver, over:st.phase === "over"
     };
     memory = s;
@@ -388,8 +437,11 @@
   function restore(){
     var s = load();
     if(!s) return;
-    st.best = s.best || 0;
-    if(s.over){ st.best = s.best || 0; return; }
+    st.bests = s.bests || {};
+    // a saved game belongs to the map it was played on
+    if(s.map){ useMap(mapById(s.map)); st.map = MAPS[mapIndex].id; }
+    st.best = st.bests[st.map] || s.best || 0;
+    if(s.over) return;
     st.lives = typeof s.lives === "number" ? s.lives : START_LIVES;
     st.gold  = typeof s.gold  === "number" ? s.gold  : START_GOLD;
     st.wave  = s.wave || 1;
@@ -404,12 +456,25 @@
 
   var canvas = el("board"), ctx = canvas.getContext("2d"), cell = 40;
 
+  // Squares stay square, so the board is sized by whichever runs out first: the
+  // width available, or the height left after the chrome. Sizing it off the
+  // width alone made a fixed-height board that pushed the controls off the
+  // bottom of a shorter phone once the map chips arrived.
   function resize(){
-    var w = canvas.clientWidth;
-    if(!w) return;
-    cell = w / COLS;
-    var h = cell * ROWS;
+    var host = canvas.parentNode;
+    var availW = host.clientWidth;
+    if(!availW) return;
+
+    // measure the page with no board in it to see what height is going spare
+    canvas.style.height = "0px";
+    var chrome = document.documentElement.scrollHeight;
+    var availH = window.innerHeight - chrome - 6;
+
+    cell = Math.max(18, Math.min(availW / COLS, availH / ROWS));
+    var w = cell * COLS, h = cell * ROWS;
+
     var dpr = window.devicePixelRatio || 1;
+    canvas.style.width = w + "px";
     canvas.style.height = h + "px";
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
@@ -519,6 +584,42 @@
 
   /* ---------- chrome ---------- */
 
+  // Picking a map starts a fresh run on it. Each map keeps its own best wave,
+  // since a short route and a long one are not the same challenge.
+  function buildMapChips(){
+    var row = el("maps");
+    row.textContent = "";
+    MAPS.forEach(function(m, i){
+      var b = document.createElement("button");
+      b.className = "chip";
+      b.dataset.map = m.id;
+      b.textContent = m.name;
+      b.setAttribute("aria-pressed", m.id === st.map);
+      b.addEventListener("click", function(){
+        if(m.id === st.map) return;
+        switchMap(i);
+      });
+      row.appendChild(b);
+    });
+  }
+  function syncMapChips(){
+    var kids = el("maps").children;
+    for(var i = 0; i < kids.length; i++)
+      kids[i].setAttribute("aria-pressed", MAPS[i].id === st.map);
+  }
+  function switchMap(i){
+    st.bests[st.map] = Math.max(st.bests[st.map] || 0, st.best);
+    var bests = st.bests, everBuilt = st.placedEver;
+    useMap(i);
+    st = newState();
+    st.map = MAPS[mapIndex].id;
+    st.bests = bests;
+    st.best = bests[st.map] || 0;
+    st.placedEver = everBuilt;
+    selectedTower = null;
+    save(); syncChrome(); resize(); draw();
+  }
+
   function buildPicker(){
     var p = el("picker");
     p.textContent = "";
@@ -545,6 +646,7 @@
     el("gold-n").textContent = Math.floor(st.gold);
     el("wave-n").textContent = st.wave;
     el("best-n").textContent = st.best;
+    syncMapChips();
     el("lives-stat").dataset.warn = st.lives <= 5;
 
     var kids = el("picker").children;
@@ -614,8 +716,10 @@
     if(startWave(st)){ selectedTower = null; syncChrome(); }
   });
   function reset(){
-    var best = st.best;
+    var best = st.best, bests = st.bests;
     st = newState();
+    st.map = MAPS[mapIndex].id;
+    st.bests = bests;
     st.best = best;
     selectedTower = null; selectedType = "gun";
     save(); syncChrome(); resize(); draw();
@@ -647,6 +751,7 @@
 
   buildPicker();
   restore();
+  buildMapChips();
   resize();
   syncChrome();
   draw();

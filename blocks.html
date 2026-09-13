@@ -22,7 +22,10 @@
      3x3 boxes are read from the alternating shading instead of a gutter. */
   .grid{
     display:grid;grid-template-columns:repeat(3,1fr);gap:3px;
-    width:100%;aspect-ratio:1;touch-action:none;
+    /* square, and never so tall that the tray and controls fall off a short
+       phone: the width follows the viewport height when that is the tighter
+       of the two */
+    width:min(100%, 46vh);aspect-ratio:1;margin:0 auto;touch-action:none;
   }
   .box{display:grid;grid-template-columns:repeat(3,1fr);gap:3px}
   /* Tint the squares themselves rather than the space behind them: a
