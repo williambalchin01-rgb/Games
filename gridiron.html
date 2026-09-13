@@ -90,7 +90,13 @@
   /* ================= logic (no DOM until marked) ================= */
 
   var FIELD_W = 30;        // yards across; narrower than a real field, like the games this apes
-  var FIELD_L = 100;
+  var FIELD_L = 100;        // the goal line
+  // The end zone is ten yards of catchable ground BEHIND the goal line. It was
+  // drawn but not playable: routes stopped at the goal line and a throw could
+  // not be aimed past it, so the band you could see was the one place the ball
+  // could never go.
+  var END_ZONE = 10;
+  var BACK_LINE = FIELD_L + END_ZONE;
   var KEY = "arcade.gridiron.v1";
 
   var CATCH_R = 2.0;       // yards; generous enough to be playable with a fingertip
@@ -143,7 +149,7 @@
   function waypoints(x0, y0, route, flip){
     var r = flip ? mirror(route) : route;
     return r.map(function(p){
-      return { x: x0 + p[0], y: Math.min(y0 + p[1], FIELD_L - 0.5) };
+      return { x: x0 + p[0], y: Math.min(y0 + p[1], BACK_LINE - 1) };
     });
   }
 
@@ -169,7 +175,7 @@
     // never off the back of the field. Letting them run past the end line meant
     // that near the goal every receiver was out of reach of a throw, since the
     // throw itself can only be aimed as far as the end line.
-    m.y = Math.min(m.y + speed * dt * 0.85, FIELD_L - 0.5);
+    m.y = Math.min(m.y + speed * dt * 0.85, BACK_LINE - 1);
     return true;
   }
 
@@ -321,6 +327,14 @@
       }else{
         man = play.recs.reduce(function(a, b){ return b.y > a.y ? b : a; });
       }
+      // Coverage tightens as the field runs out. There is nowhere deep left to
+      // defend inside the twenty, so defenders sit on routes rather than
+      // respecting a cushion - which is why the red zone is hard in real
+      // football, and why it needs to be here too now that the end zone is
+      // catchable ground.
+      if(play.los > 75){
+        lag = Math.round(lag * Math.max(0.45, 1 - (play.los - 75) / 25 * 0.55));
+      }
       var target = man;
       if(man.hist && man.hist.length){
         target = man.hist[Math.max(0, man.hist.length - 1 - lag)];
@@ -402,7 +416,7 @@
     var r = clamp(d, THROW_MIN, THROW_MAX);
     return {
       x: clamp(play.qb.x + dx / d * r, 0, FIELD_W),
-      y: clamp(play.qb.y + dy / d * r, 0, FIELD_L)
+      y: clamp(play.qb.y + dy / d * r, 0, BACK_LINE)
     };
   }
 
@@ -432,6 +446,7 @@
     if(n.d < rd * 0.75){ endPlay(st, play, "interception", b.ty); return; }
     if(n.d < rd + 1.0 && rng() < 0.45){ endPlay(st, play, "incomplete", b.ty); return; }
 
+    if(b.ty >= FIELD_L){ endPlay(st, play, "touchdown", FIELD_L); return; }
     play.phase = "carry";
     rec.x = b.tx; rec.y = b.ty;
     play.carrier = rec;
@@ -534,7 +549,7 @@
     var roll = rng();
     // Tuned so an even game is roughly a two-score affair rather than a walkover,
     // and so the rivals sharpen as your record improves.
-    var strength = 0.58 + Math.min(0.12, st.wins * 0.02);
+    var strength = 0.64 + Math.min(0.10, st.wins * 0.02);
     if(roll < strength){ st.opp += 7; return "Rivals score a touchdown"; }
     if(roll < strength + 0.26){ st.opp += 3; return "Rivals kick a field goal"; }
     return "Rivals go three and out";
@@ -650,7 +665,7 @@
   // keep the view on the pitch: a little dead ground past each end line, no more
   function clampCam(y){
     var half = viewYards / 2;
-    return clamp(y, half - 6, FIELD_L + 6 - half);
+    return clamp(y, half - 6, BACK_LINE + 4 - half);
   }
 
   function sx(x){ return x * scale; }
@@ -913,7 +928,7 @@
     var dirX = dxp / pullPx, dirY = -dyp / pullPx;
     return {
       x: clamp(play.qb.x + dirX * range, 0, FIELD_W),
-      y: clamp(play.qb.y + dirY * range, 0, FIELD_L),
+      y: clamp(play.qb.y + dirY * range, 0, BACK_LINE),
       power: power
     };
   }
