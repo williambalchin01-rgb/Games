@@ -52,47 +52,74 @@
     margin:0;text-align:center;font-size:12.5px;color:var(--muted);
     border:1px dashed var(--line);border-radius:var(--radius);padding:10px 12px;
   }
+
+  /* Two screens in one page: the chooser, then the board with the whole page
+     to itself. Both flex so the board can be sized from what is left over. */
+  #gameview{flex:1;display:flex;flex-direction:column;min-height:0}
+  #mapmenu{flex:1;display:flex;flex-direction:column;padding-top:4px}
+  .title{font-size:28px;font-weight:200;letter-spacing:-.02em;margin:2px 0 14px}
+  .maplist{display:flex;flex-direction:column;gap:10px}
+  .mapcard{
+    display:flex;align-items:center;gap:14px;width:100%;text-align:left;
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    padding:12px 14px;transition:border-color .12s ease, transform .12s ease;
+  }
+  .mapcard:hover,.mapcard:focus-visible{border-color:var(--accent);transform:translateY(-2px)}
+  .mapcard svg{flex:none;width:52px;height:60px}
+  .mapcard .nm{font-size:16px;font-weight:500;display:block}
+  .mapcard .sub{font-size:12px;color:var(--muted);display:block;margin-top:3px;font-variant-numeric:tabular-nums}
+  .mapcard[data-live="true"] .sub{color:var(--sel)}
 </style>
 </head>
 <body>
 
 <header>
-  <a class="back" href="./index.html">&larr; Arcade</a>
-  <button class="chip" id="new-game">New</button>
+  <a class="back" id="back" href="./index.html">&larr; Arcade</a>
+  <button class="chip" id="new-game" hidden>New</button>
 </header>
 
-<div class="stats">
-  <span class="stat" id="lives-stat">Lives<b id="lives-n">20</b></span>
-  <span class="stat">Gold<b id="gold-n">120</b></span>
-  <span class="stat">Wave<b id="wave-n">1</b></span>
-  <span class="stat">Best<b id="best-n">0</b></span>
+<!-- map chooser: its own screen, so the board below gets the whole page -->
+<div id="mapmenu">
+  <div class="eyebrow">Towers</div>
+  <div class="title">Choose a map</div>
+  <div class="maplist" id="maplist"></div>
+  <p class="note">Each map keeps its own best wave.</p>
 </div>
 
-<div class="chiprow" id="maps"></div>
+<div id="gameview" hidden>
 
-<div class="wrap">
-  <canvas id="board"></canvas>
-  <div class="picker" id="picker"></div>
-  <div class="bar" id="selbar" hidden>
-    <span class="txt" id="sel-text"></span>
-    <span class="btns">
-      <button id="sel-up">Upgrade</button>
-      <button id="sel-sell">Sell</button>
-    </span>
+  <div class="stats">
+    <span class="stat" id="lives-stat">Lives<b id="lives-n">20</b></span>
+    <span class="stat">Gold<b id="gold-n">120</b></span>
+    <span class="stat">Wave<b id="wave-n">1</b></span>
+    <span class="stat">Best<b id="best-n">0</b></span>
   </div>
-  <p class="howto" id="howto" hidden>Pick a tower, tap a dark square to build, then send the wave.</p>
-</div>
 
-<div class="win" id="over" hidden>
-  <h2>Overrun</h2>
-  <p id="over-text"></p>
-</div>
+  <div class="wrap">
+    <canvas id="board"></canvas>
+    <div class="picker" id="picker"></div>
+    <div class="bar" id="selbar" hidden>
+      <span class="txt" id="sel-text"></span>
+      <span class="btns">
+        <button id="sel-up">Upgrade</button>
+        <button id="sel-sell">Sell</button>
+      </span>
+    </div>
+    <p class="howto" id="howto" hidden>Pick a tower, tap a dark square to build, then send the wave.</p>
+  </div>
 
-<div class="controls">
-  <button class="ctrl" id="go">Send wave 1</button>
-</div>
+  <div class="win" id="over" hidden>
+    <h2>Overrun</h2>
+    <p id="over-text"></p>
+  </div>
 
-<p class="note" id="note" hidden>Storage is blocked here, so your progress won't be saved between sessions.</p>
+  <div class="controls">
+    <button class="ctrl" id="go">Send wave 1</button>
+  </div>
+
+  <p class="note" id="note" hidden>Storage is blocked here, so your progress won't be saved between sessions.</p>
+
+</div>
 
 <script>
 (function(){
@@ -461,14 +488,25 @@
   // width alone made a fixed-height board that pushed the controls off the
   // bottom of a shorter phone once the map chips arrived.
   function resize(){
-    var host = canvas.parentNode;
+    var host = canvas.parentNode;               // the wrap, which flexes to fill
     var availW = host.clientWidth;
     if(!availW) return;
 
-    // measure the page with no board in it to see what height is going spare
+    // Measure the room actually left inside the wrap. Reading the document's
+    // scroll height cannot work here: the body carries min-height:100vh, so it
+    // never reports less than a full screen and the board came out at its
+    // minimum every time.
     canvas.style.height = "0px";
-    var chrome = document.documentElement.scrollHeight;
-    var availH = window.innerHeight - chrome - 6;
+    var cs = getComputedStyle(host);
+    var pad = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    var gap = parseFloat(cs.rowGap) || 0;
+    var used = 0, visible = 1;                  // the board counts as one
+    for(var i = 0; i < host.children.length; i++){
+      var ch = host.children[i];
+      if(ch === canvas || ch.hidden) continue;
+      used += ch.offsetHeight; visible++;
+    }
+    var availH = host.clientHeight - pad - used - gap * (visible - 1) - 2;
 
     cell = Math.max(18, Math.min(availW / COLS, availH / ROWS));
     var w = cell * COLS, h = cell * ROWS;
@@ -584,39 +622,77 @@
 
   /* ---------- chrome ---------- */
 
-  // Picking a map starts a fresh run on it. Each map keeps its own best wave,
-  // since a short route and a long one are not the same challenge.
-  function buildMapChips(){
-    var row = el("maps");
-    row.textContent = "";
+  /* ---------- the two screens ---------- */
+
+  var view = "menu";
+
+  // A thumbnail of the route, drawn from the same waypoints the game walks, so
+  // the choice on the menu is the shape you are about to play.
+  function routeThumb(way){
+    var pts = way.map(function(p){
+      return ((p[0] + 1) / 10 * 52).toFixed(1) + "," + ((p[1] + 1) / 12 * 60).toFixed(1);
+    }).join(" ");
+    return '<svg viewBox="0 0 52 60" aria-hidden="true">' +
+             '<rect x="1" y="1" width="50" height="58" rx="4" fill="#1A222A"/>' +
+             '<polyline points="' + pts + '" fill="none" stroke="#2C3945" ' +
+               'stroke-width="7" stroke-linejoin="round" stroke-linecap="round"/>' +
+           '</svg>';
+  }
+
+  function buildMapList(){
+    var list = el("maplist");
+    list.textContent = "";
+    var saved = load();
     MAPS.forEach(function(m, i){
-      var b = document.createElement("button");
-      b.className = "chip";
-      b.dataset.map = m.id;
-      b.textContent = m.name;
-      b.setAttribute("aria-pressed", m.id === st.map);
-      b.addEventListener("click", function(){
-        if(m.id === st.map) return;
-        switchMap(i);
-      });
-      row.appendChild(b);
+      var card = document.createElement("button");
+      card.className = "mapcard";
+      card.dataset.map = m.id;
+
+      var best = (st.bests && st.bests[m.id]) || 0;
+      var live = saved && saved.map === m.id && !saved.over && (saved.wave > 1 || (saved.towers||[]).length);
+      card.dataset.live = !!live;
+
+      var sub = live ? "In progress \u00B7 wave " + saved.wave
+                     : (best ? "Best wave " + best : m.gold + " gold \u00B7 " + m.lives + " lives");
+      card.innerHTML = routeThumb(m.way) +
+        '<span><span class="nm"></span><span class="sub"></span></span>';
+      card.querySelector(".nm").textContent = m.name;
+      card.querySelector(".sub").textContent = sub;
+      card.addEventListener("click", function(){ openMap(i); });
+      list.appendChild(card);
     });
   }
-  function syncMapChips(){
-    var kids = el("maps").children;
-    for(var i = 0; i < kids.length; i++)
-      kids[i].setAttribute("aria-pressed", MAPS[i].id === st.map);
+
+  function showMenu(){
+    view = "menu";
+    el("mapmenu").hidden = false;
+    el("gameview").hidden = true;
+    el("new-game").hidden = true;
+    el("back").textContent = "\u2190 Arcade";
+    el("back").setAttribute("href", "./index.html");
+    buildMapList();
   }
-  function switchMap(i){
-    st.bests[st.map] = Math.max(st.bests[st.map] || 0, st.best);
-    var bests = st.bests, everBuilt = st.placedEver;
-    useMap(i);
-    st = newState();
-    st.map = MAPS[mapIndex].id;
-    st.bests = bests;
-    st.best = bests[st.map] || 0;
-    st.placedEver = everBuilt;
+
+  function openMap(i){
+    var fresh = MAPS[i].id !== st.map || st.phase === "over";
+    if(fresh){
+      var bests = st.bests, ever = st.placedEver;
+      useMap(i);
+      st = newState();
+      st.map = MAPS[mapIndex].id;
+      st.bests = bests;
+      st.best = bests[st.map] || 0;
+      st.placedEver = ever;
+    }else{
+      useMap(mapById(st.map));
+    }
     selectedTower = null;
+    view = "game";
+    el("mapmenu").hidden = true;
+    el("gameview").hidden = false;
+    el("new-game").hidden = false;
+    el("back").textContent = "\u2190 Maps";
+    el("back").removeAttribute("href");
     save(); syncChrome(); resize(); draw();
   }
 
@@ -646,7 +722,6 @@
     el("gold-n").textContent = Math.floor(st.gold);
     el("wave-n").textContent = st.wave;
     el("best-n").textContent = st.best;
-    syncMapChips();
     el("lives-stat").dataset.warn = st.lives <= 5;
 
     var kids = el("picker").children;
@@ -726,6 +801,10 @@
   }
   el("new-game").addEventListener("click", reset);
 
+  el("back").addEventListener("click", function(ev){
+    if(view === "game"){ ev.preventDefault(); showMenu(); }
+  });
+
   /* ---------- loop ---------- */
 
   var STEP = 1/60, acc = 0, last = 0;
@@ -743,18 +822,16 @@
       if(st.phase !== "wave" && wasWave){ acc = 0; save(); }
       syncChrome();
     }
-    draw();
+    if(view === "game") draw();
     requestAnimationFrame(frame);
   }
 
-  window.addEventListener("resize", function(){ resize(); draw(); });
+  window.addEventListener("resize", function(){ if(view === "game"){ resize(); draw(); } });
 
   buildPicker();
   restore();
-  buildMapChips();
-  resize();
   syncChrome();
-  draw();
+  showMenu();          // the board is sized when a map is opened, not before
   requestAnimationFrame(frame);
 
   if("serviceWorker" in navigator){
