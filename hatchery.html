@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#151C24">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Arcade">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<link rel="icon" href="./icon-192.png">
+<title>Hatchery</title>
+<link rel="stylesheet" href="./app.css">
+<style>
+  body{padding-bottom:calc(env(safe-area-inset-bottom) + 92px)}
+
+  .purse{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:0 2px 10px;border-bottom:1px solid var(--line)}
+  .purse .bit{font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);font-variant-numeric:tabular-nums}
+  .purse .bit b{display:block;font-size:20px;font-weight:300;color:var(--ink);margin-top:2px}
+
+  h2.sec{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:400;margin:16px 0 8px}
+
+  .eggrow{display:flex;gap:8px;flex-wrap:wrap}
+  .egg{
+    display:flex;align-items:center;gap:9px;background:var(--surface);
+    border:1px solid var(--line);border-radius:var(--radius);padding:8px 11px;font-size:12.5px;
+  }
+  .egg[data-ready="true"]{border-color:var(--accent);color:var(--accent)}
+  .egg canvas{display:block}
+
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:9px}
+  .card{
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    padding:10px;text-align:left;transition:border-color .12s ease, transform .12s ease;
+  }
+  .card[aria-pressed="true"]{border-color:var(--sel);transform:translateY(-2px)}
+  .card[data-away="true"]{opacity:.5}
+  .card .top{display:flex;align-items:center;gap:9px}
+  .card canvas{display:block;flex:none}
+  .card .nm{font-size:13.5px;font-weight:500;line-height:1.2}
+  .card .mix{font-size:10.5px;color:var(--muted);letter-spacing:.06em;margin-top:2px}
+  .bars{margin-top:8px;display:grid;gap:3px}
+  .bar{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase}
+  .bar i{flex:none;width:26px;font-style:normal}
+  .bar span{flex:1;height:4px;background:#141B22;border-radius:2px;overflow:hidden}
+  .bar span b{display:block;height:100%;background:var(--c);border-radius:2px}
+  .bar u{flex:none;width:16px;text-align:right;text-decoration:none;color:var(--ink);font-variant-numeric:tabular-nums}
+  .tag{display:inline-block;margin-top:7px;font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+       color:var(--sel);border:1px solid var(--sel);border-radius:20px;padding:2px 7px}
+
+  .trip{
+    display:flex;align-items:center;gap:11px;width:100%;text-align:left;
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    padding:11px 12px;margin-bottom:8px;
+  }
+  .trip[data-busy="true"]{opacity:.6}
+  .trip .nm{font-size:14px;font-weight:500;display:block}
+  .trip .sub{font-size:11.5px;color:var(--muted);display:block;margin-top:3px}
+  .trip .odds{flex:none;font-size:12px;font-variant-numeric:tabular-nums;color:var(--accent)}
+  .trip .odds[data-poor="true"]{color:#E0574A}
+
+  .actions{
+    position:fixed;left:0;right:0;bottom:0;z-index:20;
+    background:linear-gradient(to top, var(--ground) 72%, rgba(21,28,36,0));
+    padding:14px 12px calc(env(safe-area-inset-bottom) + 14px);
+    display:flex;gap:8px;max-width:560px;margin:0 auto;
+  }
+  .actions .ctrl{flex:1;max-width:none}
+  .ctrl[data-primary="true"]{background:var(--accent);border-color:var(--accent);color:#10171E;font-weight:500}
+  .ctrl[data-primary="true"]:disabled{background:var(--surface);border-color:var(--line);color:var(--line);font-weight:400}
+
+  .flash{
+    background:var(--surface);border:1px solid var(--sel);border-radius:var(--radius);
+    padding:10px 12px;font-size:13px;margin-top:10px;
+  }
+  .empty{color:var(--muted);font-size:13px;padding:4px 2px}
+</style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="./index.html">&larr; Arcade</a>
+  <button class="chip" id="new-game">Reset</button>
+</header>
+
+<div class="purse">
+  <span class="bit">Gold<b id="gold">0</b></span>
+  <span class="bit">Dragons<b id="roster">0</b></span>
+  <span class="bit">Kinds found<b id="found">0</b></span>
+</div>
+
+<div class="flash" id="flash" hidden></div>
+
+<h2 class="sec" id="egg-head" hidden>Nest</h2>
+<div class="eggrow" id="eggs"></div>
+
+<h2 class="sec">Dragons</h2>
+<div class="grid" id="dragons"></div>
+
+<h2 class="sec">Expeditions</h2>
+<div id="trips"></div>
+
+<p class="note" id="note" hidden>Storage is blocked here, so your roost won't be saved between sessions.</p>
+
+<div class="actions">
+  <button class="ctrl" data-primary="true" id="breed" disabled>Breed</button>
+  <button class="ctrl" id="expand">Expand roost</button>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ================= logic (no DOM until marked) ================= */
+
+  var KEY = "arcade.hatchery.v1";
+  var SLOTS = 4;                 // gene slots per dragon
+  var MUTATE = 0.06;             // chance a slot comes up as something new
+
+  var ELEMENTS = {
+    ember: { name:"Ember", colour:"#E0574A", power:9, speed:5, guard:4,  luck:3 },
+    tide:  { name:"Tide",  colour:"#4A86D1", power:4, speed:5, guard:9,  luck:4 },
+    stone: { name:"Stone", colour:"#9C6B4A", power:6, speed:2, guard:10, luck:3 },
+    gale:  { name:"Gale",  colour:"#4FB6C4", power:3, speed:10,guard:3,  luck:5 },
+    bloom: { name:"Bloom", colour:"#8FCB52", power:4, speed:4, guard:6,  luck:9 },
+    gloom: { name:"Gloom", colour:"#7B6FD1", power:7, speed:7, guard:3,  luck:6 }
+  };
+  var ELS = Object.keys(ELEMENTS);
+  var STATS = ["power","speed","guard","luck"];
+
+  /* Pairs that do something together. Without these every mix would be a
+     weighted average of its parts, and a weighted average can never beat the
+     best of its parts at anything - so every hybrid would be a strictly worse
+     compromise and nobody would ever breed one. */
+  var SYNERGY = [
+    { a:"ember", b:"gale",  stat:"power", mult:1.25, name:"Wildfire" },
+    { a:"tide",  b:"bloom", stat:"luck",  mult:1.25, name:"Verdant" },
+    { a:"stone", b:"gloom", stat:"guard", mult:1.25, name:"Obsidian" },
+    { a:"gale",  b:"gloom", stat:"speed", mult:1.25, name:"Nightwind" },
+    { a:"ember", b:"stone", stat:"guard", mult:1.20, name:"Magma" },
+    { a:"tide",  b:"gale",  stat:"speed", mult:1.20, name:"Monsoon" }
+  ];
+
+  function clamp(v, lo, hi){ return v < lo ? lo : (v > hi ? hi : v); }
+
+  // Composition as a fraction per element, derived from the discrete slots.
+  function comp(slots){
+    var c = {};
+    slots.forEach(function(e){ c[e] = (c[e] || 0) + 1 / SLOTS; });
+    return c;
+  }
+  function distinct(slots){ return Object.keys(comp(slots)).length; }
+
+  // Sorted element list, strongest share first: used for names, colours and art.
+  function parts(slots){
+    var c = comp(slots);
+    return Object.keys(c).map(function(e){ return { el:e, share:c[e] }; })
+      .sort(function(x, y){ return y.share - x.share || (x.el < y.el ? -1 : 1); });
+  }
+
+  function activeSynergies(slots){
+    var c = comp(slots);
+    return SYNERGY.filter(function(s){ return (c[s.a] || 0) >= 0.25 && (c[s.b] || 0) >= 0.25; });
+  }
+
+  /* Stats are the blend of the parts, then lifted for how mixed the dragon is.
+     The lift is what stops a hybrid being strictly worse than a pure dragon:
+     harder to breed, so allowed a bigger budget. */
+  function statsOf(slots){
+    var c = comp(slots), out = {};
+    STATS.forEach(function(k){
+      var v = 0;
+      Object.keys(c).forEach(function(e){ v += c[e] * ELEMENTS[e][k]; });
+      out[k] = v;
+    });
+    var lift = 1 + 0.14 * (distinct(slots) - 1);
+    STATS.forEach(function(k){ out[k] *= lift; });
+    activeSynergies(slots).forEach(function(s){ out[s.stat] *= s.mult; });
+    STATS.forEach(function(k){ out[k] = Math.round(out[k] * 10) / 10; });
+    return out;
+  }
+  function rating(slots){
+    var s = statsOf(slots);
+    return Math.round(STATS.reduce(function(t, k){ return t + s[k]; }, 0));
+  }
+
+  var PREFIX = { ember:"Cinder", tide:"Brine", stone:"Crag", gale:"Zephyr", bloom:"Thorn", gloom:"Dusk" };
+  var SUFFIX = { ember:"flare", tide:"tide", stone:"crag", gale:"wing", bloom:"bloom", gloom:"shade" };
+  function nameFor(slots){
+    var p = parts(slots);
+    if(p.length === 1) return PREFIX[p[0].el] + "ling";
+    return PREFIX[p[0].el] + SUFFIX[p[1].el];
+  }
+
+  // A stable id for "which kind of dragon is this", for the discovery count.
+  function kindOf(slots){ return slots.slice().sort().join("+"); }
+
+  /* ---------- breeding ----------
+     Slots are drawn from the parents' pooled genes rather than averaged. An
+     average would work once and then destroy itself: blending inheritance
+     drives a population to the mean, and within a dozen generations every
+     dragon is the same grey mixture. Drawing discrete slots keeps pure and
+     near-pure dragons reappearing indefinitely. */
+  function breedSlots(a, b, rng){
+    var pool = a.concat(b), out = [];
+    for(var i = 0; i < SLOTS; i++){
+      out.push(rng() < MUTATE ? ELS[Math.floor(rng() * ELS.length)]
+                              : pool[Math.floor(rng() * pool.length)]);
+    }
+    return out;
+  }
+
+  function breedCost(a, b){
+    return 20 + 5 * (distinct(a) + distinct(b));
+  }
+  function hatchMs(slots){ return (35 + 10 * (distinct(slots) - 1)) * 1000; }
+
+  /* ---------- expeditions ---------- */
+
+  /* The ladder is pitched against what a starting dragon actually has. A first
+     pair sits around 3-9 in its best stat, and a well-bred hybrid reaches about
+     15, so the rungs run from 3 to 13. Pitched any higher and the opening is
+     unplayable: the first version asked for luck 5 when a starter might have 3,
+     so it failed nearly every run, never earned, and the game stalled dead
+     inside two minutes. */
+  var TRIPS = [
+    { id:"meadow", name:"Sunlit Meadow", stat:"luck",  need:3,  secs:25,  gold:20 },
+    { id:"caves",  name:"Ember Caves",   stat:"power", need:6,  secs:40,  gold:36 },
+    { id:"reef",   name:"Sunken Reef",   stat:"guard", need:8,  secs:55,  gold:56 },
+    { id:"peaks",  name:"Storm Peaks",   stat:"speed", need:10, secs:75,  gold:86 },
+    { id:"rift",   name:"Umbral Rift",   stat:"power", need:13, secs:105, gold:142 }
+  ];
+  function tripById(id){
+    for(var i = 0; i < TRIPS.length; i++) if(TRIPS[i].id === id) return TRIPS[i];
+    return null;
+  }
+  // Exactly meeting the requirement is a coin flip a little in your favour, and
+  // every point above it is worth eight more. Starting from 0.2 meant meeting a
+  // requirement head-on still lost four times in five.
+  function odds(trip, slots){
+    var s = statsOf(slots);
+    return clamp(0.45 + (s[trip.stat] - trip.need) * 0.08, 0.08, 0.95);
+  }
+  function payout(trip, slots){
+    return Math.round(trip.gold * (1 + statsOf(slots).luck / 50));
+  }
+
+  /* ---------- state ---------- */
+
+  function newState(rng){
+    var st = { gold: 80, cap: 6, dragons: [], eggs: [], away: {}, found: {}, nextId: 1, seenEver: false };
+    // two starter dragons, near-pure and of different elements
+    var picks = ELS.slice();
+    for(var i = picks.length - 1; i > 0; i--){
+      var j = Math.floor(rng() * (i + 1)), t = picks[i]; picks[i] = picks[j]; picks[j] = t;
+    }
+    [picks[0], picks[1]].forEach(function(el){
+      var slots = [el, el, el, rng() < 0.5 ? el : picks[2]];
+      addDragon(st, slots);
+    });
+    return st;
+  }
+
+  function addDragon(st, slots){
+    var d = { id: st.nextId++, slots: slots.slice() };
+    st.dragons.push(d);
+    st.found[kindOf(slots)] = 1;
+    return d;
+  }
+  function dragonById(st, id){
+    for(var i = 0; i < st.dragons.length; i++) if(st.dragons[i].id === id) return st.dragons[i];
+    return null;
+  }
+  function isAway(st, id){ return !!st.away[id]; }
+  function freeDragons(st){
+    return st.dragons.filter(function(d){ return !isAway(st, d.id); });
+  }
+  function roomLeft(st){ return st.cap - st.dragons.length - st.eggs.length; }
+
+  function canBreed(st, aId, bId){
+    if(aId === bId) return false;
+    var a = dragonById(st, aId), b = dragonById(st, bId);
+    if(!a || !b) return false;
+    if(isAway(st, aId) || isAway(st, bId)) return false;
+    if(roomLeft(st) < 1) return false;
+    return st.gold >= breedCost(a.slots, b.slots);
+  }
+  function breed(st, aId, bId, now, rng){
+    if(!canBreed(st, aId, bId)) return null;
+    var a = dragonById(st, aId), b = dragonById(st, bId);
+    st.gold -= breedCost(a.slots, b.slots);
+    var slots = breedSlots(a.slots, b.slots, rng);
+    var egg = { id: st.nextId++, slots: slots, ready: now + hatchMs(slots) };
+    st.eggs.push(egg);
+    return egg;
+  }
+  function hatch(st, eggId, now){
+    for(var i = 0; i < st.eggs.length; i++){
+      var e = st.eggs[i];
+      if(e.id !== eggId) continue;
+      if(now < e.ready) return null;
+      st.eggs.splice(i, 1);
+      return addDragon(st, e.slots);
+    }
+    return null;
+  }
+
+  function sendOut(st, dragonId, tripId, now){
+    var d = dragonById(st, dragonId), trip = tripById(tripId);
+    if(!d || !trip || isAway(st, dragonId)) return false;
+    st.away[dragonId] = { trip: tripId, back: now + trip.secs * 1000 };
+    return true;
+  }
+
+  // Returns a list of what came home, so the page can say what happened.
+  function collect(st, now, rng){
+    var news = [];
+    Object.keys(st.away).forEach(function(idStr){
+      var job = st.away[idStr];
+      if(now < job.back) return;
+      var d = dragonById(st, parseInt(idStr, 10));
+      var trip = tripById(job.trip);
+      delete st.away[idStr];
+      if(!d || !trip) return;
+      var won = rng() < odds(trip, d.slots);
+      // a failed run still pays something, or a bad early roll ends the game
+      var gold = won ? payout(trip, d.slots) : Math.round(payout(trip, d.slots) * 0.4);
+      st.gold += gold;
+      var egg = null;
+      if(won && rng() < 0.18 && roomLeft(st) >= 1){
+        // a wild egg, which is how genes the roost has never seen get in
+        var slots = [];
+        for(var i = 0; i < SLOTS; i++) slots.push(ELS[Math.floor(rng() * ELS.length)]);
+        egg = { id: st.nextId++, slots: slots, ready: now + hatchMs(slots) };
+        st.eggs.push(egg);
+      }
+      news.push({ name: nameFor(d.slots), trip: trip.name, won: won, gold: gold, egg: !!egg });
+    });
+    return news;
+  }
+
+  function expandCost(st){ return Math.round(70 * Math.pow(1.55, st.cap - 6)); }
+  function expand(st){
+    var c = expandCost(st);
+    if(st.gold < c) return false;
+    st.gold -= c; st.cap++;
+    return true;
+  }
+
+  /* ================= end of logic; DOM from here ================= */
+
+  function el(id){ return document.getElementById(id); }
+  function rng(){ return Math.random(); }
+  function now(){ return Date.now(); }
+
+  var storageOK = true, memory = null, st = null;
+  var picked = [], pickedTrip = null, flashUntil = 0;
+
+  function load(){
+    try{ var raw = localStorage.getItem(KEY); return raw ? JSON.parse(raw) : null; }
+    catch(e){ storageOK = false; return memory; }
+  }
+  function save(){
+    memory = st;
+    try{ localStorage.setItem(KEY, JSON.stringify(st)); }
+    catch(e){ storageOK = false; }
+  }
+  function boot(){
+    var s = load();
+    if(s && s.dragons && s.dragons.length){
+      st = s;
+      st.away = st.away || {}; st.found = st.found || {}; st.eggs = st.eggs || [];
+    }else{
+      st = newState(rng);
+    }
+  }
+
+  /* ---------- drawing a dragon ----------
+     The whole creature comes out of the element mix: colours blended by share,
+     and the silhouette shifted by the stats those elements give it. This is why
+     percentage composition was worth keeping - a lookup table of named hybrids
+     could not draw itself. */
+
+  /* Blending the element colours by their raw shares turns any three-way mix
+     into grey sludge, which is the "everything looks the same" failure in
+     visual form. Shares are weighted toward the dominant element first, so a
+     50/25/25 dragon reads as its main element tinted by the others rather than
+     as the average of all three. */
+  var COLOUR_BIAS = 2.2;
+  function mixColour(slots){
+    var c = comp(slots), r = 0, g = 0, b = 0, total = 0, w = {};
+    Object.keys(c).forEach(function(e){ w[e] = Math.pow(c[e], COLOUR_BIAS); total += w[e]; });
+    Object.keys(c).forEach(function(e){
+      var hex = ELEMENTS[e].colour, k = w[e] / total;
+      r += parseInt(hex.substr(1,2),16) * k;
+      g += parseInt(hex.substr(3,2),16) * k;
+      b += parseInt(hex.substr(5,2),16) * k;
+    });
+    return "rgb(" + Math.round(r) + "," + Math.round(g) + "," + Math.round(b) + ")";
+  }
+
+  function drawDragon(cv, slots, px){
+    var dpr = window.devicePixelRatio || 1;
+    cv.width = Math.round(px * dpr); cv.height = Math.round(px * dpr);
+    cv.style.width = px + "px"; cv.style.height = px + "px";
+    var c = cv.getContext("2d");
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, px, px);
+
+    var p = parts(slots), s = statsOf(slots);
+    var body = mixColour(slots);
+    var accent = ELEMENTS[p.length > 1 ? p[1].el : p[0].el].colour;
+    var u = px / 100;                                  // draw in a 100-unit box
+
+    var wing = 18 + s.speed * 2.0;                     // faster dragons, bigger wings
+    var girth = 16 + s.guard * 1.3;                    // sturdier dragons, rounder body
+    var horns = Math.max(1, Math.min(4, Math.round(s.power / 3.5)));
+
+    // wings behind the body
+    c.fillStyle = accent; c.globalAlpha = 0.55;
+    [-1, 1].forEach(function(dir){
+      c.beginPath();
+      c.moveTo(50*u, 48*u);
+      c.quadraticCurveTo((50 + dir*wing)*u, (16)*u, (50 + dir*wing*0.8)*u, 54*u);
+      c.quadraticCurveTo((50 + dir*wing*0.3)*u, 50*u, 50*u, 48*u);
+      c.fill();
+    });
+    c.globalAlpha = 1;
+
+    // tail
+    c.strokeStyle = body; c.lineWidth = 5*u; c.lineCap = "round";
+    c.beginPath();
+    c.moveTo(50*u, 62*u);
+    c.quadraticCurveTo(26*u, 74*u, 22*u, 88*u);
+    c.stroke();
+
+    // body
+    c.fillStyle = body;
+    c.beginPath();
+    c.ellipse(50*u, 58*u, girth*0.55*u, (girth*0.62 + 6)*u, 0, 0, Math.PI*2);
+    c.fill();
+
+    // neck and head
+    c.lineWidth = 9*u;
+    c.beginPath(); c.moveTo(50*u, 48*u); c.lineTo(58*u, 34*u); c.stroke();
+    c.beginPath(); c.ellipse(60*u, 29*u, 11*u, 9*u, 0.3, 0, Math.PI*2); c.fill();
+
+    // horns, one per lump of power
+    c.strokeStyle = accent; c.lineWidth = 3*u;
+    for(var i = 0; i < horns; i++){
+      var a = -0.5 - i * 0.28;
+      c.beginPath();
+      c.moveTo(56*u, 23*u);
+      c.lineTo((56 + Math.cos(a)*11)*u, (23 + Math.sin(a)*11)*u);
+      c.stroke();
+    }
+
+    // a glint for fortune
+    c.fillStyle = "#10171E";
+    c.beginPath(); c.arc(65*u, 27*u, 2.2*u, 0, Math.PI*2); c.fill();
+    if(s.luck > 7){
+      c.fillStyle = "rgba(255,255,255,.75)";
+      c.beginPath(); c.arc(65.8*u, 26.2*u, 0.9*u, 0, Math.PI*2); c.fill();
+    }
+  }
+
+  function drawEgg(cv, slots, px){
+    var dpr = window.devicePixelRatio || 1;
+    cv.width = Math.round(px*dpr); cv.height = Math.round(px*dpr);
+    cv.style.width = px+"px"; cv.style.height = px+"px";
+    var c = cv.getContext("2d");
+    c.setTransform(dpr,0,0,dpr,0,0);
+    c.clearRect(0,0,px,px);
+    c.fillStyle = mixColour(slots);
+    c.beginPath(); c.ellipse(px/2, px*0.55, px*0.3, px*0.4, 0, 0, Math.PI*2); c.fill();
+    c.fillStyle = "rgba(0,0,0,.22)";
+    c.beginPath(); c.ellipse(px/2, px*0.68, px*0.22, px*0.18, 0, 0, Math.PI*2); c.fill();
+  }
+
+  /* ---------- rendering ---------- */
+
+  function fmt(ms){
+    var s = Math.max(0, Math.ceil(ms / 1000));
+    return s >= 60 ? Math.floor(s/60) + "m " + (s % 60) + "s" : s + "s";
+  }
+
+  function mixLabel(slots){
+    return parts(slots).map(function(p){
+      return ELEMENTS[p.el].name + " " + Math.round(p.share * 100) + "%";
+    }).join("  ");
+  }
+
+  function renderEggs(){
+    var wrap = el("eggs"), t = now();
+    wrap.textContent = "";
+    el("egg-head").hidden = st.eggs.length === 0;
+    st.eggs.forEach(function(e){
+      var ready = t >= e.ready;
+      var b = document.createElement("button");
+      b.className = "egg";
+      b.dataset.ready = ready;
+      b.dataset.egg = e.id;
+      var cv = document.createElement("canvas");
+      b.appendChild(cv);
+      var sp = document.createElement("span");
+      sp.textContent = ready ? "Hatch" : fmt(e.ready - t);
+      b.appendChild(sp);
+      b.addEventListener("click", function(){
+        var d = hatch(st, e.id, now());
+        if(d){ flash(nameFor(d.slots) + " hatched."); save(); render(); }
+      });
+      wrap.appendChild(b);
+      drawEgg(cv, e.slots, 26);
+    });
+  }
+
+  function renderDragons(){
+    var wrap = el("dragons");
+    wrap.textContent = "";
+    if(!st.dragons.length){
+      var p = document.createElement("p");
+      p.className = "empty"; p.textContent = "No dragons. Hatch an egg.";
+      wrap.appendChild(p);
+      return;
+    }
+    var t = now();
+    st.dragons.forEach(function(d){
+      var away = st.away[d.id];
+      var card = document.createElement("button");
+      card.className = "card";
+      card.dataset.id = d.id;
+      card.dataset.away = !!away;
+      card.setAttribute("aria-pressed", picked.indexOf(d.id) >= 0);
+
+      var top = document.createElement("div");
+      top.className = "top";
+      var cv = document.createElement("canvas");
+      top.appendChild(cv);
+      var info = document.createElement("div");
+      var nm = document.createElement("div"); nm.className = "nm"; nm.textContent = nameFor(d.slots);
+      var mx = document.createElement("div"); mx.className = "mix"; mx.textContent = mixLabel(d.slots);
+      info.appendChild(nm); info.appendChild(mx);
+      top.appendChild(info);
+      card.appendChild(top);
+
+      var bars = document.createElement("div");
+      bars.className = "bars";
+      var s = statsOf(d.slots);
+      STATS.forEach(function(k){
+        var row = document.createElement("div"); row.className = "bar";
+        var lab = document.createElement("i"); lab.textContent = k.slice(0,3);
+        var track = document.createElement("span");
+        var fill = document.createElement("b");
+        fill.style.width = Math.min(100, s[k] / 18 * 100) + "%";
+        fill.style.setProperty("--c", ELEMENTS[parts(d.slots)[0].el].colour);
+        track.appendChild(fill);
+        var val = document.createElement("u"); val.textContent = Math.round(s[k]);
+        row.appendChild(lab); row.appendChild(track); row.appendChild(val);
+        bars.appendChild(row);
+      });
+      card.appendChild(bars);
+
+      activeSynergies(d.slots).forEach(function(sy){
+        var tag = document.createElement("span");
+        tag.className = "tag"; tag.textContent = sy.name;
+        card.appendChild(tag);
+      });
+
+      if(away){
+        var st2 = document.createElement("div");
+        st2.className = "mix";
+        st2.style.marginTop = "7px";
+        st2.textContent = "Away · " + fmt(away.back - t);
+        card.appendChild(st2);
+      }
+
+      card.addEventListener("click", function(){ toggle(d.id); });
+      wrap.appendChild(card);
+      drawDragon(cv, d.slots, 54);
+    });
+  }
+
+  function renderTrips(){
+    var wrap = el("trips");
+    wrap.textContent = "";
+    var one = picked.length === 1 ? dragonById(st, picked[0]) : null;
+    TRIPS.forEach(function(trip){
+      var busy = Object.keys(st.away).some(function(k){ return st.away[k].trip === trip.id; });
+      var b = document.createElement("button");
+      b.className = "trip";
+      b.dataset.busy = busy;
+      b.dataset.trip = trip.id;
+
+      var info = document.createElement("div");
+      info.style.flex = "1";
+      var nm = document.createElement("span"); nm.className = "nm"; nm.textContent = trip.name;
+      var sub = document.createElement("span"); sub.className = "sub";
+      sub.textContent = "Needs " + trip.stat + " " + trip.need + " · " +
+                        fmt(trip.secs * 1000) + " · " + trip.gold + " gold";
+      info.appendChild(nm); info.appendChild(sub);
+      b.appendChild(info);
+
+      var od = document.createElement("span");
+      od.className = "odds";
+      if(one){
+        var pc = Math.round(odds(trip, one.slots) * 100);
+        od.textContent = pc + "%";
+        od.dataset.poor = pc < 45;
+      }else{
+        od.textContent = "—";
+      }
+      b.appendChild(od);
+
+      b.addEventListener("click", function(){
+        if(!one){ flash("Pick one dragon to send."); return; }
+        if(sendOut(st, one.id, trip.id, now())){
+          flash(nameFor(one.slots) + " set off for the " + trip.name + ".");
+          picked = []; save(); render();
+        }
+      });
+      wrap.appendChild(b);
+    });
+  }
+
+  function flash(msg){
+    el("flash").textContent = msg;
+    el("flash").hidden = false;
+    flashUntil = now() + 4000;
+  }
+
+  function render(){
+    el("gold").textContent = Math.floor(st.gold);
+    el("roster").textContent = st.dragons.length + " / " + st.cap;
+    el("found").textContent = Object.keys(st.found).length;
+    el("note").hidden = storageOK;
+
+    renderEggs(); renderDragons(); renderTrips();
+
+    var canB = picked.length === 2 && canBreed(st, picked[0], picked[1]);
+    var bb = el("breed");
+    bb.disabled = !canB;
+    if(picked.length === 2){
+      var a = dragonById(st, picked[0]), b2 = dragonById(st, picked[1]);
+      bb.textContent = a && b2 ? "Breed · " + breedCost(a.slots, b2.slots) + " gold" : "Breed";
+    }else{
+      bb.textContent = picked.length === 1 ? "Pick one more" : "Breed";
+    }
+    el("expand").textContent = "Roost +1 · " + expandCost(st);
+    el("expand").disabled = st.gold < expandCost(st);
+  }
+
+  function toggle(id){
+    if(isAway(st, id)){ flash("That one is away."); return; }
+    var i = picked.indexOf(id);
+    if(i >= 0) picked.splice(i, 1);
+    else { picked.push(id); if(picked.length > 2) picked.shift(); }
+    render();
+  }
+
+  el("breed").addEventListener("click", function(){
+    if(picked.length !== 2) return;
+    var egg = breed(st, picked[0], picked[1], now(), rng);
+    if(!egg){ flash(roomLeft(st) < 1 ? "No room in the roost." : "Not enough gold."); return; }
+    flash("An egg is warming · " + fmt(hatchMs(egg.slots)));
+    picked = []; save(); render();
+  });
+  el("expand").addEventListener("click", function(){
+    if(expand(st)){ save(); render(); }
+  });
+  el("new-game").addEventListener("click", function(){
+    st = newState(rng); picked = []; save(); render();
+  });
+
+  // returning expeditions and ticking clocks
+  setInterval(function(){
+    var news = collect(st, now(), rng);
+    if(news.length){
+      var n = news[0];
+      flash(n.name + (n.won ? " came back from the " + n.trip + " with " + n.gold + " gold."
+                            : " struggled at the " + n.trip + " and salvaged " + n.gold + " gold.") +
+            (n.egg ? " They found a wild egg." : ""));
+      save();
+    }
+    if(flashUntil && now() > flashUntil){ el("flash").hidden = true; flashUntil = 0; }
+    render();
+  }, 1000);
+
+  boot();
+  save();
+  render();
+
+  if("serviceWorker" in navigator){
+    window.addEventListener("load", function(){
+      navigator.serviceWorker.register("./sw.js").catch(function(){});
+    });
+  }
+})();
+</script>
+</body>
+</html>

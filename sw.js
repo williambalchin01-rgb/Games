@@ -1,5 +1,5 @@
-var CACHE = "arcade-v16";
-var FILES = ["./","./index.html","./decant.html","./blocks.html","./towers.html","./gridiron.html","./app.css",
+var CACHE = "arcade-v17";
+var FILES = ["./","./index.html","./decant.html","./blocks.html","./towers.html","./gridiron.html","./hatchery.html","./app.css",
              "./manifest.json","./apple-touch-icon.png","./icon-192.png","./icon-512.png"];
 
 self.addEventListener("install", function(e){

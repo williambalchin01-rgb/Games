@@ -13,18 +13,18 @@
 <title>Arcade</title>
 <link rel="stylesheet" href="./app.css">
 <style>
-  .title{font-size:30px;font-weight:200;letter-spacing:-.02em;margin-top:2px}
-  .menu{flex:1;display:flex;flex-direction:column;gap:12px;padding:14px 0 0}
+  .title{font-size:26px;font-weight:200;letter-spacing:-.02em;margin-top:2px}
+  .menu{flex:1;display:flex;flex-direction:column;gap:9px;padding:10px 0 0}
   .game{
     display:flex;align-items:center;gap:16px;text-decoration:none;color:inherit;
     background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
-    padding:18px 16px;transition:border-color .12s ease, transform .12s ease;
+    padding:12px 14px;transition:border-color .12s ease, transform .12s ease;
   }
   .game:hover,.game:focus-visible{border-color:var(--accent);transform:translateY(-2px)}
-  .game h2{margin:0 0 3px;font-size:17px;font-weight:500}
-  .game p{margin:0;font-size:13px;color:var(--muted)}
+  .game h2{margin:0 0 2px;font-size:16px;font-weight:500}
+  .game p{margin:0;font-size:12.5px;color:var(--muted);line-height:1.35}
   .game .meta{margin-top:6px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-variant-numeric:tabular-nums}
-  .art{flex:none;width:52px;height:52px}
+  .art{flex:none;width:44px;height:44px}
   .art rect{rx:2}
 </style>
 </head>
@@ -38,6 +38,22 @@
 </header>
 
 <div class="menu">
+
+  <a class="game" href="./hatchery.html">
+    <svg class="art" viewBox="0 0 52 52" aria-hidden="true">
+      <ellipse cx="16" cy="32" rx="10" ry="13" fill="#E0574A"/>
+      <ellipse cx="35" cy="36" rx="8" ry="10" fill="#4A86D1"/>
+      <ellipse cx="30" cy="18" rx="7" ry="9" fill="#8FCB52"/>
+      <circle cx="16" cy="28" r="2" fill="#151C24"/>
+      <circle cx="35" cy="33" r="1.7" fill="#151C24"/>
+      <circle cx="30" cy="15" r="1.6" fill="#151C24"/>
+    </svg>
+    <div>
+      <h2>Hatchery</h2>
+      <p>Breed dragons from six elements and send them out to earn their keep.</p>
+      <div class="meta" id="hatchery-meta"></div>
+    </div>
+  </a>
 
   <a class="game" href="./gridiron.html">
     <svg class="art" viewBox="0 0 52 52" aria-hidden="true">
@@ -121,6 +137,15 @@
     if(b.best) bits.push("Best " + b.best);
     if(b.score) bits.push("Game in progress · " + b.score);
     document.getElementById("blocks-meta").textContent = bits.join("  ·  ");
+  }
+
+  var hx = read("arcade.hatchery.v1");
+  if(hx && hx.dragons){
+    var hb = [];
+    if(hx.dragons.length) hb.push(hx.dragons.length + " dragon" + (hx.dragons.length === 1 ? "" : "s"));
+    var kinds = hx.found ? Object.keys(hx.found).length : 0;
+    if(kinds) hb.push(kinds + " kinds found");
+    document.getElementById("hatchery-meta").textContent = hb.join("  \u00B7  ");
   }
 
   var g = read("arcade.gridiron.v1");
