@@ -73,7 +73,7 @@
     <button class="act" id="punt">Punt</button>
   </div>
 
-  <p class="howto" id="howto" hidden>Dashed lines show the routes. Snap, drag to aim, let go to throw, then steer the runner.</p>
+  <p class="howto" id="howto" hidden>Dashed lines show the routes. Snap, then pull back and release to throw &mdash; the further you pull, the further it flies.</p>
 </div>
 
 <div class="win" id="over" hidden>
@@ -96,6 +96,9 @@
   var CATCH_R = 2.0;       // yards; generous enough to be playable with a fingertip
   var TACKLE_R = 1.15;
   var BALL_SPEED = 30;     // yards per second
+  // How far a throw can carry. This is a rule of the game, not a detail of the
+  // controls: the simulation is held to the same reach as a player's thumb.
+  var THROW_MIN = 5, THROW_MAX = 34;
   var SACK_TIME = 3.4;     // seconds of protection before the rusher arrives
 
   // Everything above is in game-seconds. The play is stepped slower than real
@@ -139,7 +142,9 @@
   // Absolute waypoints for a receiver starting at (x0,y0) running `route`.
   function waypoints(x0, y0, route, flip){
     var r = flip ? mirror(route) : route;
-    return r.map(function(p){ return { x: x0 + p[0], y: y0 + p[1] }; });
+    return r.map(function(p){
+      return { x: x0 + p[0], y: Math.min(y0 + p[1], FIELD_L - 0.5) };
+    });
   }
 
   function clamp(v, lo, hi){ return v < lo ? lo : (v > hi ? hi : v); }
@@ -160,8 +165,11 @@
       dt -= d / speed;
       if(dt <= 0) return m.wi >= m.path.length;
     }
-    // past the last waypoint: keep drifting downfield rather than freezing
-    m.y += speed * dt * 0.85;
+    // past the last waypoint: keep drifting downfield rather than freezing, but
+    // never off the back of the field. Letting them run past the end line meant
+    // that near the goal every receiver was out of reach of a throw, since the
+    // throw itself can only be aimed as far as the end line.
+    m.y = Math.min(m.y + speed * dt * 0.85, FIELD_L - 0.5);
     return true;
   }
 
@@ -379,12 +387,23 @@
 
   function throwBall(st, play, tx, ty){
     if(play.phase !== "live") return false;
+    var t = reachable(play, tx, ty);
     play.phase = "air";
-    play.ball = {
-      x: play.qb.x, y: play.qb.y,
-      tx: clamp(tx, 0, FIELD_W), ty: clamp(ty, 0, FIELD_L)
-    };
+    play.ball = { x: play.qb.x, y: play.qb.y, tx: t.x, ty: t.y };
     return true;
+  }
+
+  // Pull the requested spot onto the arm: too close and it carries past, too far
+  // and it drops short, then clip it to the field of play.
+  function reachable(play, tx, ty){
+    var dx = tx - play.qb.x, dy = ty - play.qb.y;
+    var d = Math.sqrt(dx*dx + dy*dy);
+    if(d < 0.001) return { x: play.qb.x, y: play.qb.y + THROW_MIN };
+    var r = clamp(d, THROW_MIN, THROW_MAX);
+    return {
+      x: clamp(play.qb.x + dx / d * r, 0, FIELD_W),
+      y: clamp(play.qb.y + dy / d * r, 0, FIELD_L)
+    };
   }
 
   function scramble(st, play){
@@ -515,9 +534,9 @@
     var roll = rng();
     // Tuned so an even game is roughly a two-score affair rather than a walkover,
     // and so the rivals sharpen as your record improves.
-    var strength = 0.42 + Math.min(0.15, st.wins * 0.02);
+    var strength = 0.58 + Math.min(0.12, st.wins * 0.02);
     if(roll < strength){ st.opp += 7; return "Rivals score a touchdown"; }
-    if(roll < strength + 0.24){ st.opp += 3; return "Rivals kick a field goal"; }
+    if(roll < strength + 0.26){ st.opp += 3; return "Rivals kick a field goal"; }
     return "Rivals go three and out";
   }
 
@@ -600,9 +619,23 @@
     if(play){
       if(play.phase === "carry" && play.carrier) return play.carrier.y + 4;
       if(play.phase === "air") return (play.ball.ty + play.los) / 2 + 4;
+      if(play.phase === "live" && aim){
+        // A deep throw can land past the top of the view, and a landing spot you
+        // cannot see is no better than no preview at all. Lift the camera only
+        // as far as it takes to bring the target on screen, so it stays still
+        // for every throw that already fits.
+        var t = aimTarget();
+        if(t) return Math.max(play.los + 9, t.y + 3 - viewYards / 2);
+      }
       return play.los + 9;
     }
     return st.ballOn + 9;
+  }
+
+  // keep the view on the pitch: a little dead ground past each end line, no more
+  function clampCam(y){
+    var half = viewYards / 2;
+    return clamp(y, half - 6, FIELD_L + 6 - half);
   }
 
   function sx(x){ return x * scale; }
@@ -610,7 +643,7 @@
 
   function draw(){
     var w = FIELD_W * scale, h = viewYards * scale;
-    camY += (focusY() - camY) * 0.15;
+    camY += (clampCam(focusY()) - camY) * 0.15;
 
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = "#16211B";
@@ -649,14 +682,45 @@
 
     if(!play){ drawDot(FIELD_W/2, st.ballOn, 0.55, "#E6EBEF"); return; }
 
-    // aiming reticle
+    // throw preview: the band you are pulling, the flight path, and the circle
+    // the ball will actually drop into
     if(aim && play.phase === "live"){
-      ctx.strokeStyle = "rgba(230,235,239,.8)"; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(sx(aim.x), sy(aim.y), 20, 0, Math.PI*2); ctx.stroke();
-      ctx.strokeStyle = "rgba(230,235,239,.28)"; ctx.lineWidth = 1.5;
-      ctx.setLineDash([5,5]);
-      ctx.beginPath(); ctx.moveTo(sx(play.qb.x), sy(play.qb.y)); ctx.lineTo(sx(aim.x), sy(aim.y)); ctx.stroke();
-      ctx.setLineDash([]);
+      var t = aimTarget();
+
+      ctx.strokeStyle = "rgba(230,235,239,.30)";
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(aim.ox, aim.oy); ctx.lineTo(aim.cx, aim.cy); ctx.stroke();
+      ctx.fillStyle = "rgba(230,235,239,.30)";
+      ctx.beginPath(); ctx.arc(aim.ox, aim.oy, 5, 0, Math.PI*2); ctx.fill();
+
+      if(t){
+        var tx = sx(t.x), ty = sy(t.y);
+        var strong = "rgba(232,207,92,.9)";
+
+        ctx.strokeStyle = "rgba(232,207,92,.5)";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6,6]);
+        ctx.beginPath();
+        ctx.moveTo(sx(play.qb.x), sy(play.qb.y));
+        ctx.lineTo(tx, ty);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // the circle is the real catch radius, so it says honestly how much
+        // room for error the throw has
+        ctx.strokeStyle = strong;
+        ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.arc(tx, ty, CATCH_R * scale, 0, Math.PI*2); ctx.stroke();
+        ctx.fillStyle = "rgba(232,207,92,.14)";
+        ctx.fill();
+
+        // power read-out under the crosshair
+        ctx.fillStyle = strong;
+        ctx.font = "600 11px -apple-system,system-ui,sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(Math.round(t.power * 100) + "%", tx, ty + CATCH_R * scale + 14);
+        ctx.textAlign = "left";
+      }
     }
 
     // Route art: bold before the snap so you can pick your read, faint afterwards
@@ -770,14 +834,40 @@
 
   /* ---------- input ---------- */
 
-  var aim = null, pointerDown = false;
+  /* Throwing is a slingshot: press anywhere, drag back, and the ball goes the
+     way you pulled from, further the harder you pull. Aiming by simply tapping
+     a spot hid the target under your own fingertip, which is the whole reason
+     you could not see where the ball was going. Pulling back puts your finger
+     well clear of the landing spot, and the trajectory and catch circle are
+     drawn out in front of you while you hold. */
 
-  function fieldPoint(ev){
+  var MIN_PULL_PX = 16;    // below this it is a tap, not a throw
+  var MAX_PULL_YD = 11;    // pull needed for the longest throw
+
+  var aim = null, pointerDown = false;   // aim = { ox, oy, cx, cy } in canvas px
+
+  function localPoint(ev){
     var rect = canvas.getBoundingClientRect();
-    var px = ev.clientX - rect.left, py = ev.clientY - rect.top;
+    return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
+  }
+  function fieldX(px){ return clamp(px / scale, 0, FIELD_W); }
+
+  // Where the ball would land for the pull currently being held, or null if the
+  // finger has not moved far enough to count.
+  function aimTarget(){
+    if(!aim || !play) return null;
+    var dxp = aim.ox - aim.cx, dyp = aim.oy - aim.cy;
+    var pullPx = Math.sqrt(dxp*dxp + dyp*dyp);
+    if(pullPx < MIN_PULL_PX) return null;
+    var pullYd = pullPx / scale;
+    var power = Math.min(1, pullYd / MAX_PULL_YD);
+    var range = THROW_MIN + power * (THROW_MAX - THROW_MIN);
+    // canvas y grows downward while the field grows upward, hence the flip
+    var dirX = dxp / pullPx, dirY = -dyp / pullPx;
     return {
-      x: clamp(px / scale, 0, FIELD_W),
-      y: clamp(camY - (py / scale - viewYards/2), 0, FIELD_L)
+      x: clamp(play.qb.x + dirX * range, 0, FIELD_W),
+      y: clamp(play.qb.y + dirY * range, 0, FIELD_L),
+      power: power
     };
   }
 
@@ -785,24 +875,29 @@
     if(!play) return;
     pointerDown = true;
     try{ canvas.setPointerCapture(ev.pointerId); }catch(e){}
-    if(play.phase === "live") aim = fieldPoint(ev);
-    if(play.phase === "carry") play.steerX = fieldPoint(ev).x;
+    var lp = localPoint(ev);
+    if(play.phase === "live") aim = { ox: lp.x, oy: lp.y, cx: lp.x, cy: lp.y };
+    if(play.phase === "carry") play.steerX = fieldX(lp.x);
     ev.preventDefault();
   });
   canvas.addEventListener("pointermove", function(ev){
     if(!play || !pointerDown) return;
-    if(play.phase === "live") aim = fieldPoint(ev);
-    if(play.phase === "carry") play.steerX = fieldPoint(ev).x;
+    var lp = localPoint(ev);
+    if(play.phase === "live" && aim){ aim.cx = lp.x; aim.cy = lp.y; }
+    if(play.phase === "carry") play.steerX = fieldX(lp.x);
     ev.preventDefault();
   });
   canvas.addEventListener("pointerup", function(ev){
     pointerDown = false;
-    if(!play) return;
-    if(play.phase === "live" && aim){
-      throwBall(st, play, aim.x, aim.y);
+    if(!play){ aim = null; return; }
+    if(play.phase === "live"){
+      var t = aimTarget();
+      if(t){
+        throwBall(st, play, t.x, t.y);
+        st.playedEver = true;
+        save();
+      }
       aim = null;
-      st.playedEver = true;
-      save();
     }
     ev.preventDefault();
   });
@@ -834,7 +929,7 @@
     play = null;
     afterDrive();
   });
-  function recentre(){ camY = focusY(); }
+  function recentre(){ camY = clampCam(focusY()); }
 
   el("new-game").addEventListener("click", function(){
     var keep = { wins:st.wins, losses:st.losses, ties:st.ties, best:st.best, streak:st.streak };
@@ -900,7 +995,7 @@
   boot();
   ensurePlay();
   resize();
-  camY = focusY();
+  camY = clampCam(focusY());
   syncChrome();
   draw();
   requestAnimationFrame(frame);
