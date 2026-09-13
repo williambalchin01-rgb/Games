@@ -594,6 +594,18 @@
 
   /* ---------- canvas ---------- */
 
+  // Two kits, the way a real match reads: everything in blue is yours, everything
+  // in red is theirs. Whoever is actually holding the ball gets an amber ring
+  // rather than a colour of his own, so the sides never blur. The old scheme had
+  // green receivers against red defenders, which is the one pairing that the
+  // commonest form of colour blindness cannot separate at all.
+  var KIT = {
+    off:     "#4A86D1",   // eligible receivers and the quarterback
+    block:   "#2C5A88",   // linemen and the back: same side, not a target
+    def:     "#E0574A",   // every defender, rushers included
+    ball:    "#E8CF5C"    // the ring on whoever has it
+  };
+
   var canvas = el("field"), ctx = canvas.getContext("2d");
   var scale = 12, viewYards = 40, camY = 0;
 
@@ -672,7 +684,7 @@
     // end zones
     [0, FIELD_L].forEach(function(y){
       var top = sy(y + (y === 0 ? 0 : 10)), bot = sy(y - (y === 0 ? 10 : 0));
-      ctx.fillStyle = y === FIELD_L ? "rgba(79,168,139,.16)" : "rgba(224,87,74,.13)";
+      ctx.fillStyle = y === FIELD_L ? "rgba(74,134,209,.15)" : "rgba(224,87,74,.13)";
       ctx.fillRect(0, top, w, bot - top);
     });
 
@@ -756,19 +768,19 @@
       });
     }
 
-    play.line.forEach(function(o){ drawDot(o.x, o.y, 0.5, "#2F4A5C"); });
-    drawDot(play.back.x, play.back.y, 0.52, "#2F4A5C");
+    play.line.forEach(function(o){ drawDot(o.x, o.y, 0.5, KIT.block); });
+    drawDot(play.back.x, play.back.y, 0.52, KIT.block);
 
-    play.defs.forEach(function(d){ drawDot(d.x, d.y, 0.62, "#E0574A"); });
+    play.defs.forEach(function(d){ drawDot(d.x, d.y, 0.62, KIT.def); });
     if(play.phase === "live" || play.phase === "presnap"){
-      play.rushers.forEach(function(ru){ drawDot(ru.x, ru.y, 0.6, "#C86FC0"); });
+      play.rushers.forEach(function(ru){ drawDot(ru.x, ru.y, 0.6, KIT.def); });
     }
     play.recs.forEach(function(r){
-      var carrying = play.carrier === r;
-      drawDot(r.x, r.y, carrying ? 0.72 : 0.62, carrying ? "#E8CF5C" : "#4FA88B");
+      drawMan(r.x, r.y, 0.62, KIT.off, play.carrier === r);
     });
-    drawDot(play.qb.x, play.qb.y, play.carrier === play.qb ? 0.72 : 0.66,
-            play.carrier === play.qb ? "#E8CF5C" : "#4A86D1");
+    // before the throw the quarterback is the one holding it
+    drawMan(play.qb.x, play.qb.y, 0.66, KIT.off,
+            play.carrier === play.qb || play.phase === "presnap" || play.phase === "live");
     if(play.phase === "air") drawDot(play.ball.x, play.ball.y, 0.3, "#E6EBEF");
 
     // protection running out
@@ -776,7 +788,7 @@
       var frac = 1 - clamp(play.t / SACK_TIME, 0, 1);
       ctx.fillStyle = "rgba(0,0,0,.45)";
       ctx.fillRect(8, 8, w - 16, 5);
-      ctx.fillStyle = frac > 0.35 ? "#4FA88B" : "#E0574A";
+      ctx.fillStyle = frac > 0.35 ? KIT.off : KIT.def;
       ctx.fillRect(8, 8, (w - 16) * frac, 5);
     }
   }
@@ -785,7 +797,7 @@
   // a tick at the end so a curl reads differently from a go.
   function drawRoute(r, strong){
     var pts = [{ x:r.sx, y:r.sy }].concat(r.path);
-    ctx.strokeStyle = strong ? "rgba(79,168,139,.85)" : "rgba(79,168,139,.28)";
+    ctx.strokeStyle = strong ? "rgba(116,164,222,.85)" : "rgba(116,164,222,.30)";
     ctx.lineWidth = strong ? 2 : 1.5;
     ctx.setLineDash(strong ? [6,4] : [4,5]);
     ctx.beginPath();
@@ -800,11 +812,22 @@
     var len = Math.sqrt(dx*dx+dy*dy) || 1;
     // a short bar across the end of the route, like play art
     var nx = -dy/len, ny = dx/len;
-    ctx.strokeStyle = strong ? "rgba(79,168,139,.95)" : "rgba(79,168,139,.35)";
+    ctx.strokeStyle = strong ? "rgba(116,164,222,.95)" : "rgba(116,164,222,.38)";
     ctx.lineWidth = strong ? 2.5 : 1.5;
     ctx.beginPath();
     ctx.moveTo(sx(end.x - nx*0.9), sy(end.y - ny*0.9));
     ctx.lineTo(sx(end.x + nx*0.9), sy(end.y + ny*0.9));
+    ctx.stroke();
+  }
+
+  // A man in his kit, ringed in amber if he is carrying the ball.
+  function drawMan(x, y, r, colour, hasBall){
+    drawDot(x, y, hasBall ? r + 0.08 : r, colour);
+    if(!hasBall) return;
+    ctx.strokeStyle = KIT.ball;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(sx(x), sy(y), (r + 0.08) * scale + 2.5, 0, Math.PI*2);
     ctx.stroke();
   }
 
