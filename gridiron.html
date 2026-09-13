@@ -73,7 +73,7 @@
     <button class="act" id="punt">Punt</button>
   </div>
 
-  <p class="howto" id="howto" hidden>Snap, then drag to aim and let go to throw. Steer the runner by dragging.</p>
+  <p class="howto" id="howto" hidden>Dashed lines show the routes. Snap, drag to aim, let go to throw, then steer the runner.</p>
 </div>
 
 <div class="win" id="over" hidden>
@@ -97,6 +97,11 @@
   var TACKLE_R = 1.15;
   var BALL_SPEED = 30;     // yards per second
   var SACK_TIME = 3.4;     // seconds of protection before the rusher arrives
+
+  // Everything above is in game-seconds. The play is stepped slower than real
+  // time so it reads at a watchable pace: all the balance is in game-seconds and
+  // is untouched by this, only the wall clock changes.
+  var TIME_SCALE = 0.62;
 
   var SPD = { rec: 7.6, def: 6.95, qb: 6.4, pursue: 8.6, carry: 6.0 };
 
@@ -162,44 +167,77 @@
 
   /* ---------- play setup ---------- */
 
+  // Real alignments rather than three receivers spread evenly across the middle.
+  // The field here is 30 yards rather than 53, so these are scaled in: a split
+  // end near the sideline sits around x=3, the numbers around x=7.
+  // off:true means lined up a yard behind the line, as a slot or back would be.
+  var FORMATIONS = [
+    { name:"Trips right",  spots:[[3,false],[21,true],[25.5,false]] },
+    { name:"Spread left",  spots:[[3,false],[8.5,true],[26.5,false]] },
+    { name:"Pro set",      spots:[[3.5,false],[19.5,false],[26.5,false]] },
+    { name:"Bunch right",  spots:[[3.5,false],[21,true],[24,true]] },
+    { name:"Twins right",  spots:[[4,false],[22,false],[26,true]] }
+  ];
+
+  // Five linemen either side of the centre. They only block and are drawn, but
+  // without them the snap does not read as a snap.
+  var OL_X = [12, 13.5, 15, 16.5, 18];
+
   function buildPlay(st, rng){
     var los = st.ballOn;
-    var slots = [6, 15, 24];                     // where the three receivers line up
-    var recs = slots.map(function(x, i){
+    var form = FORMATIONS[Math.floor(rng() * FORMATIONS.length)];
+
+    var recs = form.spots.map(function(spot, i){
+      var x = spot[0], y = los - (spot[1] ? 1 : 0);
       var name = ROUTE_NAMES[Math.floor(rng() * ROUTE_NAMES.length)];
+      // routes break toward the middle of the field, so mirror for the right side
       var flip = x > FIELD_W / 2;
       var hist = [];
-      for(var h = 0; h < HIST; h++) hist.push({ x:x, y:los });
+      for(var h = 0; h < HIST; h++) hist.push({ x:x, y:y });
       return {
-        id: i, x: x, y: los, sx: x, sy: los,
-        path: waypoints(x, los, ROUTES[name], flip),
+        id: i, x: x, y: y, sx: x, sy: y,
+        path: waypoints(x, y, ROUTES[name], flip),
         wi: 0, route: name, hist: hist
       };
     });
-    // one defender shadowing each receiver, starting with a cushion downfield
+
+    // a corner over each receiver, pressed up on the wide men and softer inside
     var defs = recs.map(function(r, i){
+      var wide = r.x < 6 || r.x > FIELD_W - 6;
       return { id: i, mark: i, lag: LAG_COVER + (i % 3) * 3,
-               x: r.x + (i - 1) * 0.6, y: los + 6 + (i % 2) };
+               x: r.x + (r.x < FIELD_W/2 ? 0.6 : -0.6),
+               y: los + (wide ? 7 : 5.5) };
     });
-    // a free safety sitting deep, drawn to whoever is furthest downfield
-    defs.push({ id: 3, mark: -1, lag: LAG_SAFETY, x: FIELD_W/2, y: los + 17 });
-    // and two linebackers holding a short zone rather than marking anyone. Without
+    // a free safety patrolling deep, drawn to whoever gets furthest downfield
+    defs.push({ id: 3, mark: -1, lag: LAG_SAFETY, x: FIELD_W/2, y: los + 13 });
+    // two linebackers holding short zones rather than marking anyone. Without
     // bodies in the middle every catch turned into a footrace to the end zone.
-    defs.push({ id: 4, mark: -2, lag: LAG_COVER, zx: 10, zy: 7, x: 10, y: los + 7 });
-    defs.push({ id: 5, mark: -2, lag: LAG_COVER, zx: 20, zy: 8, x: 20, y: los + 8 });
+    defs.push({ id: 4, mark: -2, lag: LAG_COVER, zx: 11.5, zy: 5, x: 11.5, y: los + 5 });
+    defs.push({ id: 5, mark: -2, lag: LAG_COVER, zx: 18.5, zy: 5.5, x: 18.5, y: los + 5.5 });
 
     return {
-      phase: "live",          // live | air | carry | done
+      phase: "presnap",       // presnap | live | air | carry | done
       t: 0,
       los: los,
-      qb: { x: FIELD_W/2, y: los - 4, hist: [{ x: FIELD_W/2, y: los - 4 }] },
+      formation: form.name,
+      qb: { x: FIELD_W/2, y: los - 4.5, hist: [{ x: FIELD_W/2, y: los - 4.5 }] },
       recs: recs, defs: defs,
-      rusher: { x: FIELD_W/2 + 3, y: los + 5 },
+      line: OL_X.map(function(x){ return { x:x, y:los }; }),
+      back: { x: FIELD_W/2 - 2.6, y: los - 4.2 },
+      // two ends rushing off the edges, outside the blockers
+      rushers: [{ x: 10.5, y: los + 0.5 }, { x: 19.5, y: los + 0.5 }],
       ball: null,
       carrier: null,
-      result: null,           // {kind, yards, text}
+      result: null,
       steerX: null
     };
+  }
+
+  function snapBall(play){
+    if(!play || play.phase !== "presnap") return false;
+    play.phase = "live";
+    play.t = 0;
+    return true;
   }
 
   function nearestDefender(play, x, y){
@@ -214,7 +252,7 @@
   /* ---------- per-frame play simulation ---------- */
 
   function stepPlay(st, play, dt, rng){
-    if(play.phase === "done") return;
+    if(play.phase === "done" || play.phase === "presnap") return;
     play.t += dt;
 
     // receivers run their routes, each remembering where he has been
@@ -287,11 +325,15 @@
       }
     });
 
-    // the pass rush closes on the quarterback on a timer
+    // The rush is a timer rather than blockers to beat: the ends sweep round the
+    // edge and arrive together when protection runs out.
     if(play.phase === "live"){
       var frac = clamp(play.t / SACK_TIME, 0, 1);
-      play.rusher.y = play.los + 5 - (5 + 4) * frac;
-      play.rusher.x = play.qb.x + Math.sin(play.t * 3) * 0.8;
+      play.rushers.forEach(function(ru, i){
+        var sx0 = i === 0 ? 10.5 : 19.5;
+        ru.x = sx0 + (play.qb.x - sx0) * frac;
+        ru.y = play.los + 0.5 + (play.qb.y - play.los - 0.5) * frac;
+      });
       if(play.t >= SACK_TIME){
         endPlay(st, play, "sack", play.qb.y);
         return;
@@ -551,13 +593,16 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
+  // Sit the camera above the ball rather than on it: the play happens downfield,
+  // and centring on the line of scrimmage wastes a third of the screen on grass
+  // nobody is standing on.
   function focusY(){
     if(play){
-      if(play.phase === "carry" && play.carrier) return play.carrier.y;
-      if(play.phase === "air") return (play.ball.y + play.los) / 2;
-      return play.los + 6;
+      if(play.phase === "carry" && play.carrier) return play.carrier.y + 4;
+      if(play.phase === "air") return (play.ball.ty + play.los) / 2 + 4;
+      return play.los + 9;
     }
-    return st.ballOn + 6;
+    return st.ballOn + 9;
   }
 
   function sx(x){ return x * scale; }
@@ -614,8 +659,22 @@
       ctx.setLineDash([]);
     }
 
+    // Route art: bold before the snap so you can pick your read, faint afterwards
+    // so it still tells you where everyone is headed without burying the players.
+    if(play.phase === "presnap" || play.phase === "live"){
+      var strong = play.phase === "presnap";
+      play.recs.forEach(function(r){
+        drawRoute(r, strong);
+      });
+    }
+
+    play.line.forEach(function(o){ drawDot(o.x, o.y, 0.5, "#2F4A5C"); });
+    drawDot(play.back.x, play.back.y, 0.52, "#2F4A5C");
+
     play.defs.forEach(function(d){ drawDot(d.x, d.y, 0.62, "#E0574A"); });
-    if(play.phase === "live") drawDot(play.rusher.x, play.rusher.y, 0.62, "#C86FC0");
+    if(play.phase === "live" || play.phase === "presnap"){
+      play.rushers.forEach(function(ru){ drawDot(ru.x, ru.y, 0.6, "#C86FC0"); });
+    }
     play.recs.forEach(function(r){
       var carrying = play.carrier === r;
       drawDot(r.x, r.y, carrying ? 0.72 : 0.62, carrying ? "#E8CF5C" : "#4FA88B");
@@ -632,6 +691,33 @@
       ctx.fillStyle = frac > 0.35 ? "#4FA88B" : "#E0574A";
       ctx.fillRect(8, 8, (w - 16) * frac, 5);
     }
+  }
+
+  // A receiver's route drawn from where he lines up through his waypoints, with
+  // a tick at the end so a curl reads differently from a go.
+  function drawRoute(r, strong){
+    var pts = [{ x:r.sx, y:r.sy }].concat(r.path);
+    ctx.strokeStyle = strong ? "rgba(79,168,139,.85)" : "rgba(79,168,139,.28)";
+    ctx.lineWidth = strong ? 2 : 1.5;
+    ctx.setLineDash(strong ? [6,4] : [4,5]);
+    ctx.beginPath();
+    pts.forEach(function(pt, i){
+      if(i === 0) ctx.moveTo(sx(pt.x), sy(pt.y)); else ctx.lineTo(sx(pt.x), sy(pt.y));
+    });
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    var end = pts[pts.length-1], prev = pts[pts.length-2] || end;
+    var dx = end.x - prev.x, dy = end.y - prev.y;
+    var len = Math.sqrt(dx*dx+dy*dy) || 1;
+    // a short bar across the end of the route, like play art
+    var nx = -dy/len, ny = dx/len;
+    ctx.strokeStyle = strong ? "rgba(79,168,139,.95)" : "rgba(79,168,139,.35)";
+    ctx.lineWidth = strong ? 2.5 : 1.5;
+    ctx.beginPath();
+    ctx.moveTo(sx(end.x - nx*0.9), sy(end.y - ny*0.9));
+    ctx.lineTo(sx(end.x + nx*0.9), sy(end.y + ny*0.9));
+    ctx.stroke();
   }
 
   function drawDot(x, y, r, colour){
@@ -656,14 +742,16 @@
     el("down-text").textContent = st.driveIsYours && !st.over
       ? ord(st.down) + " & " + (st.toGo >= toGoal ? "goal" : st.toGo)
       : "—";
-    el("msg").textContent = st.lastMsg;
+    el("msg").textContent = (play && play.phase === "presnap" && st.driveIsYours && !st.over)
+      ? play.formation
+      : st.lastMsg;
 
-    var live = play && play.phase !== "done";
+    var running = play && play.phase !== "done" && play.phase !== "presnap";
     var yourBall = st.driveIsYours && !st.over;
-    el("snap").disabled = !yourBall || live;
+    el("snap").disabled = !yourBall || running;
     el("snap").textContent = st.over ? "Full time" : (yourBall ? "Snap" : "Rivals' ball");
     el("run").disabled = !(play && play.phase === "live");
-    el("punt").disabled = !yourBall || live;
+    el("punt").disabled = !yourBall || running;
 
     el("over").hidden = !st.over;
     if(st.over){
@@ -720,22 +808,34 @@
   });
   canvas.addEventListener("pointercancel", function(){ pointerDown = false; aim = null; });
 
+  // A play is set up as soon as the down begins so its routes can be studied;
+  // pressing snap only starts the clock.
+  function ensurePlay(){
+    if(st.over || !st.driveIsYours){ play = null; return; }
+    if(!play || play.phase === "done") play = buildPlay(st, rng);
+  }
+
   el("snap").addEventListener("click", function(){
-    if(st.over){ st = nextGame(st); rng = makeRng(st.seed); play = null; save(); syncChrome(); return; }
-    if(!st.driveIsYours || (play && play.phase !== "done")) return;
-    play = buildPlay(st, rng);
-    st.playedEver = true;
-    syncChrome();
+    if(st.over){
+      st = nextGame(st); rng = makeRng(st.seed); play = null;
+      ensurePlay(); save(); syncChrome(); return;
+    }
+    if(!st.driveIsYours) return;
+    ensurePlay();
+    if(snapBall(play)){ st.playedEver = true; save(); syncChrome(); }
   });
   el("run").addEventListener("click", function(){
     if(play && play.phase === "live"){ scramble(st, play); aim = null; syncChrome(); }
   });
   el("punt").addEventListener("click", function(){
-    if(!st.driveIsYours || st.over || (play && play.phase !== "done")) return;
+    if(!st.driveIsYours || st.over) return;
+    if(play && play.phase !== "presnap" && play.phase !== "done") return;
     punt(st);
     play = null;
     afterDrive();
   });
+  function recentre(){ camY = focusY(); }
+
   el("new-game").addEventListener("click", function(){
     var keep = { wins:st.wins, losses:st.losses, ties:st.ties, best:st.best, streak:st.streak };
     st = newGameState((Date.now() >>> 0));
@@ -743,6 +843,8 @@
     st.best = keep.best; st.streak = keep.streak; st.playedEver = true;
     rng = makeRng(st.seed);
     play = null;
+    ensurePlay();
+    recentre();
     save(); syncChrome();
   });
 
@@ -753,6 +855,7 @@
       st.lastMsg = simOpponentDrive(st, rng);
       endDrive(st);
     }
+    ensurePlay();
     save();
     syncChrome();
   }
@@ -769,7 +872,7 @@
 
     if(play && play.phase !== "done"){
       acc += dt;
-      while(acc >= STEP){ stepPlay(st, play, STEP, rng); acc -= STEP; }
+      while(acc >= STEP){ stepPlay(st, play, STEP * TIME_SCALE, rng); acc -= STEP; }
       if(play.phase === "done"){
         acc = 0;
         applyResult(st, play);
@@ -782,6 +885,7 @@
         var wasYours = st.driveIsYours;
         play = null;
         if(!wasYours || !st.driveIsYours) afterDrive();
+        ensurePlay();
         save();
         syncChrome();
       }
@@ -794,7 +898,9 @@
   window.addEventListener("resize", function(){ resize(); draw(); });
 
   boot();
+  ensurePlay();
   resize();
+  camY = focusY();
   syncChrome();
   draw();
   requestAnimationFrame(frame);
