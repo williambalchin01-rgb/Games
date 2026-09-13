@@ -39,6 +39,21 @@
 
 <div class="menu">
 
+  <a class="game" href="./gridiron.html">
+    <svg class="art" viewBox="0 0 52 52" aria-hidden="true">
+      <rect x="2" y="8" width="48" height="36" rx="3" fill="#1B2A22"/>
+      <path d="M12 8 V44 M26 8 V44 M40 8 V44" stroke="rgba(255,255,255,.16)" stroke-width="1.6"/>
+      <circle cx="19" cy="20" r="4" fill="#4FA88B"/>
+      <circle cx="33" cy="32" r="4" fill="#E0574A"/>
+      <ellipse cx="26" cy="26" rx="3.1" ry="2.1" fill="#E6EBEF" transform="rotate(-28 26 26)"/>
+    </svg>
+    <div>
+      <h2>Gridiron</h2>
+      <p>Drag to throw, steer the runner home. Four drives each and the defence plays itself.</p>
+      <div class="meta" id="gridiron-meta"></div>
+    </div>
+  </a>
+
   <a class="game" href="./towers.html">
     <svg class="art" viewBox="0 0 52 52" aria-hidden="true">
       <path d="M3 12 H34 a5 5 0 0 1 5 5 v18 a5 5 0 0 1-5 5 H12" fill="none" stroke="#2C3945" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
@@ -106,6 +121,15 @@
     if(b.best) bits.push("Best " + b.best);
     if(b.score) bits.push("Game in progress · " + b.score);
     document.getElementById("blocks-meta").textContent = bits.join("  ·  ");
+  }
+
+  var g = read("arcade.gridiron.v1");
+  if(g){
+    var gb = [];
+    var played = (g.wins||0) + (g.losses||0) + (g.ties||0);
+    if(played) gb.push((g.wins||0) + "W " + (g.losses||0) + "L" + (g.ties ? " " + g.ties + "D" : ""));
+    if(g.best) gb.push("Best streak " + g.best);
+    document.getElementById("gridiron-meta").textContent = gb.join("  \u00B7  ");
   }
 
   var t = read("arcade.towers.v1");

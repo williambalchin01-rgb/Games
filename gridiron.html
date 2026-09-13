@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#151C24">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Arcade">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<link rel="icon" href="./icon-192.png">
+<title>Gridiron</title>
+<link rel="stylesheet" href="./app.css">
+<style>
+  .wrap{flex:1;display:flex;flex-direction:column;justify-content:flex-start;gap:10px;padding:6px 0}
+  canvas{width:100%;display:block;border-radius:8px;touch-action:none;background:#16211B}
+
+  .scoreline{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:0 2px 9px;border-bottom:1px solid var(--line)}
+  .side{font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);font-variant-numeric:tabular-nums}
+  .side b{display:block;font-size:21px;font-weight:300;color:var(--ink);margin-top:2px}
+  .side[data-lead="true"] b{color:var(--accent)}
+  .mid{text-align:center;font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted)}
+  .mid b{display:block;font-size:13px;font-weight:400;color:var(--ink);margin-top:3px;letter-spacing:.04em}
+
+  .downbar{
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    padding:9px 12px;font-size:13px;
+  }
+  .downbar .dd{font-variant-numeric:tabular-nums}
+  .downbar .msg{color:var(--muted);font-size:12.5px;text-align:right}
+
+  .actions{display:flex;gap:8px}
+  .act{
+    flex:1;text-align:center;border:1px solid var(--line);border-radius:var(--radius);
+    background:var(--surface);padding:13px 8px;font-size:14px;
+  }
+  .act:disabled{color:var(--line)}
+  .act[data-primary="true"]{background:var(--accent);border-color:var(--accent);color:#10171E;font-weight:500}
+  .act[data-primary="true"]:disabled{background:var(--surface);border-color:var(--line);color:var(--line);font-weight:400}
+
+  .howto{
+    margin:0;text-align:center;font-size:12.5px;color:var(--muted);
+    border:1px dashed var(--line);border-radius:var(--radius);padding:9px 12px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="./index.html">&larr; Arcade</a>
+  <button class="chip" id="new-game">New</button>
+</header>
+
+<div class="scoreline">
+  <span class="side" id="you-side">You<b id="you-score">0</b></span>
+  <span class="mid">Drive <b id="drive-n">1 of 8</b></span>
+  <span class="side" id="opp-side">Rivals<b id="opp-score">0</b></span>
+</div>
+
+<div class="wrap">
+  <canvas id="field"></canvas>
+
+  <div class="downbar">
+    <span class="dd" id="down-text">1st &amp; 10</span>
+    <span class="msg" id="msg">Your ball</span>
+  </div>
+
+  <div class="actions">
+    <button class="act" data-primary="true" id="snap">Snap</button>
+    <button class="act" id="run" disabled>Scramble</button>
+    <button class="act" id="punt">Punt</button>
+  </div>
+
+  <p class="howto" id="howto" hidden>Snap, then drag to aim and let go to throw. Steer the runner by dragging.</p>
+</div>
+
+<div class="win" id="over" hidden>
+  <h2 id="over-title">Full time</h2>
+  <p id="over-text"></p>
+</div>
+
+<p class="note" id="note" hidden>Storage is blocked here, so your record won't be saved between sessions.</p>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ================= logic (no DOM until marked) ================= */
+
+  var FIELD_W = 30;        // yards across; narrower than a real field, like the games this apes
+  var FIELD_L = 100;
+  var KEY = "arcade.gridiron.v1";
+
+  var CATCH_R = 2.0;       // yards; generous enough to be playable with a fingertip
+  var TACKLE_R = 1.15;
+  var BALL_SPEED = 30;     // yards per second
+  var SACK_TIME = 3.4;     // seconds of protection before the rusher arrives
+
+  var SPD = { rec: 7.6, def: 6.95, qb: 6.4, pursue: 8.6, carry: 6.0 };
+
+  // Coverage is beatable because defenders react late: each one chases where his
+  // man WAS a moment ago, not where he is. On a straight route that settles into
+  // a trailing cushion; on a sharp break it hands the receiver a couple of yards,
+  // which is the whole point of running routes. Chasing the live position instead
+  // glues the defender on at nearly equal speed and nothing is ever open.
+  var LAG_COVER = 22;      // frames of reaction in coverage (~0.37s)
+  var LAG_SAFETY = 30;     // the deep man reads it later still
+  // Chasing a runner's old position never catches him: the closing speed is the
+  // speed difference alone. Once the ball is loose defenders aim at where he is
+  // heading instead, which is how anyone actually runs someone down.
+  var PURSUIT_LEAD = 0.45; // seconds ahead of the carrier they aim
+  var ZONE_REACH = 9;      // how far a zone defender will stray from his patch
+  var HIST = 40;
+  var DRIVES = 8;          // four each, alternating
+
+  // Routes are polylines relative to where the receiver lines up. Positive dy is
+  // downfield. Each is mirrored for receivers lined up on the left.
+  // A short tree on purpose. Deep routes everywhere meant every completion was a
+  // 40-yard gain and a drive lasted two plays; most of these break off inside ten.
+  var ROUTES = {
+    go:    [[0,12],[0,26]],
+    post:  [[0,9],[-7,18]],
+    out:   [[0,6],[7,7]],
+    slant: [[0,3],[8,9]],
+    curl:  [[0,11],[-1,9]],
+    drag:  [[0,2],[13,4]]
+  };
+  var ROUTE_NAMES = Object.keys(ROUTES);
+
+  function mirror(route){ return route.map(function(p){ return [-p[0], p[1]]; }); }
+
+  // Absolute waypoints for a receiver starting at (x0,y0) running `route`.
+  function waypoints(x0, y0, route, flip){
+    var r = flip ? mirror(route) : route;
+    return r.map(function(p){ return { x: x0 + p[0], y: y0 + p[1] }; });
+  }
+
+  function clamp(v, lo, hi){ return v < lo ? lo : (v > hi ? hi : v); }
+  function dist(ax, ay, bx, by){ var dx=ax-bx, dy=ay-by; return Math.sqrt(dx*dx+dy*dy); }
+
+  // Advance a mover one step toward its next waypoint, returning true when done.
+  function follow(m, speed, dt){
+    while(m.wi < m.path.length){
+      var w = m.path[m.wi];
+      var d = dist(m.x, m.y, w.x, w.y);
+      var travel = speed * dt;
+      if(d > travel){
+        m.x += (w.x - m.x) / d * travel;
+        m.y += (w.y - m.y) / d * travel;
+        return false;
+      }
+      m.x = w.x; m.y = w.y; m.wi++;
+      dt -= d / speed;
+      if(dt <= 0) return m.wi >= m.path.length;
+    }
+    // past the last waypoint: keep drifting downfield rather than freezing
+    m.y += speed * dt * 0.85;
+    return true;
+  }
+
+  /* ---------- play setup ---------- */
+
+  function buildPlay(st, rng){
+    var los = st.ballOn;
+    var slots = [6, 15, 24];                     // where the three receivers line up
+    var recs = slots.map(function(x, i){
+      var name = ROUTE_NAMES[Math.floor(rng() * ROUTE_NAMES.length)];
+      var flip = x > FIELD_W / 2;
+      var hist = [];
+      for(var h = 0; h < HIST; h++) hist.push({ x:x, y:los });
+      return {
+        id: i, x: x, y: los, sx: x, sy: los,
+        path: waypoints(x, los, ROUTES[name], flip),
+        wi: 0, route: name, hist: hist
+      };
+    });
+    // one defender shadowing each receiver, starting with a cushion downfield
+    var defs = recs.map(function(r, i){
+      return { id: i, mark: i, lag: LAG_COVER + (i % 3) * 3,
+               x: r.x + (i - 1) * 0.6, y: los + 6 + (i % 2) };
+    });
+    // a free safety sitting deep, drawn to whoever is furthest downfield
+    defs.push({ id: 3, mark: -1, lag: LAG_SAFETY, x: FIELD_W/2, y: los + 17 });
+    // and two linebackers holding a short zone rather than marking anyone. Without
+    // bodies in the middle every catch turned into a footrace to the end zone.
+    defs.push({ id: 4, mark: -2, lag: LAG_COVER, zx: 10, zy: 7, x: 10, y: los + 7 });
+    defs.push({ id: 5, mark: -2, lag: LAG_COVER, zx: 20, zy: 8, x: 20, y: los + 8 });
+
+    return {
+      phase: "live",          // live | air | carry | done
+      t: 0,
+      los: los,
+      qb: { x: FIELD_W/2, y: los - 4, hist: [{ x: FIELD_W/2, y: los - 4 }] },
+      recs: recs, defs: defs,
+      rusher: { x: FIELD_W/2 + 3, y: los + 5 },
+      ball: null,
+      carrier: null,
+      result: null,           // {kind, yards, text}
+      steerX: null
+    };
+  }
+
+  function nearestDefender(play, x, y){
+    var best = null, bd = Infinity;
+    play.defs.forEach(function(d){
+      var dd = dist(d.x, d.y, x, y);
+      if(dd < bd){ bd = dd; best = d; }
+    });
+    return { def: best, d: bd };
+  }
+
+  /* ---------- per-frame play simulation ---------- */
+
+  function stepPlay(st, play, dt, rng){
+    if(play.phase === "done") return;
+    play.t += dt;
+
+    // receivers run their routes, each remembering where he has been
+    if(play.phase !== "carry"){
+      play.recs.forEach(function(r){
+        follow(r, SPD.rec, dt);
+        r.hist.push({ x:r.x, y:r.y });
+        if(r.hist.length > HIST) r.hist.shift();
+      });
+    }
+    if(play.phase === "carry" && play.carrier){
+      var cc = play.carrier;
+      if(cc.hist){
+        cc.hist.push({ x:cc.x, y:cc.y });
+        if(cc.hist.length > HIST) cc.hist.shift();
+      }
+    }
+
+    // defenders chase their mark; the safety chases whoever is deepest
+    play.defs.forEach(function(d){
+      var man, lag = d.lag;
+      if(play.phase === "carry" && play.carrier){
+        var c = play.carrier;
+        var aimX = clamp(c.x + (c.vx || 0) * PURSUIT_LEAD, 0, FIELD_W);
+        var aimY = c.y + (c.vy || SPD.carry) * PURSUIT_LEAD;
+        var pd = dist(d.x, d.y, aimX, aimY);
+        if(pd > 0.01){
+          var ps = SPD.pursue * dt;
+          d.x += (aimX - d.x) / pd * ps;
+          d.y += (aimY - d.y) / pd * ps;
+        }
+        return;
+      }
+      if(d.mark === -2){
+        // zone: hold a patch of grass, sliding toward the nearest receiver in it
+        var anchorX = d.zx, anchorY = play.los + d.zy;
+        var near = null, nd = Infinity;
+        play.recs.forEach(function(r){
+          var dd2 = dist(r.x, r.y, anchorX, anchorY);
+          if(dd2 < nd){ nd = dd2; near = r; }
+        });
+        var tx2 = anchorX, ty2 = anchorY;
+        if(near && nd < ZONE_REACH){
+          var k = 1 - nd / ZONE_REACH;
+          tx2 = anchorX + (near.x - anchorX) * k;
+          ty2 = anchorY + (near.y - anchorY) * k;
+        }
+        var zd = dist(d.x, d.y, tx2, ty2);
+        if(zd > 0.01){
+          var zs = SPD.def * dt;
+          d.x += (tx2 - d.x) / zd * zs;
+          d.y += (ty2 - d.y) / zd * zs;
+        }
+        return;
+      }
+      if(d.mark >= 0){
+        man = play.recs[d.mark];
+      }else{
+        man = play.recs.reduce(function(a, b){ return b.y > a.y ? b : a; });
+      }
+      var target = man;
+      if(man.hist && man.hist.length){
+        target = man.hist[Math.max(0, man.hist.length - 1 - lag)];
+      }
+      var dd = dist(d.x, d.y, target.x, target.y);
+      if(dd > 0.01){
+        var sp = SPD.def * dt;
+        d.x += (target.x - d.x) / dd * sp;
+        d.y += (target.y - d.y) / dd * sp;
+      }
+    });
+
+    // the pass rush closes on the quarterback on a timer
+    if(play.phase === "live"){
+      var frac = clamp(play.t / SACK_TIME, 0, 1);
+      play.rusher.y = play.los + 5 - (5 + 4) * frac;
+      play.rusher.x = play.qb.x + Math.sin(play.t * 3) * 0.8;
+      if(play.t >= SACK_TIME){
+        endPlay(st, play, "sack", play.qb.y);
+        return;
+      }
+    }
+
+    // ball in flight
+    if(play.phase === "air"){
+      var b = play.ball;
+      var d = dist(b.x, b.y, b.tx, b.ty);
+      var travel = BALL_SPEED * dt;
+      if(d > travel){
+        b.x += (b.tx - b.x) / d * travel;
+        b.y += (b.ty - b.y) / d * travel;
+      }else{
+        resolveCatch(st, play, rng);
+        return;
+      }
+    }
+
+    // ball carrier: runs upfield, steered sideways by the player
+    if(play.phase === "carry"){
+      var c = play.carrier;
+      var px = c.x, py = c.y;
+      if(play.steerX !== null){
+        var dx = play.steerX - c.x;
+        var lat = clamp(dx, -SPD.rec * dt * 1.1, SPD.rec * dt * 1.1);
+        c.x = clamp(c.x + lat, 0.8, FIELD_W - 0.8);
+      }
+      c.y += SPD.carry * dt;
+      c.vx = (c.x - px) / dt;
+      c.vy = (c.y - py) / dt;
+
+      if(c.y >= FIELD_L){ endPlay(st, play, "touchdown", FIELD_L); return; }
+      if(c.x <= 0.8 || c.x >= FIELD_W - 0.8){
+        // pushed out of bounds by the sideline
+      }
+      var n = nearestDefender(play, c.x, c.y);
+      if(n.d <= TACKLE_R){ endPlay(st, play, "tackle", c.y); return; }
+      if(c.y <= 0){ endPlay(st, play, "safety", 0); return; }
+    }
+  }
+
+  function throwBall(st, play, tx, ty){
+    if(play.phase !== "live") return false;
+    play.phase = "air";
+    play.ball = {
+      x: play.qb.x, y: play.qb.y,
+      tx: clamp(tx, 0, FIELD_W), ty: clamp(ty, 0, FIELD_L)
+    };
+    return true;
+  }
+
+  function scramble(st, play){
+    if(play.phase !== "live") return false;
+    play.phase = "carry";
+    play.carrier = play.qb;
+    return true;
+  }
+
+  // Whether a pass is caught, dropped or picked off comes down to who is closest
+  // to where it lands. A defender clearly nearer than the receiver takes it; a
+  // near-tie is a contested ball decided by a coin flip.
+  function resolveCatch(st, play, rng){
+    var b = play.ball;
+    var rec = null, rd = Infinity;
+    play.recs.forEach(function(r){
+      var d = dist(r.x, r.y, b.tx, b.ty);
+      if(d < rd){ rd = d; rec = r; }
+    });
+    var n = nearestDefender(play, b.tx, b.ty);
+
+    if(rd > CATCH_R){
+      endPlay(st, play, n.d <= CATCH_R * 0.8 ? "interception" : "incomplete", b.ty);
+      return;
+    }
+    if(n.d < rd * 0.75){ endPlay(st, play, "interception", b.ty); return; }
+    if(n.d < rd + 1.0 && rng() < 0.45){ endPlay(st, play, "incomplete", b.ty); return; }
+
+    play.phase = "carry";
+    rec.x = b.tx; rec.y = b.ty;
+    play.carrier = rec;
+  }
+
+  function endPlay(st, play, kind, atY){
+    play.phase = "done";
+    play.result = { kind: kind, at: clamp(atY, 0, FIELD_L) };
+  }
+
+  /* ---------- drives and downs ---------- */
+
+  function newDriveState(st, startOn){
+    st.ballOn = startOn;
+    st.down = 1;
+    st.toGo = Math.min(10, FIELD_L - startOn);
+    st.firstDownAt = Math.min(FIELD_L, startOn + st.toGo);
+  }
+
+  function newGameState(seed){
+    var st = {
+      you: 0, opp: 0,
+      drive: 1, driveIsYours: true,
+      ballOn: 25, down: 1, toGo: 10, firstDownAt: 35,
+      over: false, lastMsg: "Your ball", playedEver: false,
+      wins: 0, losses: 0, ties: 0, best: 0, streak: 0,
+      seed: seed || 1
+    };
+    newDriveState(st, 25);
+    return st;
+  }
+
+  // Deterministic per-play randomness would make every game identical, so this
+  // is a small seeded generator that the tests can pin and the game can vary.
+  function makeRng(seed){
+    var s = seed >>> 0 || 1;
+    return function(){
+      s ^= s << 13; s >>>= 0;
+      s ^= s >> 17;
+      s ^= s << 5;  s >>>= 0;
+      return s / 4294967296;
+    };
+  }
+
+  // Applies a finished play to the drive. Returns a short line of commentary.
+  function applyResult(st, play){
+    var r = play.result, gained;
+    switch(r.kind){
+      case "touchdown":
+        st.you += 7;
+        st.lastMsg = "Touchdown!";
+        endDrive(st);
+        return st.lastMsg;
+      case "interception":
+        st.lastMsg = "Intercepted";
+        endDrive(st);
+        return st.lastMsg;
+      case "safety":
+        st.opp += 2;
+        st.lastMsg = "Safety";
+        endDrive(st);
+        return st.lastMsg;
+      case "incomplete":
+        st.down++;
+        st.lastMsg = "Incomplete";
+        break;
+      case "sack":
+        gained = Math.round(r.at - st.ballOn) - 5;
+        st.ballOn = clamp(st.ballOn + gained, 1, FIELD_L - 1);
+        st.down++;
+        st.lastMsg = "Sacked";
+        break;
+      default:                       // tackle
+        gained = Math.round(r.at - st.ballOn);
+        st.ballOn = clamp(r.at, 1, FIELD_L - 1);
+        st.lastMsg = (gained >= 0 ? "+" : "") + gained + (Math.abs(gained) === 1 ? " yard" : " yards");
+    }
+
+    if(st.ballOn >= st.firstDownAt && r.kind !== "incomplete"){
+      newDriveState(st, st.ballOn);
+      st.lastMsg += " · first down";
+      return st.lastMsg;
+    }
+    st.toGo = Math.max(1, Math.round(st.firstDownAt - st.ballOn));
+    if(st.down > 4){
+      st.lastMsg += " · turnover on downs";
+      endDrive(st);
+    }
+    return st.lastMsg;
+  }
+
+  function punt(st){
+    st.lastMsg = "Punt";
+    endDrive(st);
+  }
+
+  // The opposition's possessions are simulated, exactly as the game this copies
+  // does with its defence: you never control them, you only see the outcome.
+  function simOpponentDrive(st, rng){
+    var roll = rng();
+    // Tuned so an even game is roughly a two-score affair rather than a walkover,
+    // and so the rivals sharpen as your record improves.
+    var strength = 0.42 + Math.min(0.15, st.wins * 0.02);
+    if(roll < strength){ st.opp += 7; return "Rivals score a touchdown"; }
+    if(roll < strength + 0.24){ st.opp += 3; return "Rivals kick a field goal"; }
+    return "Rivals go three and out";
+  }
+
+  function endDrive(st){
+    st.drive++;
+    if(st.drive > DRIVES){ finishGame(st); return; }
+    st.driveIsYours = !st.driveIsYours;
+    if(st.driveIsYours) newDriveState(st, 25);
+  }
+
+  function finishGame(st){
+    st.over = true;
+    if(st.you > st.opp){ st.wins++; st.streak++; if(st.streak > st.best) st.best = st.streak; }
+    else if(st.you < st.opp){ st.losses++; st.streak = 0; }
+    else { st.ties++; st.streak = 0; }
+  }
+
+  function nextGame(st){
+    var carry = { wins:st.wins, losses:st.losses, ties:st.ties, best:st.best, streak:st.streak,
+                  playedEver:st.playedEver, seed:(st.seed * 1103515245 + 12345) >>> 0 };
+    var ns = newGameState(carry.seed);
+    ns.wins = carry.wins; ns.losses = carry.losses; ns.ties = carry.ties;
+    ns.best = carry.best; ns.streak = carry.streak; ns.playedEver = carry.playedEver;
+    return ns;
+  }
+
+  /* ================= end of logic; DOM from here ================= */
+
+  function el(id){ return document.getElementById(id); }
+
+  var storageOK = true, memory = null;
+  var st, play = null, rng;
+
+  function load(){
+    try{ var raw = localStorage.getItem(KEY); return raw ? JSON.parse(raw) : null; }
+    catch(e){ storageOK = false; return memory; }
+  }
+  function save(){
+    var s = { wins:st.wins, losses:st.losses, ties:st.ties, best:st.best,
+              streak:st.streak, playedEver:st.playedEver, seed:st.seed };
+    memory = s;
+    try{ localStorage.setItem(KEY, JSON.stringify(s)); }
+    catch(e){ storageOK = false; }
+  }
+
+  function boot(){
+    var s = load();
+    st = newGameState(s && s.seed ? s.seed : (Date.now() >>> 0));
+    if(s){
+      st.wins = s.wins||0; st.losses = s.losses||0; st.ties = s.ties||0;
+      st.best = s.best||0; st.streak = s.streak||0; st.playedEver = !!s.playedEver;
+    }
+    rng = makeRng(st.seed);
+  }
+
+  /* ---------- canvas ---------- */
+
+  var canvas = el("field"), ctx = canvas.getContext("2d");
+  var scale = 12, viewYards = 40, camY = 0;
+
+  function resize(){
+    var w = canvas.clientWidth;
+    if(!w) return;
+    scale = w / FIELD_W;
+    // As much field as fits without pushing the controls off a phone screen:
+    // seeing further downfield is what lets you pick a receiver before throwing.
+    var h = Math.min(Math.round(window.innerHeight * 0.57), Math.round(w * 1.45));
+    viewYards = h / scale;
+    var dpr = window.devicePixelRatio || 1;
+    canvas.style.height = h + "px";
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function focusY(){
+    if(play){
+      if(play.phase === "carry" && play.carrier) return play.carrier.y;
+      if(play.phase === "air") return (play.ball.y + play.los) / 2;
+      return play.los + 6;
+    }
+    return st.ballOn + 6;
+  }
+
+  function sx(x){ return x * scale; }
+  function sy(y){ return (viewYards/2 - (y - camY)) * scale; }
+
+  function draw(){
+    var w = FIELD_W * scale, h = viewYards * scale;
+    camY += (focusY() - camY) * 0.15;
+
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = "#16211B";
+    ctx.fillRect(0, 0, w, h);
+
+    // yard lines every five yards, numbers every ten
+    ctx.font = "600 10px -apple-system,system-ui,sans-serif";
+    ctx.textAlign = "left";
+    for(var y = 0; y <= FIELD_L; y += 5){
+      var py = sy(y);
+      if(py < -20 || py > h + 20) continue;
+      var major = y % 10 === 0;
+      ctx.strokeStyle = major ? "rgba(255,255,255,.20)" : "rgba(255,255,255,.09)";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(w, py); ctx.stroke();
+      if(major && y > 0 && y < FIELD_L){
+        ctx.fillStyle = "rgba(255,255,255,.22)";
+        var label = y <= 50 ? y : (100 - y);
+        ctx.fillText(String(label), 4, py - 3);
+      }
+    }
+
+    // end zones
+    [0, FIELD_L].forEach(function(y){
+      var top = sy(y + (y === 0 ? 0 : 10)), bot = sy(y - (y === 0 ? 10 : 0));
+      ctx.fillStyle = y === FIELD_L ? "rgba(79,168,139,.16)" : "rgba(224,87,74,.13)";
+      ctx.fillRect(0, top, w, bot - top);
+    });
+
+    // line of scrimmage and the line to gain
+    var los = play ? play.los : st.ballOn;
+    ctx.strokeStyle = "rgba(255,255,255,.55)"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, sy(los)); ctx.lineTo(w, sy(los)); ctx.stroke();
+    ctx.strokeStyle = "#E0A458"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, sy(st.firstDownAt)); ctx.lineTo(w, sy(st.firstDownAt)); ctx.stroke();
+
+    if(!play){ drawDot(FIELD_W/2, st.ballOn, 0.55, "#E6EBEF"); return; }
+
+    // aiming reticle
+    if(aim && play.phase === "live"){
+      ctx.strokeStyle = "rgba(230,235,239,.8)"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(sx(aim.x), sy(aim.y), 20, 0, Math.PI*2); ctx.stroke();
+      ctx.strokeStyle = "rgba(230,235,239,.28)"; ctx.lineWidth = 1.5;
+      ctx.setLineDash([5,5]);
+      ctx.beginPath(); ctx.moveTo(sx(play.qb.x), sy(play.qb.y)); ctx.lineTo(sx(aim.x), sy(aim.y)); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    play.defs.forEach(function(d){ drawDot(d.x, d.y, 0.62, "#E0574A"); });
+    if(play.phase === "live") drawDot(play.rusher.x, play.rusher.y, 0.62, "#C86FC0");
+    play.recs.forEach(function(r){
+      var carrying = play.carrier === r;
+      drawDot(r.x, r.y, carrying ? 0.72 : 0.62, carrying ? "#E8CF5C" : "#4FA88B");
+    });
+    drawDot(play.qb.x, play.qb.y, play.carrier === play.qb ? 0.72 : 0.66,
+            play.carrier === play.qb ? "#E8CF5C" : "#4A86D1");
+    if(play.phase === "air") drawDot(play.ball.x, play.ball.y, 0.3, "#E6EBEF");
+
+    // protection running out
+    if(play.phase === "live"){
+      var frac = 1 - clamp(play.t / SACK_TIME, 0, 1);
+      ctx.fillStyle = "rgba(0,0,0,.45)";
+      ctx.fillRect(8, 8, w - 16, 5);
+      ctx.fillStyle = frac > 0.35 ? "#4FA88B" : "#E0574A";
+      ctx.fillRect(8, 8, (w - 16) * frac, 5);
+    }
+  }
+
+  function drawDot(x, y, r, colour){
+    ctx.fillStyle = colour;
+    ctx.beginPath();
+    ctx.arc(sx(x), sy(y), r * scale, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  /* ---------- chrome ---------- */
+
+  function ord(n){ return ["", "1st", "2nd", "3rd", "4th"][n] || (n + "th"); }
+
+  function syncChrome(){
+    el("you-score").textContent = st.you;
+    el("opp-score").textContent = st.opp;
+    el("you-side").dataset.lead = st.you > st.opp;
+    el("opp-side").dataset.lead = st.opp > st.you;
+    el("drive-n").textContent = Math.min(st.drive, DRIVES) + " of " + DRIVES;
+
+    var toGoal = FIELD_L - st.ballOn;
+    el("down-text").textContent = st.driveIsYours && !st.over
+      ? ord(st.down) + " & " + (st.toGo >= toGoal ? "goal" : st.toGo)
+      : "—";
+    el("msg").textContent = st.lastMsg;
+
+    var live = play && play.phase !== "done";
+    var yourBall = st.driveIsYours && !st.over;
+    el("snap").disabled = !yourBall || live;
+    el("snap").textContent = st.over ? "Full time" : (yourBall ? "Snap" : "Rivals' ball");
+    el("run").disabled = !(play && play.phase === "live");
+    el("punt").disabled = !yourBall || live;
+
+    el("over").hidden = !st.over;
+    if(st.over){
+      var won = st.you > st.opp, drew = st.you === st.opp;
+      el("over-title").textContent = won ? "You win" : (drew ? "Draw" : "Beaten");
+      el("over-text").textContent =
+        st.you + "–" + st.opp + " · record " + st.wins + "–" + st.losses +
+        (st.ties ? "–" + st.ties : "") +
+        (st.best ? " · best streak " + st.best : "");
+      el("snap").textContent = "Next game";
+      el("snap").disabled = false;
+    }
+    el("howto").hidden = st.playedEver;
+    el("note").hidden = storageOK;
+  }
+
+  /* ---------- input ---------- */
+
+  var aim = null, pointerDown = false;
+
+  function fieldPoint(ev){
+    var rect = canvas.getBoundingClientRect();
+    var px = ev.clientX - rect.left, py = ev.clientY - rect.top;
+    return {
+      x: clamp(px / scale, 0, FIELD_W),
+      y: clamp(camY - (py / scale - viewYards/2), 0, FIELD_L)
+    };
+  }
+
+  canvas.addEventListener("pointerdown", function(ev){
+    if(!play) return;
+    pointerDown = true;
+    try{ canvas.setPointerCapture(ev.pointerId); }catch(e){}
+    if(play.phase === "live") aim = fieldPoint(ev);
+    if(play.phase === "carry") play.steerX = fieldPoint(ev).x;
+    ev.preventDefault();
+  });
+  canvas.addEventListener("pointermove", function(ev){
+    if(!play || !pointerDown) return;
+    if(play.phase === "live") aim = fieldPoint(ev);
+    if(play.phase === "carry") play.steerX = fieldPoint(ev).x;
+    ev.preventDefault();
+  });
+  canvas.addEventListener("pointerup", function(ev){
+    pointerDown = false;
+    if(!play) return;
+    if(play.phase === "live" && aim){
+      throwBall(st, play, aim.x, aim.y);
+      aim = null;
+      st.playedEver = true;
+      save();
+    }
+    ev.preventDefault();
+  });
+  canvas.addEventListener("pointercancel", function(){ pointerDown = false; aim = null; });
+
+  el("snap").addEventListener("click", function(){
+    if(st.over){ st = nextGame(st); rng = makeRng(st.seed); play = null; save(); syncChrome(); return; }
+    if(!st.driveIsYours || (play && play.phase !== "done")) return;
+    play = buildPlay(st, rng);
+    st.playedEver = true;
+    syncChrome();
+  });
+  el("run").addEventListener("click", function(){
+    if(play && play.phase === "live"){ scramble(st, play); aim = null; syncChrome(); }
+  });
+  el("punt").addEventListener("click", function(){
+    if(!st.driveIsYours || st.over || (play && play.phase !== "done")) return;
+    punt(st);
+    play = null;
+    afterDrive();
+  });
+  el("new-game").addEventListener("click", function(){
+    var keep = { wins:st.wins, losses:st.losses, ties:st.ties, best:st.best, streak:st.streak };
+    st = newGameState((Date.now() >>> 0));
+    st.wins = keep.wins; st.losses = keep.losses; st.ties = keep.ties;
+    st.best = keep.best; st.streak = keep.streak; st.playedEver = true;
+    rng = makeRng(st.seed);
+    play = null;
+    save(); syncChrome();
+  });
+
+  // After any change of possession, run the rivals' drives until it is your ball
+  // again (or the game is done), reporting each one.
+  function afterDrive(){
+    while(!st.over && !st.driveIsYours){
+      st.lastMsg = simOpponentDrive(st, rng);
+      endDrive(st);
+    }
+    save();
+    syncChrome();
+  }
+
+  /* ---------- loop ---------- */
+
+  var STEP = 1/60, acc = 0, last = 0, resultHold = 0;
+
+  function frame(now){
+    if(!last) last = now;
+    var dt = (now - last) / 1000;
+    last = now;
+    if(dt > 0.25) dt = 0.25;
+
+    if(play && play.phase !== "done"){
+      acc += dt;
+      while(acc >= STEP){ stepPlay(st, play, STEP, rng); acc -= STEP; }
+      if(play.phase === "done"){
+        acc = 0;
+        applyResult(st, play);
+        resultHold = 1.1;
+        syncChrome();
+      }
+    }else if(resultHold > 0){
+      resultHold -= dt;
+      if(resultHold <= 0){
+        var wasYours = st.driveIsYours;
+        play = null;
+        if(!wasYours || !st.driveIsYours) afterDrive();
+        save();
+        syncChrome();
+      }
+    }
+
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  window.addEventListener("resize", function(){ resize(); draw(); });
+
+  boot();
+  resize();
+  syncChrome();
+  draw();
+  requestAnimationFrame(frame);
+
+  if("serviceWorker" in navigator){
+    window.addEventListener("load", function(){
+      navigator.serviceWorker.register("./sw.js").catch(function(){});
+    });
+  }
+})();
+</script>
+</body>
+</html>
