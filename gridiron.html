@@ -624,16 +624,52 @@
   var canvas = el("field"), ctx = canvas.getContext("2d");
   var scale = 12, viewYards = 40, camY = 0;
 
+  /* Space set aside for everything below the pitch, counting the panels that
+     are currently hidden as though they were showing. Two reasons: at startup
+     resize() runs before the chrome has been switched on, so a hidden how-to
+     line was measured as nothing and the pitch came out that much too tall;
+     and sizing to only what is visible would have the pitch jump every time a
+     panel appeared. Measured by unhiding briefly within one synchronous block,
+     so nothing is ever painted in that state. */
+  var howtoGone = null;
+
+  function reserved(){
+    var host = canvas.parentNode;
+    var cs = getComputedStyle(host);
+    var unhidden = [];
+    for(var i = 0; i < host.children.length; i++){
+      var ch = host.children[i];
+      // a panel marked gone will not come back, so its room is handed to the
+      // board rather than held empty for the rest of the game
+      if(ch !== canvas && ch.hidden && !ch.hasAttribute("data-gone")){
+        ch.hidden = false; unhidden.push(ch);
+      }
+    }
+    var used = 0, visible = 1;
+    for(var j = 0; j < host.children.length; j++){
+      var c2 = host.children[j];
+      if(c2 === canvas) continue;
+      used += c2.offsetHeight; visible++;
+    }
+    unhidden.forEach(function(ch){ ch.hidden = true; });
+    return {
+      used: used,
+      pad: parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom),
+      gaps: (parseFloat(cs.rowGap) || 0) * (visible - 1)
+    };
+  }
+
   function resize(){
     var w = canvas.clientWidth;
     if(!w) return;
     scale = w / FIELD_W;
-    // As much field as actually fits: measure the page with no pitch in it and
-    // take what is left. A fixed fraction of the viewport pushed the controls
-    // off the bottom of a shorter phone.
+    // As much field as actually fits. Measure the room left inside the wrap:
+    // reading the document's scroll height cannot work, because the body carries
+    // min-height:100vh and so never reports less than a full screen, which left
+    // the pitch pinned at its minimum on every device.
     canvas.style.height = "0px";
-    var chrome = document.documentElement.scrollHeight;
-    var avail = window.innerHeight - chrome - 6;
+    var r = reserved();
+    var avail = canvas.parentNode.clientHeight - r.pad - r.used - r.gaps - 2;
     var h = Math.max(240, Math.min(avail, Math.round(w * 1.45)));
     viewYards = h / scale;
     var dpr = window.devicePixelRatio || 1;
@@ -894,7 +930,14 @@
       el("snap").textContent = "Next game";
       el("snap").disabled = false;
     }
-    el("howto").hidden = st.playedEver;
+    // the how-to goes for good on the first move, and the board takes its room
+    var howto = el("howto"), gone = !!st.playedEver;
+    howto.hidden = gone;
+    if(gone !== howtoGone){
+      howtoGone = gone;
+      if(gone) howto.setAttribute("data-gone", ""); else howto.removeAttribute("data-gone");
+      resize();
+    }
     el("note").hidden = storageOK;
   }
 

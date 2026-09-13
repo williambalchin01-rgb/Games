@@ -487,6 +487,40 @@
   // width available, or the height left after the chrome. Sizing it off the
   // width alone made a fixed-height board that pushed the controls off the
   // bottom of a shorter phone once the map chips arrived.
+  /* Space set aside for everything below the board, counting panels that are
+     hidden right now as though they were showing. The upgrade bar appears the
+     moment you select a tower, and sizing to only what is visible meant the
+     board either jumped or pushed the controls off a shorter phone when it
+     did. Measured by unhiding briefly inside one synchronous block, so that
+     state is never painted. */
+  var howtoGone = null;
+
+  function reserved(){
+    var host = canvas.parentNode;
+    var cs = getComputedStyle(host);
+    var unhidden = [];
+    for(var i = 0; i < host.children.length; i++){
+      var ch = host.children[i];
+      // a panel marked gone will not come back, so its room is handed to the
+      // board rather than held empty for the rest of the game
+      if(ch !== canvas && ch.hidden && !ch.hasAttribute("data-gone")){
+        ch.hidden = false; unhidden.push(ch);
+      }
+    }
+    var used = 0, visible = 1;
+    for(var j = 0; j < host.children.length; j++){
+      var c2 = host.children[j];
+      if(c2 === canvas) continue;
+      used += c2.offsetHeight; visible++;
+    }
+    unhidden.forEach(function(ch){ ch.hidden = true; });
+    return {
+      used: used,
+      pad: parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom),
+      gaps: (parseFloat(cs.rowGap) || 0) * (visible - 1)
+    };
+  }
+
   function resize(){
     var host = canvas.parentNode;               // the wrap, which flexes to fill
     var availW = host.clientWidth;
@@ -497,16 +531,8 @@
     // never reports less than a full screen and the board came out at its
     // minimum every time.
     canvas.style.height = "0px";
-    var cs = getComputedStyle(host);
-    var pad = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
-    var gap = parseFloat(cs.rowGap) || 0;
-    var used = 0, visible = 1;                  // the board counts as one
-    for(var i = 0; i < host.children.length; i++){
-      var ch = host.children[i];
-      if(ch === canvas || ch.hidden) continue;
-      used += ch.offsetHeight; visible++;
-    }
-    var availH = host.clientHeight - pad - used - gap * (visible - 1) - 2;
+    var r = reserved();
+    var availH = host.clientHeight - r.pad - r.used - r.gaps - 2;
 
     cell = Math.max(18, Math.min(availW / COLS, availH / ROWS));
     var w = cell * COLS, h = cell * ROWS;
@@ -756,7 +782,14 @@
         "You held " + (st.wave - 1) + (st.wave - 1 === 1 ? " wave" : " waves") +
         (st.best > st.wave - 1 ? " — best " + st.best : " — a new best");
     }
-    el("howto").hidden = st.placedEver;
+    // the how-to goes for good on the first move, and the board takes its room
+    var howto = el("howto"), gone = !!st.placedEver;
+    howto.hidden = gone;
+    if(gone !== howtoGone){
+      howtoGone = gone;
+      if(gone) howto.setAttribute("data-gone", ""); else howto.removeAttribute("data-gone");
+      resize();
+    }
     el("note").hidden = storageOK;
   }
 
