@@ -39,6 +39,20 @@
 
 <div class="menu">
 
+  <a class="game" href="./towers.html">
+    <svg class="art" viewBox="0 0 52 52" aria-hidden="true">
+      <path d="M3 12 H34 a5 5 0 0 1 5 5 v18 a5 5 0 0 1-5 5 H12" fill="none" stroke="#2C3945" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="10" cy="30" r="5" fill="#4A86D1"/>
+      <circle cx="44" cy="22" r="5" fill="#E8894A"/>
+      <circle cx="24" cy="12" r="3.4" fill="#8FCB52"/>
+    </svg>
+    <div>
+      <h2>Towers</h2>
+      <p>Build guns along the road and hold back the waves for as long as you can.</p>
+      <div class="meta" id="towers-meta"></div>
+    </div>
+  </a>
+
   <a class="game" href="./blocks.html">
     <svg class="art" viewBox="0 0 52 52" aria-hidden="true">
       <rect x="2"  y="2"  width="14" height="14" fill="#4A86D1"/>
@@ -92,6 +106,14 @@
     if(b.best) bits.push("Best " + b.best);
     if(b.score) bits.push("Game in progress · " + b.score);
     document.getElementById("blocks-meta").textContent = bits.join("  ·  ");
+  }
+
+  var t = read("arcade.towers.v1");
+  if(t){
+    var tb = [];
+    if(t.best) tb.push("Best wave " + t.best);
+    if(!t.over && t.wave > 1) tb.push("On wave " + t.wave);
+    document.getElementById("towers-meta").textContent = tb.join("  \u00B7  ");
   }
 
   var d = read("decant.v1");

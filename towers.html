@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#151C24">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Arcade">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<link rel="icon" href="./icon-192.png">
+<title>Towers</title>
+<link rel="stylesheet" href="./app.css">
+<style>
+  /* Top-anchored on purpose: the how-to line and the selection bar both sit
+     below the board and come and go, and centring would shift the board under
+     the player's finger every time one of them appeared. */
+  .wrap{flex:1;display:flex;flex-direction:column;justify-content:flex-start;gap:10px;padding:8px 0}
+  canvas{width:100%;display:block;border-radius:8px;touch-action:manipulation}
+
+  .stats{display:flex;justify-content:space-between;gap:8px;padding:0 2px 10px;border-bottom:1px solid var(--line)}
+  .stat{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-variant-numeric:tabular-nums}
+  .stat b{display:block;font-size:19px;font-weight:300;letter-spacing:-.01em;color:var(--ink);margin-top:3px}
+  .stat[data-warn="true"] b{color:#E0574A}
+
+  .picker{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .pick{
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    padding:10px 6px;text-align:center;transition:border-color .12s ease, opacity .12s ease;
+  }
+  .pick[aria-pressed="true"]{border-color:var(--sel)}
+  .pick[data-poor="true"]{opacity:.4}
+  /* these are spans, so they need to be block for the size and stacking to apply */
+  .pick .dot{display:block;width:16px;height:16px;border-radius:50%;margin:0 auto 7px;background:var(--c)}
+  .pick .nm{display:block;font-size:12px;letter-spacing:.1em;text-transform:uppercase}
+  .pick .cost{display:block;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;margin-top:4px}
+
+  .bar{
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    padding:10px 12px;font-size:13px;
+  }
+  .bar .txt{color:var(--muted);font-variant-numeric:tabular-nums}
+  .bar .btns{display:flex;gap:6px;flex:none}
+  .bar button{
+    font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+    border:1px solid var(--line);border-radius:20px;padding:6px 12px;flex:none;
+  }
+  .bar button:disabled{color:var(--line)}
+  .howto{
+    margin:0;text-align:center;font-size:12.5px;color:var(--muted);
+    border:1px dashed var(--line);border-radius:var(--radius);padding:10px 12px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="./index.html">&larr; Arcade</a>
+  <button class="chip" id="new-game">New</button>
+</header>
+
+<div class="stats">
+  <span class="stat" id="lives-stat">Lives<b id="lives-n">20</b></span>
+  <span class="stat">Gold<b id="gold-n">120</b></span>
+  <span class="stat">Wave<b id="wave-n">1</b></span>
+  <span class="stat">Best<b id="best-n">0</b></span>
+</div>
+
+<div class="wrap">
+  <canvas id="board"></canvas>
+  <div class="picker" id="picker"></div>
+  <div class="bar" id="selbar" hidden>
+    <span class="txt" id="sel-text"></span>
+    <span class="btns">
+      <button id="sel-up">Upgrade</button>
+      <button id="sel-sell">Sell</button>
+    </span>
+  </div>
+  <p class="howto" id="howto" hidden>Pick a tower, tap a dark square to build, then send the wave.</p>
+</div>
+
+<div class="win" id="over" hidden>
+  <h2>Overrun</h2>
+  <p id="over-text"></p>
+</div>
+
+<div class="controls">
+  <button class="ctrl" id="go">Send wave 1</button>
+</div>
+
+<p class="note" id="note" hidden>Storage is blocked here, so your progress won't be saved between sessions.</p>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ================= logic (no DOM below this line until marked) ================= */
+
+  var COLS = 9, ROWS = 11;
+  var START_LIVES = 20, START_GOLD = 120;
+  var KEY = "arcade.towers.v1";
+
+  // Corner points of the route, in grid coordinates. Enemies walk the polyline
+  // through these; anything not on it can be built on.
+  var WAY = [[-1,1],[6,1],[6,4],[2,4],[2,7],[6,7],[6,9],[2,9],[2,11]];
+
+  var TOWERS = {
+    gun:    { name:"Gun",    cost:40, colour:"#4A86D1", range:2.2, damage:7,  cooldown:0.45, splash:0,   slow:0 },
+    cannon: { name:"Cannon", cost:85, colour:"#E8894A", range:2.6, damage:30, cooldown:1.50, splash:1.3, slow:0 },
+    frost:  { name:"Frost",  cost:50, colour:"#4FB6C4", range:2.0, damage:3,  cooldown:0.80, splash:0,   slow:0.50 }
+  };
+  var TOWER_ORDER = ["gun","cannon","frost"];
+  var MAX_LEVEL = 3;
+  var SLOW_TIME = 1.8;
+
+  // Armour subtracts from every individual hit, so a wall of cheap fast towers
+  // stops scaling once the heavies arrive and concentrated damage is the answer.
+  // Without it the whole game collapses into covering the map in the cheapest
+  // tower and never upgrading.
+  var ENEMIES = {
+    grunt:  { name:"Grunt",  hp:28,  speed:1.5, bounty:6,  armour:0, colour:"#8FCB52", size:0.30 },
+    runner: { name:"Runner", hp:18,  speed:3.0, bounty:7,  armour:0, colour:"#E8CF5C", size:0.24 },
+    brute:  { name:"Brute",  hp:110, speed:1.0, bounty:18, armour:4, colour:"#E0574A", size:0.38 },
+    boss:   { name:"Boss",   hp:450, speed:0.9, bounty:90, armour:8, colour:"#C86FC0", size:0.46 }
+  };
+  var MIN_HIT = 1;   // nothing is ever fully immune
+
+  /* ---------- path maths ---------- */
+
+  // Cumulative distances along the polyline, so an enemy is just a scalar
+  // "distance travelled" and its position falls out of that.
+  var PATH = (function(){
+    var pts = WAY.map(function(p){ return { x:p[0], y:p[1] }; });
+    var cum = [0];
+    for(var i = 1; i < pts.length; i++){
+      var dx = pts[i].x - pts[i-1].x, dy = pts[i].y - pts[i-1].y;
+      cum.push(cum[i-1] + Math.sqrt(dx*dx + dy*dy));
+    }
+    return { pts:pts, cum:cum, length:cum[cum.length-1] };
+  })();
+
+  function pointAt(dist){
+    if(dist <= 0) return { x:PATH.pts[0].x, y:PATH.pts[0].y };
+    if(dist >= PATH.length){
+      var last = PATH.pts[PATH.pts.length-1];
+      return { x:last.x, y:last.y };
+    }
+    for(var i = 1; i < PATH.pts.length; i++){
+      if(dist <= PATH.cum[i]){
+        var seg = PATH.cum[i] - PATH.cum[i-1];
+        var t = seg === 0 ? 0 : (dist - PATH.cum[i-1]) / seg;
+        var a = PATH.pts[i-1], b = PATH.pts[i];
+        return { x:a.x + (b.x-a.x)*t, y:a.y + (b.y-a.y)*t };
+      }
+    }
+    return { x:PATH.pts[0].x, y:PATH.pts[0].y };
+  }
+
+  // Grid squares the route passes through: everything else is buildable.
+  var PATH_CELLS = (function(){
+    var set = {};
+    for(var d = 0; d <= PATH.length; d += 0.05){
+      var p = pointAt(d);
+      set[Math.round(p.x) + ":" + Math.round(p.y)] = 1;
+    }
+    return set;
+  })();
+  function onPath(col, row){ return !!PATH_CELLS[col + ":" + row]; }
+
+  /* ---------- waves ---------- */
+
+  // Wave n is a list of {type, at} spawn times. Counts and health both climb,
+  // health faster, so later waves need upgrades rather than just more towers.
+  function hpScale(wave){ return Math.pow(1.19, wave - 1); }
+  // Armour climbs more slowly than health, so upgrades keep pace rather than
+  // becoming the only thing that works.
+  function armourScale(wave){ return 1 + (wave - 1) * 0.08; }
+
+  function wavePlan(wave){
+    var out = [], t = 0, i;
+    function add(type, n, gap){
+      for(var k = 0; k < n; k++){ out.push({ type:type, at:t }); t += gap; }
+    }
+    if(wave % 10 === 0){
+      add("boss", 1, 0.5);
+      add("brute", 2 + Math.floor(wave/10), 1.1);
+      add("grunt", 6, 0.45);
+      return out;
+    }
+    add("grunt", 4 + Math.floor(wave * 1.1), 0.62);
+    if(wave >= 4) add("runner", 2 + Math.floor(wave / 2), 0.42);
+    if(wave >= 7) add("brute", 1 + Math.floor((wave - 7) / 3), 1.3);
+    return out;
+  }
+  function waveBonus(wave){ return 12 + wave * 3; }
+
+  /* ---------- state ---------- */
+
+  function newState(){
+    return {
+      lives: START_LIVES, gold: START_GOLD, wave: 1, best: 0,
+      phase: "build",            // build | wave | over
+      towers: [], enemies: [], tracers: [],
+      queue: [], clock: 0, spawned: 0, nextId: 1, placedEver: false
+    };
+  }
+
+  function towerAt(st, col, row){
+    for(var i = 0; i < st.towers.length; i++)
+      if(st.towers[i].col === col && st.towers[i].row === row) return st.towers[i];
+    return null;
+  }
+  function canBuild(st, col, row, type){
+    if(col < 0 || col >= COLS || row < 0 || row >= ROWS) return false;
+    if(onPath(col, row)) return false;
+    if(towerAt(st, col, row)) return false;
+    return st.gold >= TOWERS[type].cost;
+  }
+  function build(st, col, row, type){
+    if(!canBuild(st, col, row, type)) return null;
+    var def = TOWERS[type];
+    st.gold -= def.cost;
+    var t = { id: st.nextId++, type:type, col:col, row:row, level:1, spent:def.cost, cool:0 };
+    st.towers.push(t);
+    st.placedEver = true;
+    return t;
+  }
+  function statsOf(t){
+    var d = TOWERS[t.type], k = t.level - 1;
+    return {
+      range: d.range + 0.3 * k,
+      damage: d.damage * Math.pow(1.9, k),
+      cooldown: d.cooldown * Math.pow(0.85, k),
+      splash: d.splash ? d.splash + 0.15 * k : 0,
+      slow: d.slow
+    };
+  }
+  function upgradeCost(t){ return Math.round(TOWERS[t.type].cost * 0.8 * t.level); }
+  function sellValue(t){ return Math.round(t.spent * 0.6); }
+
+  function upgrade(st, t){
+    if(t.level >= MAX_LEVEL) return false;
+    var c = upgradeCost(t);
+    if(st.gold < c) return false;
+    st.gold -= c; t.spent += c; t.level++;
+    return true;
+  }
+  function sell(st, t){
+    var i = st.towers.indexOf(t);
+    if(i < 0) return false;
+    st.gold += sellValue(t);
+    st.towers.splice(i, 1);
+    return true;
+  }
+
+  function startWave(st){
+    if(st.phase !== "build") return false;
+    st.queue = wavePlan(st.wave);
+    st.clock = 0; st.spawned = 0;
+    st.phase = "wave";
+    return true;
+  }
+
+  /* ---------- simulation ---------- */
+
+  function hit(e, damage){
+    e.hp -= Math.max(MIN_HIT, damage - e.armour);
+  }
+
+  function dist2(ax, ay, bx, by){
+    var dx = ax-bx, dy = ay-by;
+    return dx*dx + dy*dy;
+  }
+
+  function step(st, dt){
+    if(st.phase !== "wave") return;
+    st.clock += dt;
+    var i, j, e, t;
+
+    // spawn everything whose time has come
+    while(st.spawned < st.queue.length && st.queue[st.spawned].at <= st.clock){
+      var spec = st.queue[st.spawned], def = ENEMIES[spec.type];
+      var hp = def.hp * hpScale(st.wave);
+      st.enemies.push({
+        id: st.nextId++, type: spec.type,
+        hp: hp, maxHp: hp,
+        armour: def.armour * armourScale(st.wave),
+        dist: 0, slowT: 0
+      });
+      st.spawned++;
+    }
+
+    // walk the survivors along the route
+    for(i = st.enemies.length - 1; i >= 0; i--){
+      e = st.enemies[i];
+      var spd = ENEMIES[e.type].speed;
+      if(e.slowT > 0){ e.slowT -= dt; spd *= (1 - TOWERS.frost.slow); }
+      e.dist += spd * dt;
+      if(e.dist >= PATH.length){
+        st.enemies.splice(i, 1);
+        st.lives--;
+        if(st.lives <= 0){ st.lives = 0; st.phase = "over"; return; }
+      }
+    }
+
+    // tracers are pure decoration, they just age out
+    for(i = st.tracers.length - 1; i >= 0; i--){
+      st.tracers[i].t -= dt;
+      if(st.tracers[i].t <= 0) st.tracers.splice(i, 1);
+    }
+
+    // towers fire at whichever target in range is furthest along the route,
+    // which is the one closest to costing a life
+    for(i = 0; i < st.towers.length; i++){
+      t = st.towers[i];
+      t.cool -= dt;
+      if(t.cool > 0) continue;
+      var s = statsOf(t), r2 = s.range * s.range;
+      var tx = t.col, ty = t.row, best = null, bestDist = -1;
+      for(j = 0; j < st.enemies.length; j++){
+        e = st.enemies[j];
+        var p = pointAt(e.dist);
+        if(dist2(tx, ty, p.x, p.y) <= r2 && e.dist > bestDist){ best = e; bestDist = e.dist; }
+      }
+      if(!best) continue;
+
+      var bp = pointAt(best.dist);
+      t.cool = s.cooldown;
+      st.tracers.push({ x1:tx, y1:ty, x2:bp.x, y2:bp.y, t:0.08, colour:TOWERS[t.type].colour });
+
+      if(s.splash > 0){
+        var sp2 = s.splash * s.splash;
+        for(j = 0; j < st.enemies.length; j++){
+          var q = pointAt(st.enemies[j].dist);
+          if(dist2(bp.x, bp.y, q.x, q.y) <= sp2) hit(st.enemies[j], s.damage);
+        }
+      }else{
+        hit(best, s.damage);
+      }
+      if(s.slow > 0) best.slowT = SLOW_TIME;
+    }
+
+    // collect the dead
+    for(i = st.enemies.length - 1; i >= 0; i--){
+      if(st.enemies[i].hp <= 0){
+        st.gold += ENEMIES[st.enemies[i].type].bounty;
+        st.enemies.splice(i, 1);
+      }
+    }
+
+    // wave over once nothing is left to spawn and nothing is still walking
+    if(st.spawned >= st.queue.length && st.enemies.length === 0){
+      st.gold += waveBonus(st.wave);
+      if(st.wave > st.best) st.best = st.wave;
+      st.wave++;
+      st.phase = "build";
+      st.tracers.length = 0;
+    }
+  }
+
+  /* ================= end of logic; DOM from here ================= */
+
+  function el(id){ return document.getElementById(id); }
+
+  var st = newState(), selectedType = "gun", selectedTower = null;
+  var storageOK = true, memory = null;
+
+  function load(){
+    try{
+      var raw = localStorage.getItem(KEY);
+      return raw ? JSON.parse(raw) : null;
+    }catch(e){ storageOK = false; return memory; }
+  }
+  // Only ever saved between waves: a half-fought wave is not worth restoring,
+  // and rebuilding one from storage is a pile of edge cases for no gain.
+  function save(){
+    if(st.phase !== "build" && st.phase !== "over") return;
+    var s = {
+      lives:st.lives, gold:st.gold, wave:st.wave, best:st.best,
+      towers:st.towers, placedEver:st.placedEver, over:st.phase === "over"
+    };
+    memory = s;
+    try{ localStorage.setItem(KEY, JSON.stringify(s)); }
+    catch(e){ storageOK = false; }
+  }
+  function restore(){
+    var s = load();
+    if(!s) return;
+    st.best = s.best || 0;
+    if(s.over){ st.best = s.best || 0; return; }
+    st.lives = typeof s.lives === "number" ? s.lives : START_LIVES;
+    st.gold  = typeof s.gold  === "number" ? s.gold  : START_GOLD;
+    st.wave  = s.wave || 1;
+    st.towers = (s.towers || []).filter(function(t){ return TOWERS[t.type]; });
+    st.placedEver = !!s.placedEver;
+    var maxId = 0;
+    st.towers.forEach(function(t){ t.cool = 0; if(t.id > maxId) maxId = t.id; });
+    st.nextId = maxId + 1;
+  }
+
+  /* ---------- canvas ---------- */
+
+  var canvas = el("board"), ctx = canvas.getContext("2d"), cell = 40;
+
+  function resize(){
+    var w = canvas.clientWidth;
+    if(!w) return;
+    cell = w / COLS;
+    var h = cell * ROWS;
+    var dpr = window.devicePixelRatio || 1;
+    canvas.style.height = h + "px";
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function draw(){
+    var w = COLS * cell, h = ROWS * cell;
+    ctx.clearRect(0, 0, w, h);
+
+    ctx.fillStyle = "#151C24";
+    ctx.fillRect(0, 0, w, h);
+
+    // buildable squares
+    for(var r = 0; r < ROWS; r++){
+      for(var c = 0; c < COLS; c++){
+        if(onPath(c, r)) continue;
+        ctx.fillStyle = "#1E2831";
+        roundRect(c*cell + 1.5, r*cell + 1.5, cell - 3, cell - 3, 4);
+        ctx.fill();
+      }
+    }
+
+    // the route as one thick stroke
+    ctx.strokeStyle = "#2C3945";
+    ctx.lineWidth = cell * 0.86;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    PATH.pts.forEach(function(p, i){
+      var x = (p.x + 0.5) * cell, y = (p.y + 0.5) * cell;
+      if(i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // range ring for whatever is selected
+    if(selectedTower){
+      var ss = statsOf(selectedTower);
+      ctx.beginPath();
+      ctx.arc((selectedTower.col+0.5)*cell, (selectedTower.row+0.5)*cell, ss.range*cell, 0, Math.PI*2);
+      ctx.fillStyle = "rgba(224,164,88,.10)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(224,164,88,.55)";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+
+    // towers
+    st.towers.forEach(function(t){
+      var d = TOWERS[t.type], x = (t.col+0.5)*cell, y = (t.row+0.5)*cell;
+      ctx.fillStyle = d.colour;
+      ctx.beginPath();
+      ctx.arc(x, y, cell*0.30, 0, Math.PI*2);
+      ctx.fill();
+      if(selectedTower && selectedTower.id === t.id){
+        ctx.strokeStyle = "#E0A458"; ctx.lineWidth = 2.5; ctx.stroke();
+      }
+      // level pips
+      for(var k = 0; k < t.level; k++){
+        ctx.fillStyle = "#151C24";
+        ctx.beginPath();
+        ctx.arc(x - (t.level-1)*3 + k*6, y + cell*0.30 - 3, 1.7, 0, Math.PI*2);
+        ctx.fill();
+      }
+    });
+
+    // tracers
+    st.tracers.forEach(function(tr){
+      ctx.strokeStyle = tr.colour;
+      ctx.globalAlpha = Math.max(0, tr.t / 0.08) * 0.9;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo((tr.x1+0.5)*cell, (tr.y1+0.5)*cell);
+      ctx.lineTo((tr.x2+0.5)*cell, (tr.y2+0.5)*cell);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    });
+
+    // enemies with a health bar
+    st.enemies.forEach(function(e){
+      var d = ENEMIES[e.type], p = pointAt(e.dist);
+      var x = (p.x+0.5)*cell, y = (p.y+0.5)*cell, rad = d.size*cell;
+      ctx.fillStyle = e.slowT > 0 ? "#4FB6C4" : d.colour;
+      ctx.beginPath();
+      ctx.arc(x, y, rad, 0, Math.PI*2);
+      ctx.fill();
+      var frac = Math.max(0, e.hp / e.maxHp);
+      if(frac < 1){
+        var bw = rad * 2;
+        ctx.fillStyle = "rgba(0,0,0,.55)";
+        ctx.fillRect(x - bw/2, y - rad - 6, bw, 3);
+        ctx.fillStyle = frac > 0.5 ? "#4FA88B" : "#E0574A";
+        ctx.fillRect(x - bw/2, y - rad - 6, bw * frac, 3);
+      }
+    });
+  }
+
+  function roundRect(x, y, w, h, r){
+    ctx.beginPath();
+    ctx.moveTo(x+r, y);
+    ctx.arcTo(x+w, y, x+w, y+h, r);
+    ctx.arcTo(x+w, y+h, x, y+h, r);
+    ctx.arcTo(x, y+h, x, y, r);
+    ctx.arcTo(x, y, x+w, y, r);
+    ctx.closePath();
+  }
+
+  /* ---------- chrome ---------- */
+
+  function buildPicker(){
+    var p = el("picker");
+    p.textContent = "";
+    TOWER_ORDER.forEach(function(type){
+      var d = TOWERS[type];
+      var b = document.createElement("button");
+      b.className = "pick";
+      b.dataset.type = type;
+      b.innerHTML = '<span class="dot"></span><span class="nm"></span><span class="cost"></span>';
+      b.querySelector(".dot").style.setProperty("--c", d.colour);
+      b.querySelector(".nm").textContent = d.name;
+      b.querySelector(".cost").textContent = d.cost + " gold";
+      b.addEventListener("click", function(){
+        selectedType = type;
+        selectedTower = null;
+        syncChrome();
+      });
+      p.appendChild(b);
+    });
+  }
+
+  function syncChrome(){
+    el("lives-n").textContent = st.lives;
+    el("gold-n").textContent = Math.floor(st.gold);
+    el("wave-n").textContent = st.wave;
+    el("best-n").textContent = st.best;
+    el("lives-stat").dataset.warn = st.lives <= 5;
+
+    var kids = el("picker").children;
+    for(var i = 0; i < kids.length; i++){
+      var type = kids[i].dataset.type;
+      kids[i].setAttribute("aria-pressed", type === selectedType && !selectedTower);
+      kids[i].dataset.poor = st.gold < TOWERS[type].cost;
+    }
+
+    var go = el("go");
+    go.disabled = st.phase !== "build";
+    go.textContent = st.phase === "wave" ? "Wave " + st.wave + " incoming" : "Send wave " + st.wave;
+
+    var bar = el("selbar");
+    if(selectedTower){
+      var s = statsOf(selectedTower), d = TOWERS[selectedTower.type];
+      var maxed = selectedTower.level >= MAX_LEVEL;
+      // kept short: the buttons take the rest of the row and this must not wrap
+      el("sel-text").textContent =
+        d.name + " L" + selectedTower.level + " · " + Math.round(s.damage) + " dmg";
+      el("sel-up").textContent = maxed ? "Maxed" : "Upgrade " + upgradeCost(selectedTower);
+      el("sel-up").disabled = maxed || st.gold < upgradeCost(selectedTower);
+      el("sel-sell").textContent = "Sell " + sellValue(selectedTower);
+      bar.hidden = false;
+    }else{
+      bar.hidden = true;
+    }
+
+    el("over").hidden = st.phase !== "over";
+    if(st.phase === "over"){
+      el("over-text").textContent =
+        "You held " + (st.wave - 1) + (st.wave - 1 === 1 ? " wave" : " waves") +
+        (st.best > st.wave - 1 ? " — best " + st.best : " — a new best");
+    }
+    el("howto").hidden = st.placedEver;
+    el("note").hidden = storageOK;
+  }
+
+  /* ---------- input ---------- */
+
+  canvas.addEventListener("click", function(ev){
+    var rect = canvas.getBoundingClientRect();
+    var col = Math.floor((ev.clientX - rect.left) / cell);
+    var row = Math.floor((ev.clientY - rect.top) / cell);
+    if(col < 0 || col >= COLS || row < 0 || row >= ROWS) return;
+
+    var existing = towerAt(st, col, row);
+    if(existing){
+      selectedTower = (selectedTower && selectedTower.id === existing.id) ? null : existing;
+      syncChrome(); draw();
+      return;
+    }
+    selectedTower = null;
+    if(build(st, col, row, selectedType)) save();
+    syncChrome(); draw();
+  });
+
+  el("sel-up").addEventListener("click", function(){
+    if(selectedTower && upgrade(st, selectedTower)){ save(); syncChrome(); draw(); }
+  });
+  el("sel-sell").addEventListener("click", function(){
+    if(selectedTower && sell(st, selectedTower)){
+      selectedTower = null; save(); syncChrome(); draw();
+    }
+  });
+  el("go").addEventListener("click", function(){
+    if(startWave(st)){ selectedTower = null; syncChrome(); }
+  });
+  function reset(){
+    var best = st.best;
+    st = newState();
+    st.best = best;
+    selectedTower = null; selectedType = "gun";
+    save(); syncChrome(); resize(); draw();
+  }
+  el("new-game").addEventListener("click", reset);
+
+  /* ---------- loop ---------- */
+
+  var STEP = 1/60, acc = 0, last = 0;
+
+  function frame(now){
+    if(!last) last = now;
+    var dt = (now - last) / 1000;
+    last = now;
+    if(dt > 0.25) dt = 0.25;          // a backgrounded tab must not fast-forward the wave
+
+    if(st.phase === "wave"){
+      var wasWave = true;
+      acc += dt;
+      while(acc >= STEP){ step(st, STEP); acc -= STEP; }
+      if(st.phase !== "wave" && wasWave){ acc = 0; save(); }
+      syncChrome();
+    }
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  window.addEventListener("resize", function(){ resize(); draw(); });
+
+  buildPicker();
+  restore();
+  resize();
+  syncChrome();
+  draw();
+  requestAnimationFrame(frame);
+
+  if("serviceWorker" in navigator){
+    window.addEventListener("load", function(){
+      navigator.serviceWorker.register("./sw.js").catch(function(){});
+    });
+  }
+})();
+</script>
+</body>
+</html>
