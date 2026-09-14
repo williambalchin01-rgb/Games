@@ -1,4 +1,4 @@
-var CACHE = "arcade-v19";
+var CACHE = "arcade-v20";
 /* No "./" entry: the fetch handler folds it into "./index.html" so the two
    entry points can never drift apart. */
 var FILES = ["./index.html","./decant.html","./blocks.html","./towers.html","./gridiron.html","./hatchery.html","./cascade.html","./app.css",

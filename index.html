@@ -174,12 +174,16 @@
     document.getElementById("hatchery-meta").textContent = hb.join("  \u00B7  ");
   }
 
-  var g = read("arcade.gridiron.v1");
+  var g = read("arcade.gridiron.v2");
   if(g){
     var gb = [];
-    var played = (g.wins||0) + (g.losses||0) + (g.ties||0);
-    if(played) gb.push((g.wins||0) + "W " + (g.losses||0) + "L" + (g.ties ? " " + g.ties + "D" : ""));
-    if(g.best) gb.push("Best streak " + g.best);
+    var sn = g.season;
+    if(sn && sn.fix){
+      gb.push(sn.week >= sn.fix.length ? "Season done" : "Season week " + (sn.week + 1));
+      gb.push(sn.w + "W " + sn.l + "L" + (sn.t ? " " + sn.t + "D" : ""));
+    } else if(g.ex && (g.ex.wins || g.ex.losses || g.ex.ties)){
+      gb.push(g.ex.wins + "W " + g.ex.losses + "L" + (g.ex.ties ? " " + g.ex.ties + "D" : ""));
+    }
     document.getElementById("gridiron-meta").textContent = gb.join("  \u00B7  ");
   }
 

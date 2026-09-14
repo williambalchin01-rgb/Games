@@ -44,14 +44,72 @@
     margin:0;text-align:center;font-size:12.5px;color:var(--muted);
     border:1px dashed var(--line);border-radius:var(--radius);padding:9px 12px;
   }
+
+  /* the game view has to keep stretching the way the wrap used to, or the
+     pitch measures its room against a box that is not there */
+  #gameview{flex:1;display:flex;flex-direction:column;min-height:0}
+
+  #lobby{flex:1;display:flex;flex-direction:column;gap:14px;padding:6px 0 0;min-height:0;overflow-y:auto}
+  .section{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+  .kits{display:grid;grid-template-columns:repeat(8,1fr);gap:7px;margin-top:8px}
+  .kit{
+    aspect-ratio:1;border-radius:50%;border:2px solid transparent;padding:0;
+    position:relative;overflow:hidden;background:none;
+  }
+  .kit i{position:absolute;top:0;bottom:0;width:50%;display:block}
+  .kit i:first-child{left:0}
+  .kit i:last-child{right:0}
+  .kit[aria-pressed="true"]{border-color:var(--ink);transform:scale(1.08)}
+
+  .yourteam{display:flex;align-items:center;gap:10px;margin-top:10px;font-size:14px}
+  .badge{width:26px;height:26px;border-radius:50%;position:relative;overflow:hidden;flex:none}
+  .badge i{position:absolute;top:0;bottom:0;width:50%}
+  .badge i:first-child{left:0}
+  .badge i:last-child{right:0}
+
+  .fixtures{display:flex;flex-direction:column;gap:5px;margin-top:8px}
+  .fx{
+    display:flex;align-items:center;gap:9px;font-size:13px;
+    border:1px solid var(--line);border-radius:var(--radius);padding:7px 10px;
+  }
+  .fx .wk{color:var(--muted);font-size:11px;letter-spacing:.1em;width:46px;flex:none}
+  .fx .grade{margin-left:auto;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+  .fx[data-state="done"]{opacity:.55}
+  .fx[data-state="now"]{border-color:var(--accent)}
+  .fx .score{margin-left:auto;font-variant-numeric:tabular-nums;font-size:12px}
 </style>
 </head>
 <body>
 
 <header>
   <a class="back" href="./index.html">&larr; Arcade</a>
-  <button class="chip" id="new-game">New</button>
+  <button class="chip" id="to-lobby" hidden>Menu</button>
 </header>
+
+<div id="lobby">
+  <div>
+    <div class="section">Your kit</div>
+    <div class="kits" id="kits"></div>
+    <div class="yourteam"><span class="badge" id="you-badge"></span><span id="you-name"></span></div>
+  </div>
+
+  <div class="controls">
+    <button class="ctrl" id="start-season">New season</button>
+    <button class="ctrl" id="start-ex">Exhibition</button>
+  </div>
+
+  <div id="season-panel" hidden>
+    <div class="section" id="season-head">Season</div>
+    <div class="fixtures" id="fixtures"></div>
+    <div class="controls" style="padding-top:10px">
+      <button class="ctrl" data-primary="true" id="resume-season">Play week 1</button>
+    </div>
+  </div>
+
+  <p class="note">An exhibition is a one-off. A season is nine fixtures against rivals of set difficulty, and the record follows you through it.</p>
+</div>
+
+<div id="gameview" hidden>
 
 <div class="scoreline">
   <span class="side" id="you-side">You<b id="you-score">0</b></span>
@@ -81,6 +139,8 @@
   <p id="over-text"></p>
 </div>
 
+</div>
+
 <p class="note" id="note" hidden>Storage is blocked here, so your record won't be saved between sessions.</p>
 
 <script>
@@ -97,7 +157,64 @@
   // could never go.
   var END_ZONE = 10;
   var BACK_LINE = FIELD_L + END_ZONE;
-  var KEY = "arcade.gridiron.v1";
+  var KEY = "arcade.gridiron.v2";
+  var SEASON_LEN = 9;
+
+  /* Kits are split down the middle, which is what makes a side readable at a
+     glance on a phone. Two kits differing as a pair is not enough - navy/bone
+     against navy/red both read as "the dark one" at this size - so a rival
+     never shares a colour with you at all. That is also why the rival pool is
+     every pair rather than the sixteen you choose from: after ruling out both
+     of your colours, sixteen would not always leave nine distinct rivals for a
+     season. */
+  var PAINT = ["#4A86D1","#E0574A","#4FA88B","#E8CF5C","#8FCB52","#A470D0","#E8894A","#E6EBEF"];
+  var PAINT_NAME = ["Navy","Red","Teal","Gold","Green","Plum","Amber","Bone"];
+
+  var PAIRS = (function(){
+    var out = [];
+    for(var i = 0; i < PAINT.length; i++)
+      for(var j = i + 1; j < PAINT.length; j++)
+        out.push({ i:i, j:j, a:PAINT[i], b:PAINT[j], name:PAINT_NAME[i] + " & " + PAINT_NAME[j] });
+    return out;
+  })();
+
+  // the sixteen offered on the kit grid, spread across the palette
+  var PICKABLE = [0,1,2,3,4,5,6,8,9,11,13,15,17,19,22,25];
+
+  function clashes(x, y){ return x.i === y.i || x.i === y.j || x.j === y.i || x.j === y.j; }
+
+  // weak, even, strong - fixed when the schedule is drawn so the run ahead of
+  // you is something you can see and plan around
+  var GRADES = [
+    { name:"Weak",   strength:0.55 },
+    { name:"Even",   strength:0.64 },
+    { name:"Strong", strength:0.73 }
+  ];
+
+  function makeSeason(kitIdx, rng){
+    var you = PAIRS[kitIdx];
+    var pool = [];
+    PAIRS.forEach(function(k, i){ if(!clashes(k, you)) pool.push(i); });
+    for(var i = pool.length - 1; i > 0; i--){
+      var j = Math.floor(rng() * (i + 1)), t = pool[i];
+      pool[i] = pool[j]; pool[j] = t;
+    }
+    var fix = [];
+    for(var w = 0; w < SEASON_LEN; w++){
+      /* The schedule hardens as it goes without being a straight ramp: the
+         chance of a soft week falls away and the chance of a hard one climbs,
+         so an early upset and a late gimme are both still possible. The last
+         week is always the toughest, because a season wants a final. */
+      var lean = w / (SEASON_LEN - 1);
+      var pWeak = 0.55 - lean * 0.50;
+      var pStrong = 0.08 + lean * 0.52;
+      var roll = rng(), g;
+      if(w === SEASON_LEN - 1) g = 2;
+      else g = roll < pWeak ? 0 : (roll > 1 - pStrong ? 2 : 1);
+      fix.push({ k: pool[w % pool.length], g: g, you:null, opp:null });
+    }
+    return { kit: kitIdx, week: 0, fix: fix, w:0, l:0, t:0 };
+  }
 
   var CATCH_R = 2.0;       // yards; generous enough to be playable with a fingertip
   var TACKLE_R = 1.15;
@@ -466,13 +583,19 @@
     st.firstDownAt = Math.min(FIELD_L, startOn + st.toGo);
   }
 
-  function newGameState(seed){
+  function newGameState(seed, opts){
+    opts = opts || {};
     var st = {
       you: 0, opp: 0,
       drive: 1, driveIsYours: true,
       ballOn: 25, down: 1, toGo: 10, firstDownAt: 35,
       over: false, lastMsg: "Your ball", playedEver: false,
       wins: 0, losses: 0, ties: 0, best: 0, streak: 0,
+      mode: opts.mode || "ex",
+      kitYou: opts.kitYou === undefined ? 0 : opts.kitYou,
+      kitOpp: opts.kitOpp === undefined ? 1 : opts.kitOpp,
+      grade: opts.grade === undefined ? 1 : opts.grade,
+      week: opts.week || 0,
       seed: seed || 1
     };
     newDriveState(st, 25);
@@ -547,9 +670,10 @@
   // does with its defence: you never control them, you only see the outcome.
   function simOpponentDrive(st, rng){
     var roll = rng();
-    // Tuned so an even game is roughly a two-score affair rather than a walkover,
-    // and so the rivals sharpen as your record improves.
-    var strength = 0.64 + Math.min(0.10, st.wins * 0.02);
+    // Tuned so an even game is roughly a two-score affair rather than a walkover.
+    // The number comes from the fixture now, not from your record: a schedule you
+    // can read ahead of time is worth more than one that quietly tracks your form.
+    var strength = GRADES[st.grade].strength;
     if(roll < strength){ st.opp += 7; return "Rivals score a touchdown"; }
     if(roll < strength + 0.26){ st.opp += 3; return "Rivals kick a field goal"; }
     return "Rivals go three and out";
@@ -569,42 +693,177 @@
     else { st.ties++; st.streak = 0; }
   }
 
-  function nextGame(st){
-    var carry = { wins:st.wins, losses:st.losses, ties:st.ties, best:st.best, streak:st.streak,
-                  playedEver:st.playedEver, seed:(st.seed * 1103515245 + 12345) >>> 0 };
-    var ns = newGameState(carry.seed);
-    ns.wins = carry.wins; ns.losses = carry.losses; ns.ties = carry.ties;
-    ns.best = carry.best; ns.streak = carry.streak; ns.playedEver = carry.playedEver;
-    return ns;
-  }
-
   /* ================= end of logic; DOM from here ================= */
 
   function el(id){ return document.getElementById(id); }
 
   var storageOK = true, memory = null;
   var st, play = null, rng;
+  var profile = { kit: 0, season: null, ex: { wins:0, losses:0, ties:0, best:0 }, playedEver: false };
 
   function load(){
     try{ var raw = localStorage.getItem(KEY); return raw ? JSON.parse(raw) : null; }
     catch(e){ storageOK = false; return memory; }
   }
   function save(){
-    var s = { wins:st.wins, losses:st.losses, ties:st.ties, best:st.best,
-              streak:st.streak, playedEver:st.playedEver, seed:st.seed };
-    memory = s;
-    try{ localStorage.setItem(KEY, JSON.stringify(s)); }
+    memory = profile;
+    try{ localStorage.setItem(KEY, JSON.stringify(profile)); }
     catch(e){ storageOK = false; }
   }
 
   function boot(){
-    var s = load();
-    st = newGameState(s && s.seed ? s.seed : (Date.now() >>> 0));
-    if(s){
-      st.wins = s.wins||0; st.losses = s.losses||0; st.ties = s.ties||0;
-      st.best = s.best||0; st.streak = s.streak||0; st.playedEver = !!s.playedEver;
+    var saved = load();
+    if(saved){
+      if(typeof saved.kit === "number" && PAIRS[saved.kit]) profile.kit = saved.kit;
+      if(saved.season && saved.season.fix && saved.season.fix.length === SEASON_LEN) profile.season = saved.season;
+      if(saved.ex) profile.ex = saved.ex;
+      profile.playedEver = !!saved.playedEver;
     }
+    // a game is only built once a mode is chosen; until then the lobby is the page
+    st = newGameState(Date.now() >>> 0, { kitYou: profile.kit, kitOpp: rivalFor(profile.kit, Math.random) });
+    st.playedEver = profile.playedEver;
     rng = makeRng(st.seed);
+  }
+
+  function rivalFor(kitIdx, rand){
+    var you = PAIRS[kitIdx], pool = [];
+    PAIRS.forEach(function(k, i){ if(!clashes(k, you)) pool.push(i); });
+    return pool[Math.floor(rand() * pool.length) % pool.length];
+  }
+
+  /* ---------- screens ---------- */
+
+  var inGame = false;
+
+  function showLobby(){
+    inGame = false;
+    el("lobby").hidden = false;
+    el("gameview").hidden = true;
+    el("to-lobby").hidden = true;
+    paintLobby();
+  }
+
+  function showGame(){
+    inGame = true;
+    el("lobby").hidden = true;
+    el("gameview").hidden = false;
+    el("to-lobby").hidden = false;
+    // the pitch could not measure itself while the view was hidden
+    resize();
+    recentre();
+    syncChrome();
+    draw();
+  }
+
+  function swatch(host, kit){
+    host.innerHTML = "";
+    var a = document.createElement("i"), b = document.createElement("i");
+    a.style.background = kit.a; b.style.background = kit.b;
+    host.appendChild(a); host.appendChild(b);
+  }
+
+  function paintLobby(){
+    var grid = el("kits");
+    if(!grid.children.length){
+      PICKABLE.forEach(function(idx){
+        var btn = document.createElement("button");
+        btn.className = "kit";
+        btn.type = "button";
+        btn.dataset.idx = idx;
+        btn.setAttribute("aria-label", PAIRS[idx].name);
+        swatch(btn, PAIRS[idx]);
+        btn.addEventListener("click", function(){
+          profile.kit = idx;
+          // a season already under way keeps the kit it was drawn against
+          save(); paintLobby();
+        });
+        grid.appendChild(btn);
+      });
+    }
+    for(var i = 0; i < grid.children.length; i++){
+      var b = grid.children[i];
+      b.setAttribute("aria-pressed", +b.dataset.idx === profile.kit ? "true" : "false");
+    }
+    swatch(el("you-badge"), PAIRS[profile.kit]);
+    el("you-name").textContent = PAIRS[profile.kit].name;
+
+    var sn = profile.season;
+    el("season-panel").hidden = !sn;
+    if(sn){
+      var done = sn.week >= SEASON_LEN;
+      el("season-head").textContent = done
+        ? "Season finished \u00b7 " + sn.w + "\u2013" + sn.l + (sn.t ? "\u2013" + sn.t : "")
+        : "Season \u00b7 week " + (sn.week + 1) + " of " + SEASON_LEN +
+          " \u00b7 " + sn.w + "\u2013" + sn.l + (sn.t ? "\u2013" + sn.t : "");
+      var list = el("fixtures");
+      list.innerHTML = "";
+      sn.fix.forEach(function(f, w){
+        var row = document.createElement("div");
+        row.className = "fx";
+        row.dataset.state = w < sn.week ? "done" : (w === sn.week ? "now" : "next");
+        var wk = document.createElement("span");
+        wk.className = "wk"; wk.textContent = "WK " + (w + 1);
+        var badge = document.createElement("span");
+        badge.className = "badge"; swatch(badge, PAIRS[f.k]);
+        var name = document.createElement("span");
+        name.textContent = PAIRS[f.k].name;
+        row.appendChild(wk); row.appendChild(badge); row.appendChild(name);
+        var tail = document.createElement("span");
+        if(w < sn.week && f.you !== null){
+          tail.className = "score";
+          tail.textContent = f.you + "\u2013" + f.opp;
+        } else {
+          tail.className = "grade";
+          tail.textContent = GRADES[f.g].name;
+        }
+        row.appendChild(tail);
+        list.appendChild(row);
+      });
+      el("resume-season").textContent = done ? "Season over" : "Play week " + (sn.week + 1);
+      el("resume-season").disabled = done;
+    }
+    el("note").hidden = storageOK;
+  }
+
+  function startExhibition(){
+    st = newGameState(Date.now() >>> 0,
+      { mode:"ex", kitYou: profile.kit, kitOpp: rivalFor(profile.kit, Math.random), grade: 1 });
+    st.wins = profile.ex.wins; st.losses = profile.ex.losses; st.ties = profile.ex.ties;
+    st.best = profile.ex.best || 0;
+    st.playedEver = profile.playedEver;
+    rng = makeRng(st.seed);
+    play = null; ensurePlay();
+    showGame();
+  }
+
+  function startFixture(){
+    var sn = profile.season;
+    if(!sn || sn.week >= SEASON_LEN) return;
+    var f = sn.fix[sn.week];
+    st = newGameState(Date.now() >>> 0,
+      { mode:"season", kitYou: sn.kit, kitOpp: f.k, grade: f.g, week: sn.week });
+    st.wins = sn.w; st.losses = sn.l; st.ties = sn.t;
+    st.playedEver = profile.playedEver;
+    rng = makeRng(st.seed);
+    play = null; ensurePlay();
+    showGame();
+  }
+
+  // the result belongs to whichever competition the game was played in
+  function recordResult(){
+    if(st.mode === "season"){
+      var sn = profile.season;
+      if(!sn || sn.week >= SEASON_LEN) return;
+      var f = sn.fix[sn.week];
+      f.you = st.you; f.opp = st.opp;
+      if(st.you > st.opp) sn.w++; else if(st.you < st.opp) sn.l++; else sn.t++;
+      sn.week++;
+    } else {
+      profile.ex.wins = st.wins; profile.ex.losses = st.losses;
+      profile.ex.ties = st.ties; profile.ex.best = st.best;
+    }
+    profile.playedEver = true;
+    save();
   }
 
   /* ---------- canvas ---------- */
@@ -614,12 +873,9 @@
   // rather than a colour of his own, so the sides never blur. The old scheme had
   // green receivers against red defenders, which is the one pairing that the
   // commonest form of colour blindness cannot separate at all.
-  var KIT = {
-    off:     "#4A86D1",   // eligible receivers and the quarterback
-    block:   "#2C5A88",   // linemen and the back: same side, not a target
-    def:     "#E0574A",   // every defender, rushers included
-    ball:    "#E8CF5C"    // the ring on whoever has it
-  };
+  var KIT = { ball: "#E8CF5C" };   // the ring on whoever has it, whatever kit he wears
+  function yourKit(){ return PAIRS[st.kitYou]; }
+  function theirKit(){ return PAIRS[st.kitOpp]; }
 
   var canvas = el("field"), ctx = canvas.getContext("2d");
   var scale = 12, viewYards = 40, camY = 0;
@@ -823,18 +1079,19 @@
       });
     }
 
-    play.line.forEach(function(o){ drawDot(o.x, o.y, 0.5, KIT.block); });
-    drawDot(play.back.x, play.back.y, 0.52, KIT.block);
+    var mine = yourKit(), theirs = theirKit();
+    play.line.forEach(function(o){ drawKit(o.x, o.y, 0.5, mine, true); });
+    drawKit(play.back.x, play.back.y, 0.52, mine, true);
 
-    play.defs.forEach(function(d){ drawDot(d.x, d.y, 0.62, KIT.def); });
+    play.defs.forEach(function(d){ drawKit(d.x, d.y, 0.62, theirs, false); });
     if(play.phase === "live" || play.phase === "presnap"){
-      play.rushers.forEach(function(ru){ drawDot(ru.x, ru.y, 0.6, KIT.def); });
+      play.rushers.forEach(function(ru){ drawKit(ru.x, ru.y, 0.6, theirs, false); });
     }
     play.recs.forEach(function(r){
-      drawMan(r.x, r.y, 0.62, KIT.off, play.carrier === r);
+      drawMan(r.x, r.y, 0.62, mine, play.carrier === r);
     });
     // before the throw the quarterback is the one holding it
-    drawMan(play.qb.x, play.qb.y, 0.66, KIT.off,
+    drawMan(play.qb.x, play.qb.y, 0.66, mine,
             play.carrier === play.qb || play.phase === "presnap" || play.phase === "live");
     if(play.phase === "air") drawDot(play.ball.x, play.ball.y, 0.3, "#E6EBEF");
 
@@ -843,16 +1100,24 @@
       var frac = 1 - clamp(play.t / SACK_TIME, 0, 1);
       ctx.fillStyle = "rgba(0,0,0,.45)";
       ctx.fillRect(8, 8, w - 16, 5);
-      ctx.fillStyle = frac > 0.35 ? KIT.off : KIT.def;
+      ctx.fillStyle = frac > 0.35 ? yourKit().a : theirKit().a;
       ctx.fillRect(8, 8, (w - 16) * frac, 5);
     }
   }
 
   // A receiver's route drawn from where he lines up through his waypoints, with
   // a tick at the end so a curl reads differently from a go.
+  // Hex to rgba, so the play art can be drawn in your own kit at whatever
+  // weight it needs rather than in one fixed blue that belongs to no team.
+  function tint(hex, alpha){
+    var n = parseInt(hex.slice(1), 16);
+    return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + alpha + ")";
+  }
+
   function drawRoute(r, strong){
     var pts = [{ x:r.sx, y:r.sy }].concat(r.path);
-    ctx.strokeStyle = strong ? "rgba(116,164,222,.85)" : "rgba(116,164,222,.30)";
+    var ink = yourKit().a;
+    ctx.strokeStyle = tint(ink, strong ? 0.85 : 0.30);
     ctx.lineWidth = strong ? 2 : 1.5;
     ctx.setLineDash(strong ? [6,4] : [4,5]);
     ctx.beginPath();
@@ -867,7 +1132,7 @@
     var len = Math.sqrt(dx*dx+dy*dy) || 1;
     // a short bar across the end of the route, like play art
     var nx = -dy/len, ny = dx/len;
-    ctx.strokeStyle = strong ? "rgba(116,164,222,.95)" : "rgba(116,164,222,.38)";
+    ctx.strokeStyle = tint(ink, strong ? 0.95 : 0.38);
     ctx.lineWidth = strong ? 2.5 : 1.5;
     ctx.beginPath();
     ctx.moveTo(sx(end.x - nx*0.9), sy(end.y - ny*0.9));
@@ -876,8 +1141,25 @@
   }
 
   // A man in his kit, ringed in amber if he is carrying the ball.
-  function drawMan(x, y, r, colour, hasBall){
-    drawDot(x, y, hasBall ? r + 0.08 : r, colour);
+  /* Half and half, split down the vertical, so a man carries his side's colours
+     rather than one flat shade. Linemen get the same kit under a dark wash: they
+     are plainly yours, and plainly not who you are throwing to. */
+  function drawKit(x, y, r, kit, dim){
+    var px = sx(x), py = sy(y), rad = r * scale;
+    ctx.beginPath(); ctx.moveTo(px, py);
+    ctx.arc(px, py, rad, -Math.PI/2, Math.PI/2); ctx.closePath();
+    ctx.fillStyle = kit.a; ctx.fill();
+    ctx.beginPath(); ctx.moveTo(px, py);
+    ctx.arc(px, py, rad, Math.PI/2, Math.PI*1.5); ctx.closePath();
+    ctx.fillStyle = kit.b; ctx.fill();
+    if(dim){
+      ctx.fillStyle = "rgba(21,28,36,.46)";
+      ctx.beginPath(); ctx.arc(px, py, rad, 0, Math.PI*2); ctx.fill();
+    }
+  }
+
+  function drawMan(x, y, r, kit, hasBall){
+    drawKit(x, y, hasBall ? r + 0.08 : r, kit, false);
     if(!hasBall) return;
     ctx.strokeStyle = KIT.ball;
     ctx.lineWidth = 2.5;
@@ -902,6 +1184,8 @@
     el("opp-score").textContent = st.opp;
     el("you-side").dataset.lead = st.you > st.opp;
     el("opp-side").dataset.lead = st.opp > st.you;
+    el("you-side").firstChild.nodeValue = "You";
+    el("opp-side").firstChild.nodeValue = PAIRS[st.kitOpp].name;
     el("drive-n").textContent = Math.min(st.drive, DRIVES) + " of " + DRIVES;
 
     var toGoal = FIELD_L - st.ballOn;
@@ -923,11 +1207,20 @@
     if(st.over){
       var won = st.you > st.opp, drew = st.you === st.opp;
       el("over-title").textContent = won ? "You win" : (drew ? "Draw" : "Beaten");
-      el("over-text").textContent =
-        st.you + "–" + st.opp + " · record " + st.wins + "–" + st.losses +
-        (st.ties ? "–" + st.ties : "") +
-        (st.best ? " · best streak " + st.best : "");
-      el("snap").textContent = "Next game";
+      if(st.mode === "season"){
+        var sn = profile.season;
+        var rec = sn ? sn.w + "–" + sn.l + (sn.t ? "–" + sn.t : "") : "";
+        var last = sn && sn.week >= SEASON_LEN;
+        el("over-text").textContent = st.you + "–" + st.opp +
+          " · week " + (st.week + 1) + " of " + SEASON_LEN + " · season " + rec;
+        el("snap").textContent = last ? "Season over" : "Next fixture";
+      } else {
+        el("over-text").textContent =
+          st.you + "–" + st.opp + " · exhibitions " + st.wins + "–" + st.losses +
+          (st.ties ? "–" + st.ties : "") +
+          (st.best ? " · best streak " + st.best : "");
+        el("snap").textContent = "Next game";
+      }
       el("snap").disabled = false;
     }
     // the how-to goes for good on the first move, and the board takes its room
@@ -1062,12 +1355,18 @@
 
   el("snap").addEventListener("click", function(){
     if(st.over){
-      st = nextGame(st); rng = makeRng(st.seed); play = null;
-      ensurePlay(); save(); syncChrome(); return;
+      // the result was banked the moment the whistle went; this just moves on
+      if(st.mode === "season"){
+        if(profile.season && profile.season.week < SEASON_LEN) startFixture();
+        else showLobby();
+      } else {
+        startExhibition();
+      }
+      return;
     }
     if(!st.driveIsYours) return;
     ensurePlay();
-    if(snapBall(play)){ st.playedEver = true; save(); syncChrome(); }
+    if(snapBall(play)){ st.playedEver = true; profile.playedEver = true; save(); syncChrome(); }
   });
   el("run").addEventListener("click", function(){
     if(play && play.phase === "live"){ scramble(st, play); aim = null; pointerDown = false; syncChrome(); }
@@ -1081,16 +1380,18 @@
   });
   function recentre(){ camY = clampCam(focusY()); }
 
-  el("new-game").addEventListener("click", function(){
-    var keep = { wins:st.wins, losses:st.losses, ties:st.ties, best:st.best, streak:st.streak };
-    st = newGameState((Date.now() >>> 0));
-    st.wins = keep.wins; st.losses = keep.losses; st.ties = keep.ties;
-    st.best = keep.best; st.streak = keep.streak; st.playedEver = true;
-    rng = makeRng(st.seed);
-    play = null;
-    ensurePlay();
-    recentre();
-    save(); syncChrome();
+  el("to-lobby").addEventListener("click", showLobby);
+  el("start-ex").addEventListener("click", startExhibition);
+  el("resume-season").addEventListener("click", startFixture);
+  el("start-season").addEventListener("click", function(){
+    var sn = profile.season;
+    // a season in progress is not thrown away by a stray tap
+    if(sn && sn.week > 0 && sn.week < SEASON_LEN &&
+       !confirm("Abandon the season at week " + (sn.week + 1) + "?")) return;
+    profile.season = makeSeason(profile.kit, makeRng(Date.now() >>> 0));
+    save();
+    paintLobby();
+    startFixture();
   });
 
   // After any change of possession, run the rivals' drives until it is your ball
@@ -1101,8 +1402,15 @@
       endDrive(st);
     }
     ensurePlay();
-    save();
+    bankIfOver();
     syncChrome();
+  }
+
+  // full time can be reached from either side's drive, so the one place that
+  // writes the result is here, guarded so it writes it once
+  function bankIfOver(){
+    if(st.over && !st.banked){ st.banked = true; recordResult(); }
+    else save();
   }
 
   /* ---------- loop ---------- */
@@ -1140,14 +1448,11 @@
     requestAnimationFrame(frame);
   }
 
-  window.addEventListener("resize", function(){ resize(); draw(); });
+  window.addEventListener("resize", function(){ if(inGame){ resize(); draw(); } });
 
   boot();
   ensurePlay();
-  resize();
-  camY = clampCam(focusY());
-  syncChrome();
-  draw();
+  showLobby();
   requestAnimationFrame(frame);
 
   if("serviceWorker" in navigator){
