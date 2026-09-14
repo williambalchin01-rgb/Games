@@ -1,7 +1,7 @@
-var CACHE = "arcade-v18";
+var CACHE = "arcade-v19";
 /* No "./" entry: the fetch handler folds it into "./index.html" so the two
    entry points can never drift apart. */
-var FILES = ["./index.html","./decant.html","./blocks.html","./towers.html","./gridiron.html","./hatchery.html","./app.css",
+var FILES = ["./index.html","./decant.html","./blocks.html","./towers.html","./gridiron.html","./hatchery.html","./cascade.html","./app.css",
              "./manifest.json","./apple-touch-icon.png","./icon-192.png","./icon-512.png"];
 
 /* addAll() is all-or-nothing: one file that has not finished deploying yet

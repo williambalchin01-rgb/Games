@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#151C24">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Arcade">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<link rel="icon" href="./icon-192.png">
+<title>Cascade</title>
+<link rel="stylesheet" href="./app.css">
+<style>
+  .statline{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:2px 2px 10px}
+  .moves{font-size:22px;font-weight:200;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  .moves span{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-left:6px}
+  .moves[data-low="true"]{color:#E0574A}
+
+  /* One goal per chip: the swatch says which piece, the number says how many
+     are left. Reading the goal has to be quicker than counting the board. */
+  .goals{display:flex;gap:6px;flex-wrap:wrap;padding:0 0 10px;border-bottom:1px solid var(--line)}
+  .goal{
+    display:flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:20px;
+    padding:5px 11px 5px 6px;font-size:13px;font-variant-numeric:tabular-nums;
+  }
+  .goal svg{width:20px;height:20px;display:block}
+  .goal[data-done="true"]{border-color:var(--accent);color:var(--accent)}
+  /* swap the count for a tick: the number is collapsed rather than removed so
+     the chip keeps its width, and the tick sets its own size back */
+  .goal[data-done="true"] .n{font-size:0}
+  .goal[data-done="true"] .n::after{content:"\2713";font-size:14px;line-height:1}
+
+  .wrap{flex:1;display:flex;flex-direction:column;justify-content:center;gap:12px;padding:10px 0}
+
+  /* Tiles are absolutely placed and moved with transforms, so a fall is one
+     transition rather than a redraw. Percentages in a translate are of the
+     tile's own size, which keeps the whole thing resolution-independent. */
+  .board{
+    position:relative;width:min(100%, 48vh);aspect-ratio:1;margin:0 auto;
+    touch-action:none;overflow:hidden;border-radius:var(--radius);
+    /* a panel behind the pieces, so the board reads as somewhere to play
+       rather than shapes floating on the page */
+    background:var(--surface);border:1px solid var(--line);
+  }
+  .tile{
+    position:absolute;top:0;left:0;width:12.5%;height:12.5%;padding:2.5%;
+    transition:transform .19s cubic-bezier(.3,.7,.4,1);will-change:transform;
+  }
+  .tile.nofall{transition:none}
+  .face{
+    width:100%;height:100%;position:relative;
+    transition:transform .13s ease, opacity .13s ease;
+  }
+  .face svg{width:100%;height:100%;display:block;transform:scale(1.13)}
+  .tile[data-held="true"] .face{transform:scale(1.16)}
+  .tile[data-hint="true"] .face{animation:nudge 1.1s ease-in-out infinite}
+  .tile.clearing .face{transform:scale(1.35);opacity:0}
+  .tile.wrong{animation:wrong .26s ease}
+  @keyframes nudge{0%,70%,100%{transform:scale(1)}82%{transform:scale(1.14)}}
+  @keyframes wrong{0%,100%{transform:translate(var(--tx),var(--ty))}
+    25%{transform:translate(calc(var(--tx) + 6%),var(--ty))}
+    75%{transform:translate(calc(var(--tx) - 6%),var(--ty))}}
+
+  /* A rainbow has no shape of its own - it stands for all of them. */
+  .rainbow{
+    width:100%;height:100%;border-radius:50%;
+    background:conic-gradient(#E0574A,#E8894A,#E8CF5C,#8FCB52,#4A86D1,#A470D0,#E0574A);
+    box-shadow:inset 0 0 0 2px rgba(255,255,255,.85);
+  }
+
+  .toast{
+    position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+    background:rgba(21,28,36,.92);border:1px solid var(--line);border-radius:var(--radius);
+    padding:10px 16px;font-size:13px;pointer-events:none;
+  }
+
+  .howto{margin:0;text-align:center;font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="./index.html">&larr; Arcade</a>
+  <div class="eyebrow">Level <span id="lvl">1</span> &middot; <span id="score">0</span> pts</div>
+</header>
+
+<div class="statline">
+  <span class="moves" id="moves">0<span>moves left</span></span>
+  <span class="eyebrow">Best <span id="best">&mdash;</span></span>
+</div>
+
+<div class="goals" id="goals"></div>
+
+<div class="wrap">
+  <div class="board" id="board"></div>
+  <p class="howto">Swipe a piece into its neighbour. Four in a row makes a blaster.</p>
+</div>
+
+<div class="win" id="over" hidden>
+  <h2 id="over-title"></h2>
+  <p id="over-text"></p>
+</div>
+
+<div class="controls">
+  <button class="ctrl" id="primary">Restart</button>
+  <button class="ctrl" id="secondary" hidden>Next level</button>
+</div>
+
+<p class="note" id="note" hidden>Storage is blocked here, so your progress won't be saved.</p>
+
+<script>
+(function(){
+  "use strict";
+
+  var COLS = 8, ROWS = 8, CELLS = COLS * ROWS;
+  var KEY = "arcade.cascade.v1";
+
+  /* Six pieces, each its own shape as well as its own colour, so the board is
+     still readable if the colours are not. */
+  var PIECES = [
+    { colour:"#E0574A", shape:'<circle cx="12" cy="12" r="9"/>' },
+    { colour:"#4A86D1", shape:'<rect x="3.4" y="3.4" width="17.2" height="17.2" rx="4.5"/>' },
+    { colour:"#8FCB52", shape:'<path d="M12 3 L21.4 19.6 H2.6 Z"/>' },
+    { colour:"#E8CF5C", shape:'<path d="M12 2.4 L21.6 12 L12 21.6 L2.4 12 Z"/>' },
+    { colour:"#A470D0", shape:'<path d="M12 2.6 L21 9.2 L17.6 20 H6.4 L3 9.2 Z"/>' },
+    { colour:"#E8894A", shape:'<path d="M12 2.8 L20 7.4 V16.6 L12 21.2 L4 16.6 V7.4 Z"/>' }
+  ];
+  var CRATE = '<rect x="2.5" y="2.5" width="19" height="19" rx="3" fill="#6E5A44"/>'
+            + '<path d="M2.5 12 H21.5 M12 2.5 V21.5" stroke="#4A3D2E" stroke-width="2.2"/>'
+            + '<rect x="2.5" y="2.5" width="19" height="19" rx="3" fill="none" stroke="#8A7154" stroke-width="1.6"/>';
+
+  /* Handmade for the first dozen, then generated so it never runs out. Each
+     level names the pieces in play, the moves allowed, and what has to go.
+     Five is the floor for colours: on a board this size four of them refill
+     into fresh matches so often that the cascades never stop and the level
+     clears itself in a handful of moves. Going the other way, the sixth colour
+     costs far more than the sixth of the board it takes - matches are rarer
+     and the cascades behind them shorter - so the six-colour levels ask for
+     roughly a third less than the five-colour ones do. Crates are the slowest
+     goal of all - they only break when a match lands beside them, and they
+     sink to the floor where only the top layer is reachable - so a crate level
+     gets both a smaller pile and more moves to work through it. */
+  var LEVELS = [
+    { colours:5, moves:22, goals:[{ p:0, n:20 }] },
+    { colours:5, moves:20, goals:[{ p:0, n:18 }, { p:1, n:18 }] },
+    { colours:5, moves:22, crates:6,  goals:[{ p:2, n:25 }, { p:"crate", n:6 }] },
+    { colours:5, moves:20, goals:[{ p:3, n:32 }] },
+    { colours:5, moves:20, goals:[{ p:0, n:22 }, { p:1, n:22 }, { p:2, n:22 }] },
+    { colours:5, moves:18, crates:12, goals:[{ p:"crate", n:12 }] },
+    { colours:6, moves:22, crates:8,  goals:[{ p:4, n:18 }, { p:"crate", n:8 }] },
+    { colours:6, moves:20, goals:[{ p:0, n:20 }, { p:3, n:20 }] },
+    { colours:6, moves:22, crates:12, goals:[{ p:"crate", n:12 }] },
+    { colours:6, moves:20, goals:[{ p:5, n:22 }, { p:4, n:22 }] },
+    { colours:6, moves:20, goals:[{ p:0, n:16 }, { p:1, n:16 }, { p:2, n:16 }] },
+    { colours:6, moves:22, crates:12, goals:[{ p:3, n:16 }, { p:"crate", n:12 }] }
+  ];
+
+  function levelFor(n){
+    if(n <= LEVELS.length) return LEVELS[n - 1];
+    // past the handmade run: same shape of level, wound up a notch at a time
+    var over = n - LEVELS.length;
+    var rng = mulberry(n * 2654435761);
+    var kind = over % 3;
+    var step = Math.floor(over / 3);
+    if(kind === 2) return { colours:6, moves:22, crates:12 + step * 2, goals:[{ p:"crate", n:12 + step * 2 }] };
+    var a = Math.floor(rng() * 6), b = (a + 1 + Math.floor(rng() * 5)) % 6;
+    if(kind === 0) return { colours:6, moves:20, goals:[{ p:a, n:24 + step * 2 }] };
+    return { colours:6, moves:20, crates:8, goals:[{ p:a, n:18 + step * 2 }, { p:b, n:18 + step * 2 }, { p:"crate", n:8 }] };
+  }
+
+  function mulberry(seed){
+    var t = seed >>> 0;
+    return function(){
+      t = (t + 0x6D2B79F5) >>> 0;
+      var x = Math.imul(t ^ (t >>> 15), 1 | t);
+      x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+      return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // ---------------------------------------------------------------- state
+
+  var board = new Array(CELLS).fill(null);
+  var nodes = Object.create(null);
+  var nextId = 1;
+  var level, spec, score, moves, progress, busy = false, finished = null;
+  var held = null, best = {}, storable = true;
+
+  var boardEl = document.getElementById("board");
+  var el = function(id){ return document.getElementById(id); };
+
+  function idx(r, c){ return r * COLS + c; }
+  function rowOf(i){ return (i / COLS) | 0; }
+  function colOf(i){ return i % COLS; }
+  function inBoard(r, c){ return r >= 0 && c >= 0 && r < ROWS && c < COLS; }
+  function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+
+  // ---------------------------------------------------------------- board
+
+  function newPiece(){
+    return { id: nextId++, p: Math.floor(Math.random() * spec.colours), special: null };
+  }
+  function newCrate(){ return { id: nextId++, crate: true }; }
+
+  function matchable(t){ return !!t && !t.crate; }
+
+  /* Every run of three or more, horizontal and vertical, as separate runs -
+     they get merged afterwards because a shape that is both is what earns the
+     bigger blaster. */
+  function runs(){
+    var out = [], r, c, e, k, t, u, cells;
+    for(r = 0; r < ROWS; r++){
+      for(c = 0; c < COLS; ){
+        t = board[idx(r, c)];
+        if(!matchable(t)){ c++; continue; }
+        for(e = c + 1; e < COLS; e++){
+          u = board[idx(r, e)];
+          if(!matchable(u) || u.p !== t.p) break;
+        }
+        if(e - c >= 3){
+          cells = [];
+          for(k = c; k < e; k++) cells.push(idx(r, k));
+          out.push({ cells: cells, dir: "h" });
+        }
+        c = e;
+      }
+    }
+    for(c = 0; c < COLS; c++){
+      for(r = 0; r < ROWS; ){
+        t = board[idx(r, c)];
+        if(!matchable(t)){ r++; continue; }
+        for(e = r + 1; e < ROWS; e++){
+          u = board[idx(e, c)];
+          if(!matchable(u) || u.p !== t.p) break;
+        }
+        if(e - r >= 3){
+          cells = [];
+          for(k = r; k < e; k++) cells.push(idx(k, c));
+          out.push({ cells: cells, dir: "v" });
+        }
+        r = e;
+      }
+    }
+    return out;
+  }
+
+  /* An L or a T is one shape, not two runs, so overlapping runs are merged
+     before anything is scored or turned into a blaster. */
+  function shapes(){
+    var groups = [];
+    runs().forEach(function(run){
+      var touching = groups.filter(function(g){
+        return run.cells.some(function(i){ return g.cells.indexOf(i) !== -1; });
+      });
+      if(!touching.length){
+        groups.push({ cells: run.cells.slice(), runs: [run] });
+        return;
+      }
+      var g = touching[0];
+      touching.slice(1).forEach(function(o){
+        o.cells.forEach(function(i){ if(g.cells.indexOf(i) === -1) g.cells.push(i); });
+        g.runs = g.runs.concat(o.runs);
+        groups.splice(groups.indexOf(o), 1);
+      });
+      run.cells.forEach(function(i){ if(g.cells.indexOf(i) === -1) g.cells.push(i); });
+      g.runs.push(run);
+    });
+    return groups;
+  }
+
+  function blasterFor(g){
+    var longest = 0, hasH = false, hasV = false;
+    g.runs.forEach(function(run){
+      if(run.cells.length > longest) longest = run.cells.length;
+      if(run.dir === "h") hasH = true; else hasV = true;
+    });
+    if(longest >= 5) return "rainbow";
+    if(hasH && hasV) return "bomb";
+    if(longest === 4) return hasH ? "row" : "col";
+    return null;
+  }
+
+  function commonPiece(){
+    var tally = new Array(6).fill(0), i, t;
+    for(i = 0; i < CELLS; i++){
+      t = board[i];
+      if(matchable(t)) tally[t.p]++;
+    }
+    var bestP = 0;
+    for(i = 1; i < 6; i++) if(tally[i] > tally[bestP]) bestP = i;
+    return bestP;
+  }
+
+  function blastCells(i, tile, pickPiece){
+    var r = rowOf(i), c = colOf(i), out = [], k, dr, dc;
+    if(tile.special === "row"){ for(k = 0; k < COLS; k++) out.push(idx(r, k)); }
+    else if(tile.special === "col"){ for(k = 0; k < ROWS; k++) out.push(idx(k, c)); }
+    else if(tile.special === "bomb"){
+      for(dr = -1; dr <= 1; dr++) for(dc = -1; dc <= 1; dc++)
+        if(inBoard(r + dr, c + dc)) out.push(idx(r + dr, c + dc));
+    } else if(tile.special === "rainbow"){
+      var want = (pickPiece === undefined || pickPiece === null) ? commonPiece() : pickPiece;
+      for(k = 0; k < CELLS; k++) if(matchable(board[k]) && board[k].p === want) out.push(k);
+      out.push(i);
+    }
+    return out;
+  }
+
+  /* A blaster caught in someone else's clear goes off too, and so does
+     anything that one reaches. Worklist rather than recursion so a board full
+     of blasters cannot blow the stack. */
+  function chainBlasts(clear, seeds){
+    // seeds are cells that go whether or not they hold a blaster, so they join
+    // the clear rather than only being looked at on the way past
+    (seeds || []).forEach(function(j){ clear.add(j); });
+    var queue = [], fired = Object.create(null), i, t;
+    clear.forEach(function(j){ queue.push(j); });
+    while(queue.length){
+      i = queue.pop();
+      t = board[i];
+      if(!t || !t.special || fired[t.id]) continue;
+      fired[t.id] = true;
+      blastCells(i, t).forEach(function(j){
+        if(!clear.has(j)){ clear.add(j); queue.push(j); }
+      });
+    }
+  }
+
+  function neighbours(i){
+    var r = rowOf(i), c = colOf(i), out = [];
+    if(r > 0) out.push(idx(r - 1, c));
+    if(r < ROWS - 1) out.push(idx(r + 1, c));
+    if(c > 0) out.push(idx(r, c - 1));
+    if(c < COLS - 1) out.push(idx(r, c + 1));
+    return out;
+  }
+
+  // ---------------------------------------------------------------- render
+
+  function faceMarkup(t){
+    if(t.crate) return '<svg viewBox="0 0 24 24" aria-hidden="true">' + CRATE + "</svg>";
+    if(t.special === "rainbow") return '<div class="rainbow"></div>';
+    var svg = '<svg viewBox="0 0 24 24" aria-hidden="true"><g fill="' + PIECES[t.p].colour + '">'
+            + PIECES[t.p].shape + "</g>";
+    if(t.special === "row")  svg += '<rect x="0" y="9.4" width="24" height="5.2" rx="2.6" fill="#F4F7F9" opacity=".92"/>';
+    if(t.special === "col")  svg += '<rect x="9.4" y="0" width="5.2" height="24" rx="2.6" fill="#F4F7F9" opacity=".92"/>';
+    if(t.special === "bomb") svg += '<circle cx="12" cy="12" r="6" fill="none" stroke="#F4F7F9" stroke-width="2.6" opacity=".92"/>';
+    return svg + "</svg>";
+  }
+
+  function nodeFor(t){
+    var n = nodes[t.id];
+    if(!n){
+      n = document.createElement("div");
+      n.className = "tile";
+      n.innerHTML = '<div class="face">' + faceMarkup(t) + "</div>";
+      n.dataset.look = look(t);
+      nodes[t.id] = n;
+      boardEl.appendChild(n);
+    } else if(n.dataset.look !== look(t)){
+      n.firstChild.innerHTML = faceMarkup(t);
+      n.dataset.look = look(t);
+    }
+    return n;
+  }
+  function look(t){ return t.crate ? "crate" : t.p + ":" + (t.special || ""); }
+
+  function place(n, r, c){
+    n.style.setProperty("--tx", (c * 100) + "%");
+    n.style.setProperty("--ty", (r * 100) + "%");
+    n.style.transform = "translate(" + (c * 100) + "%," + (r * 100) + "%)";
+  }
+
+  function render(){
+    for(var i = 0; i < CELLS; i++){
+      var t = board[i];
+      if(t) place(nodeFor(t), rowOf(i), colOf(i));
+    }
+  }
+
+  function drop(t){
+    var n = nodes[t.id];
+    if(n){ n.remove(); delete nodes[t.id]; }
+  }
+
+  function paintStatus(){
+    el("lvl").textContent = level;
+    el("score").textContent = score;
+    var m = el("moves");
+    m.firstChild.nodeValue = String(moves);
+    m.dataset.low = moves <= 3 ? "true" : "false";
+    el("best").textContent = best[level] ? best[level] : "—";
+
+    var g = el("goals");
+    g.innerHTML = "";
+    spec.goals.forEach(function(goal, k){
+      var left = Math.max(0, goal.n - progress[k]);
+      var chip = document.createElement("div");
+      chip.className = "goal";
+      chip.dataset.done = left === 0 ? "true" : "false";
+      var art = goal.p === "crate"
+        ? '<svg viewBox="0 0 24 24" aria-hidden="true">' + CRATE + "</svg>"
+        : '<svg viewBox="0 0 24 24" aria-hidden="true"><g fill="' + PIECES[goal.p].colour + '">' + PIECES[goal.p].shape + "</g></svg>";
+      chip.innerHTML = art + '<span class="n">' + left + "</span>";
+      g.appendChild(chip);
+    });
+  }
+
+  function toast(text, ms){
+    var t = document.createElement("div");
+    t.className = "toast";
+    t.textContent = text;
+    boardEl.appendChild(t);
+    return sleep(ms || 800).then(function(){ t.remove(); });
+  }
+
+  // ---------------------------------------------------------------- setup
+
+  function fillBoard(){
+    var i, guard = 0;
+    for(i = 0; i < CELLS; i++) board[i] = newPiece();
+    // deal until nothing is already matched and there is something to do
+    while(guard++ < 400){
+      var g = shapes();
+      if(!g.length && anyMove()) break;
+      g.forEach(function(sh){
+        sh.cells.forEach(function(j){ board[j] = newPiece(); });
+      });
+      if(!g.length) for(i = 0; i < CELLS; i++) board[i] = newPiece();
+    }
+    if(spec.crates) scatterCrates(spec.crates);
+  }
+
+  function scatterCrates(n){
+    var spots = [], i;
+    // never on the top row, so a crate cannot be the first thing that falls in
+    for(i = COLS; i < CELLS; i++) if(!board[i].crate) spots.push(i);
+    for(i = spots.length - 1; i > 0; i--){
+      var j = Math.floor(Math.random() * (i + 1)), tmp = spots[i];
+      spots[i] = spots[j]; spots[j] = tmp;
+    }
+    spots.slice(0, n).forEach(function(k){ board[k] = newCrate(); });
+  }
+
+  function pairPlayable(a, b){
+    var ta = board[a], tb = board[b];
+    if(!matchable(ta) || !matchable(tb)) return false;
+    if(ta.special && tb.special) return true;          // two blasters set each other off
+    return wouldMatch(a, b);
+  }
+
+  /* A stripe or a bomb on its own is not a move - it still has to be swapped
+     into a match. Only a rainbow can be played against anything. */
+  function anyMove(){
+    for(var i = 0; i < CELLS; i++){
+      var r = rowOf(i), c = colOf(i), t = board[i];
+      if(matchable(t) && t.special === "rainbow") return true;
+      if(c < COLS - 1 && pairPlayable(i, idx(r, c + 1))) return true;
+      if(r < ROWS - 1 && pairPlayable(i, idx(r + 1, c))) return true;
+    }
+    return false;
+  }
+
+  function wouldMatch(a, b){
+    var ta = board[a], tb = board[b];
+    if(!matchable(ta) || !matchable(tb)) return false;
+    board[a] = tb; board[b] = ta;
+    var hit = runs().length > 0;
+    board[a] = ta; board[b] = tb;
+    return hit;
+  }
+
+  function findMove(){
+    for(var i = 0; i < CELLS; i++){
+      var r = rowOf(i), c = colOf(i), t = board[i];
+      if(matchable(t) && t.special === "rainbow") return [i];
+      if(c < COLS - 1 && pairPlayable(i, idx(r, c + 1))) return [i, idx(r, c + 1)];
+      if(r < ROWS - 1 && pairPlayable(i, idx(r + 1, c))) return [i, idx(r + 1, c)];
+    }
+    return null;
+  }
+
+  /* Nudge a playable pair after a while spent looking. Match-3 boards get
+     hard to read once they are busy, and a stuck player just closes the app. */
+  var hintTimer = null, hinted = [];
+  function clearHint(){
+    hinted.forEach(function(t){ if(nodes[t.id]) nodes[t.id].removeAttribute("data-hint"); });
+    hinted = [];
+  }
+  function armHint(){
+    if(hintTimer) clearTimeout(hintTimer);
+    clearHint();
+    if(finished) return;
+    hintTimer = setTimeout(function(){
+      if(busy || finished) return;
+      var move = findMove();
+      if(!move) return;
+      move.forEach(function(i){
+        var t = board[i];
+        if(t && nodes[t.id]){ nodes[t.id].dataset.hint = "true"; hinted.push(t); }
+      });
+    }, 6000);
+  }
+
+  function startLevel(n){
+    level = n;
+    spec = levelFor(n);
+    score = 0;
+    moves = spec.moves;
+    progress = spec.goals.map(function(){ return 0; });
+    finished = null;
+    held = null;
+    Object.keys(nodes).forEach(function(k){ nodes[k].remove(); });
+    nodes = Object.create(null);
+    boardEl.innerHTML = "";
+    fillBoard();
+    while(!anyMove()) reshuffle();
+    render();
+    el("over").hidden = true;
+    el("secondary").hidden = true;
+    el("primary").textContent = "Restart";
+    paintStatus();
+    save();
+    armHint();
+  }
+
+  // ---------------------------------------------------------------- turn
+
+  function credit(t){
+    spec.goals.forEach(function(goal, k){
+      if(goal.p === "crate" ? t.crate : (!t.crate && t.p === goal.p)) progress[k]++;
+    });
+  }
+
+  function goalsMet(){
+    return spec.goals.every(function(goal, k){ return progress[k] >= goal.n; });
+  }
+
+  function fall(){
+    var fresh = [], c, r, write, above, t;
+    for(c = 0; c < COLS; c++){
+      write = ROWS - 1;
+      for(r = ROWS - 1; r >= 0; r--){
+        t = board[idx(r, c)];
+        if(t){
+          board[idx(r, c)] = null;
+          board[idx(write, c)] = t;
+          write--;
+        }
+      }
+      above = 1;
+      for(r = write; r >= 0; r--){
+        t = newPiece();
+        board[idx(r, c)] = t;
+        fresh.push({ tile: t, from: -above, col: c });
+        above++;
+      }
+    }
+    return fresh;
+  }
+
+  async function settle(fresh){
+    // put the new pieces above the board first, then let one frame of layout
+    // turn the move into a fall rather than a jump
+    fresh.forEach(function(f){
+      var n = nodeFor(f.tile);
+      n.classList.add("nofall");
+      place(n, f.from, f.col);
+    });
+    boardEl.offsetHeight;
+    fresh.forEach(function(f){ nodes[f.tile.id].classList.remove("nofall"); });
+    render();
+    await sleep(200);
+  }
+
+  /* One pass of the cascade: work out everything that goes, hand out the
+     blasters the shapes earned, then let the board drop into the holes. */
+  async function cascade(swapIdx, seeds){
+    var chain = 0;
+    while(true){
+      var groups = shapes();
+      if(!groups.length && !(seeds && seeds.length)) break;
+      chain++;
+
+      var clear = new Set(), made = [];
+      groups.forEach(function(g){
+        var kind = blasterFor(g);
+        if(kind){
+          var spot = (swapIdx !== null && g.cells.indexOf(swapIdx) !== -1)
+            ? swapIdx : g.cells[(g.cells.length / 2) | 0];
+          if(!made.some(function(m){ return m.at === spot; }))
+            made.push({ at: spot, kind: kind, p: board[g.cells[0]].p });
+        }
+        g.cells.forEach(function(i){ clear.add(i); });
+      });
+      chainBlasts(clear, seeds);
+      seeds = null;
+      swapIdx = null;
+
+      // a piece that just became a blaster stays on the board as one
+      made.forEach(function(m){ clear.delete(m.at); });
+
+      // a match beside a crate breaks it; the crate itself never matches
+      var broken = new Set();
+      clear.forEach(function(i){
+        if(board[i] && board[i].crate){ broken.add(i); return; }
+        neighbours(i).forEach(function(j){ if(board[j] && board[j].crate) broken.add(j); });
+      });
+      broken.forEach(function(i){ clear.add(i); });
+
+      var gained = 0;
+      clear.forEach(function(i){
+        var t = board[i];
+        if(!t) return;
+        credit(t);
+        gained += t.crate ? 40 : (t.special ? 120 : 60);
+      });
+      score += gained * chain;
+      paintStatus();
+
+      clear.forEach(function(i){
+        var t = board[i];
+        if(t && nodes[t.id]) nodes[t.id].classList.add("clearing");
+      });
+      await sleep(chain === 1 ? 140 : 110);
+      clear.forEach(function(i){
+        if(board[i]){ drop(board[i]); board[i] = null; }
+      });
+      // the piece that earned it becomes the blaster in place - replacing it
+      // with a new tile would strand the old one's node on the board
+      made.forEach(function(m){
+        var t = board[m.at];
+        if(t && !t.crate){ t.p = m.p; t.special = m.kind; }
+      });
+
+      await settle(fall());
+    }
+    return chain;
+  }
+
+  async function endLevel(won){
+    finished = won ? "won" : "lost";
+    if(won){
+      // moves you did not need are still worth something
+      if(moves > 0){
+        score += moves * 250;
+        moves = 0;
+        paintStatus();
+      }
+      if(!best[level] || score > best[level]) best[level] = score;
+      el("over-title").textContent = "Level " + level + " cleared";
+      el("over-text").textContent = score + " points.";
+      el("secondary").hidden = false;
+      el("primary").textContent = "Play again";
+    } else {
+      el("over-title").textContent = "Out of moves";
+      var short = spec.goals.reduce(function(acc, goal, k){
+        return acc + Math.max(0, goal.n - progress[k]);
+      }, 0);
+      el("over-text").textContent = short + " to go. Have another try.";
+      el("primary").textContent = "Try again";
+    }
+    el("over").hidden = false;
+    paintStatus();
+    save();
+  }
+
+  async function playSwap(a, b){
+    var ta = board[a], tb = board[b];
+    // crates are scenery: they fall and they break, but they never trade places
+    if(!matchable(ta) || !matchable(tb)) return false;
+
+    var seeds = null, swapIdx = a;
+
+    if(ta.special === "rainbow" || tb.special === "rainbow"){
+      // a rainbow takes out whatever it was traded with
+      var rainbowAt = ta.special === "rainbow" ? a : b;
+      var other = rainbowAt === a ? tb : ta;
+      var clear = new Set();
+      if(other.special === "rainbow"){
+        for(var i = 0; i < CELLS; i++) if(matchable(board[i])) clear.add(i);
+        other.special = null;
+      } else {
+        blastCells(rainbowAt, board[rainbowAt], other.p).forEach(function(i){ clear.add(i); });
+        clear.add(rainbowAt === a ? b : a);
+      }
+      // the rainbow has been spent on the colour it was traded with; leaving it
+      // marked would let the chain set it off again against a different one
+      board[rainbowAt].special = null;
+      seeds = Array.from(clear);
+    } else if(ta.special && tb.special){
+      seeds = [a, b];
+    } else {
+      board[a] = tb; board[b] = ta;
+      if(!runs().length){
+        board[a] = ta; board[b] = tb;
+        return false;
+      }
+      render();
+      await sleep(170);
+    }
+
+    moves--;
+    paintStatus();
+    await cascade(swapIdx, seeds);
+
+    var shuffles = 0;
+    while(!anyMove() && shuffles++ < 8){
+      await toast("No moves \u2014 reshuffling", 700);
+      reshuffle();
+      render();
+      await sleep(220);
+      await cascade(null, null);
+    }
+    // a board with nothing playable left cannot be shuffled out of; end the
+    // level on it rather than spinning here and taking the tab down
+    if(!anyMove()){
+      await endLevel(goalsMet());
+      return true;
+    }
+
+    if(goalsMet()) await endLevel(true);
+    else if(moves <= 0) await endLevel(false);
+    else { save(); armHint(); }
+    return true;
+  }
+
+  function reshuffle(){
+    var loose = [], i;
+    for(i = 0; i < CELLS; i++) if(matchable(board[i])) loose.push(i);
+    var guard = 0;
+    do{
+      for(i = loose.length - 1; i > 0; i--){
+        var j = Math.floor(Math.random() * (i + 1));
+        var a = loose[i], b = loose[j], t = board[a];
+        board[a] = board[b]; board[b] = t;
+      }
+    } while(guard++ < 60 && (runs().length || !anyMove()));
+  }
+
+  // ---------------------------------------------------------------- input
+
+  function cellAt(x, y){
+    var box = boardEl.getBoundingClientRect();
+    var c = Math.floor((x - box.left) / (box.width / COLS));
+    var r = Math.floor((y - box.top) / (box.height / ROWS));
+    return inBoard(r, c) ? idx(r, c) : -1;
+  }
+
+  function setHeld(i){
+    if(held !== null && board[held] && nodes[board[held].id])
+      nodes[board[held].id].removeAttribute("data-held");
+    held = i;
+    if(held !== null && board[held] && nodes[board[held].id])
+      nodes[board[held].id].dataset.held = "true";
+  }
+
+  function refuse(i){
+    var t = board[i];
+    if(!t || !nodes[t.id]) return;
+    var n = nodes[t.id];
+    n.classList.remove("wrong");
+    n.offsetWidth;
+    n.classList.add("wrong");
+    setTimeout(function(){ n.classList.remove("wrong"); }, 280);
+  }
+
+  function adjacent(a, b){
+    return Math.abs(rowOf(a) - rowOf(b)) + Math.abs(colOf(a) - colOf(b)) === 1;
+  }
+
+  async function attempt(a, b){
+    if(busy) return;
+    busy = true;
+    clearHint();
+    if(hintTimer) clearTimeout(hintTimer);
+    setHeld(null);
+    var ok = await playSwap(a, b);
+    if(!ok) refuse(a);
+    busy = false;
+  }
+
+  var down = null;
+
+  boardEl.addEventListener("pointerdown", function(e){
+    if(busy || finished) return;
+    var i = cellAt(e.clientX, e.clientY);
+    if(i < 0) return;
+    // remember what was selected before this press: the press itself lights the
+    // piece up for feedback, so comparing against the live selection on release
+    // would read every first tap as a tap on something already chosen
+    down = { i: i, x: e.clientX, y: e.clientY, moved: false, prev: held };
+    boardEl.setPointerCapture(e.pointerId);
+    if(held === null || !adjacent(held, i)) setHeld(i);
+    e.preventDefault();
+  });
+
+  boardEl.addEventListener("pointermove", function(e){
+    if(!down || down.moved || busy) return;
+    var box = boardEl.getBoundingClientRect(), unit = box.width / COLS;
+    var dx = e.clientX - down.x, dy = e.clientY - down.y;
+    if(Math.abs(dx) < unit * 0.4 && Math.abs(dy) < unit * 0.4) return;
+    down.moved = true;
+    var r = rowOf(down.i), c = colOf(down.i);
+    if(Math.abs(dx) > Math.abs(dy)) c += dx > 0 ? 1 : -1;
+    else r += dy > 0 ? 1 : -1;
+    var target = down.i;
+    down = null;
+    if(inBoard(r, c)) attempt(target, idx(r, c));
+    else { setHeld(null); refuse(target); }
+  });
+
+  function release(e){
+    if(!down) return;
+    var start = down;
+    down = null;
+    if(start.moved || busy || finished) return;
+    var i = cellAt(e.clientX, e.clientY);
+    if(i < 0) i = start.i;
+    // a tap on a neighbour of the piece already chosen is the same as swiping
+    // into it; tapping that piece again puts it back down
+    if(start.prev !== null && start.prev !== i && adjacent(start.prev, i)) attempt(start.prev, i);
+    else if(start.prev === i) setHeld(null);
+    else setHeld(i);
+  }
+  boardEl.addEventListener("pointerup", release);
+  boardEl.addEventListener("pointercancel", function(){ down = null; });
+
+  // ---------------------------------------------------------------- storage
+
+  function save(){
+    if(!storable) return;
+    try{
+      localStorage.setItem(KEY, JSON.stringify({ level: level, best: best }));
+    }catch(e){ storable = false; el("note").hidden = false; }
+  }
+  function load(){
+    try{
+      var raw = localStorage.getItem(KEY);
+      if(!raw) return null;
+      return JSON.parse(raw);
+    }catch(e){ storable = false; el("note").hidden = false; return null; }
+  }
+
+  el("primary").addEventListener("click", function(){ if(!busy) startLevel(level); });
+  el("secondary").addEventListener("click", function(){ if(!busy) startLevel(level + 1); });
+
+  var saved = load();
+  best = (saved && saved.best) || {};
+  startLevel((saved && saved.level) || 1);
+
+  if("serviceWorker" in navigator){
+    window.addEventListener("load", function(){
+      navigator.serviceWorker.register("./sw.js").catch(function(){});
+    });
+  }
+})();
+</script>
+</body>
+</html>
