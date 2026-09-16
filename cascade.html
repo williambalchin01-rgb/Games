@@ -1125,11 +1125,80 @@
 
   // ---------------------------------------------------------------- storage
 
+  /* The whole board, not just which level you were on. iOS reads a swipe from
+     the left edge as "go back", and the first column sits inside that strip, so
+     a mis-aimed swipe leaves the page. That is the system's gesture to own -
+     nothing here can refuse it - but coming back to a level dealt again from
+     scratch is this game's fault, and that part is fixable. */
+  function snapshot(){
+    return {
+      level: level,
+      best: best,
+      score: score,
+      moves: moves,
+      progress: progress.slice(),
+      finished: finished,
+      overTitle: el("over-title").textContent,
+      overText: el("over-text").textContent,
+      board: board.map(function(t){
+        if(!t) return 0;
+        return t.crate ? "X" : (t.p + (t.special ? ":" + t.special : ""));
+      })
+    };
+  }
+
   function save(){
     if(!storable) return;
     try{
-      localStorage.setItem(KEY, JSON.stringify({ level: level, best: best }));
+      localStorage.setItem(KEY, JSON.stringify(snapshot()));
     }catch(e){ storable = false; el("note").hidden = false; }
+  }
+
+  /* Put a saved board back. Anything that does not add up - a board of the
+     wrong size, goals that no longer match the level, a level that has since
+     been retuned - deals a fresh one rather than restoring something
+     inconsistent with the rules now in force. */
+  function restoreLevel(s){
+    if(!s || !s.board || s.board.length !== CELLS) return false;
+    var n = s.level || 1;
+    var sp = levelFor(n);
+    if(!s.progress || s.progress.length !== sp.goals.length) return false;
+    if(typeof s.moves !== "number" || s.moves < 0 || s.moves > sp.moves) return false;
+
+    level = n;
+    spec = sp;
+    score = s.score || 0;
+    moves = s.moves;
+    progress = s.progress.slice();
+    finished = s.finished || null;
+    held = null;
+
+    Object.keys(nodes).forEach(function(k){ nodes[k].remove(); });
+    nodes = Object.create(null);
+    boardEl.innerHTML = "";
+    buildCells();
+
+    var ok = true;
+    board = s.board.map(function(v){
+      if(v === 0 || v === null) return null;
+      if(v === "X") return { id: nextId++, crate: true };
+      var bits = String(v).split(":");
+      var p = +bits[0];
+      if(!(p >= 0 && p < 6)){ ok = false; return null; }
+      return { id: nextId++, p: p, special: bits[1] || null };
+    });
+    if(!ok || board.some(function(t){ return !t; })) return false;
+
+    render();
+    el("over").hidden = !finished;
+    el("over-title").textContent = s.overTitle || "";
+    el("over-text").textContent = s.overText || "";
+    el("secondary").hidden = finished !== "won";
+    el("primary").textContent = finished === "won" ? "Play again"
+      : (finished ? "Try again" : "Restart");
+    paintStatus();
+    if(!finished) armHint();
+    return true;
   }
   function load(){
     try{
@@ -1145,7 +1214,14 @@
   buildGradients();
   var saved = load();
   best = (saved && saved.best) || {};
-  startLevel((saved && saved.level) || 1);
+  if(!restoreLevel(saved)) startLevel((saved && saved.level) || 1);
+
+  /* A swipe that leaves the page gives no warning, so the board is written
+     down on the way out as well as after every move. Never mid-cascade: the
+     last thing saved is then a settled board from before the move, which is
+     consistent, where a half-resolved one would not be. */
+  window.addEventListener("pagehide", function(){ if(!busy) save(); });
+  document.addEventListener("visibilitychange", function(){ if(document.hidden && !busy) save(); });
 
   if("serviceWorker" in navigator){
     window.addEventListener("load", function(){
