@@ -10,42 +10,28 @@
 <link rel="manifest" href="./manifest.json">
 <link rel="apple-touch-icon" href="./apple-touch-icon.png">
 <link rel="icon" href="./icon-192.png">
-<title>Trench</title>
+<title>Glider</title>
 <link rel="stylesheet" href="./app.css">
 <style>
-  .statline{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:6px 2px 10px}
-  .depth{font-size:22px;font-weight:200;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
-  .depth span{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-left:6px}
+  .statline{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:6px 2px 8px}
+  .flown{font-size:22px;font-weight:200;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  .flown span{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-left:6px}
 
-  .wrap{flex:1;display:flex;gap:12px;padding:6px 0;min-height:0}
-  .main{flex:1;display:flex;flex-direction:column;justify-content:center;gap:12px;min-width:0}
-
-  /* the dive gauge: zones down the side with a marker that sinks as you score */
-  .gauge{
-    width:34px;flex:none;position:relative;border-radius:8px;overflow:hidden;
-    background:linear-gradient(#2A4A63 0%, #1E3A50 14%, #16293a 30%, #101D2A 58%, #0B141D 82%, #070E14 100%);
-    border:1px solid var(--line);
-  }
-  .zone{position:absolute;left:0;right:0;border-top:1px dashed rgba(255,255,255,.10)}
-  .zone b{
-    position:absolute;left:3px;top:2px;font-size:7px;font-weight:400;letter-spacing:.06em;
-    text-transform:uppercase;color:rgba(255,255,255,.30);writing-mode:horizontal-tb;
-  }
-  .sub{
-    position:absolute;left:50%;width:15px;height:15px;margin-left:-7.5px;
-    transition:top .7s cubic-bezier(.3,.7,.3,1);
-  }
-  .sub svg{width:100%;height:100%;display:block}
+  /* the question owns the top half; the flight the bottom */
+  .wrap{flex:1;display:flex;flex-direction:column;gap:10px;min-height:0;padding:2px 0}
+  .top{flex:0 0 auto}
+  .bottom{flex:1;min-height:150px;display:flex;flex-direction:column;justify-content:flex-end}
 
   .card{
     background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
-    padding:14px;display:flex;flex-direction:column;gap:10px;
+    padding:13px;display:flex;flex-direction:column;gap:9px;
   }
-  .qnum{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+  .qnum{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);
+        display:flex;justify-content:space-between;gap:8px}
   .prompt{font-size:19px;font-weight:300;line-height:1.3;margin:0}
 
   .timer{height:4px;border-radius:2px;background:var(--line);overflow:hidden}
-  .timer i{display:block;height:100%;background:var(--accent);transition:width .1s linear}
+  .timer i{display:block;height:100%;background:var(--accent);transition:width .12s linear}
   .timer[data-low="true"] i{background:#E0574A}
 
   .entry{display:flex;gap:8px}
@@ -54,19 +40,49 @@
     color:var(--ink);font:inherit;font-size:16px;padding:11px 12px;
   }
   .entry input:focus{outline:none;border-color:var(--accent)}
+  .entry input[data-wrong="true"]{border-color:#E0574A;animation:shake .3s ease}
+  @keyframes shake{0%,100%{transform:none}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}
   .entry button{
     flex:none;background:var(--accent);color:var(--ground);border-radius:8px;
     padding:0 16px;font-size:14px;font-weight:500;
   }
   .entry button:disabled{background:var(--line);color:var(--muted)}
 
-  .verdict{min-height:64px;display:flex;flex-direction:column;gap:5px;justify-content:center}
-  .verdict .tier{font-size:17px;font-weight:500}
-  .verdict .said{font-size:13px;color:var(--muted)}
-  .verdict[data-tone="miss"] .tier{color:#E0574A}
-  .verdict .pts{font-variant-numeric:tabular-nums}
-  .flash{animation:flash .5s ease}
-  @keyframes flash{0%{transform:translateY(6px);opacity:0}100%{transform:none;opacity:1}}
+  .verdict{min-height:34px;font-size:13px;color:var(--muted);display:flex;align-items:center}
+  .verdict b{color:var(--ink);font-weight:500;margin-right:5px}
+  .verdict[data-tone="hit"]{color:var(--accent)}
+  .verdict[data-tone="wrong"]{color:#E0574A}
+  .verdict.flash{animation:rise .35s ease}
+  @keyframes rise{0%{transform:translateY(5px);opacity:0}100%{transform:none;opacity:1}}
+
+  /* ---- the flight ---- */
+  .sky{
+    position:relative;flex:1;min-height:120px;border-radius:var(--radius);overflow:hidden;
+    background:linear-gradient(#16222E 0%, #1B2B39 45%, #223447 100%);
+    border:1px solid var(--line);
+  }
+  .cloud{position:absolute;border-radius:40px;background:rgba(255,255,255,.045);pointer-events:none}
+  .mark{position:absolute;top:0;bottom:18px;width:1px;background:rgba(255,255,255,.07)}
+  .mark b{
+    position:absolute;bottom:-15px;left:2px;font-size:8px;font-weight:400;letter-spacing:.05em;
+    color:rgba(255,255,255,.28);white-space:nowrap;
+  }
+  .ground{position:absolute;left:0;right:0;bottom:0;height:18px;background:rgba(0,0,0,.25);
+          border-top:1px solid rgba(255,255,255,.10)}
+  .trail{
+    position:absolute;left:3%;bottom:38%;height:0;border-top:1px dashed rgba(232,207,92,.42);
+    transition:width .85s cubic-bezier(.25,.8,.35,1);
+  }
+  .plane{
+    position:absolute;bottom:38%;width:30px;height:30px;margin-bottom:-15px;
+    transition:left .85s cubic-bezier(.25,.8,.35,1), bottom .85s cubic-bezier(.3,.9,.4,1);
+  }
+  .plane svg{width:100%;height:100%;display:block;filter:drop-shadow(0 2px 3px rgba(0,0,0,.5))}
+  .plane.launch{animation:bob .85s ease}
+  @keyframes bob{0%{transform:rotate(-14deg)}40%{transform:rotate(-7deg)}100%{transform:none}}
+
+  .howto{margin:0;text-align:center;font-size:12px;color:var(--muted)}
+  @media (max-height: 700px){ .howto{display:none} .bottom{min-height:118px} }
 
   .recap{display:flex;flex-direction:column;gap:6px;margin-top:10px;text-align:left}
   .rec{display:flex;gap:9px;align-items:baseline;font-size:12.5px;border-top:1px solid var(--line);padding-top:6px}
@@ -75,76 +91,70 @@
   .rec .p{font-variant-numeric:tabular-nums;color:var(--accent)}
   .rec[data-tone="miss"] .p{color:#E0574A}
   .rec .best{display:block;font-size:11px;color:var(--muted)}
-
-  .howto{margin:0;text-align:center;font-size:12px;color:var(--muted)}
-  @media (max-height: 700px){ .howto{display:none} }
 </style>
 </head>
 <body>
 
 <header>
   <a class="back" href="./index.html">&larr; Arcade</a>
-  <div class="eyebrow" id="zone-name">The sunlight zone</div>
+  <div class="eyebrow" id="reach">Still on the desk</div>
 </header>
 
 <div class="chiprow" id="modes"></div>
 
 <div class="statline">
-  <span class="depth"><span id="depth-n">0</span><span>metres down</span></span>
+  <span class="flown"><span id="flown-n">0</span><span>metres flown</span></span>
   <span class="eyebrow">Best <span id="best-n">&mdash;</span></span>
 </div>
 
 <div class="wrap">
-  <div class="main">
+  <div class="top">
     <div class="card" id="play">
-      <div class="qnum" id="qnum">Prompt 1 of 7</div>
+      <div class="qnum"><span id="qnum">Throw 1 of 7</span><span id="tries"></span></div>
       <p class="prompt" id="prompt">&nbsp;</p>
       <div class="timer" id="timer"><i id="timer-bar"></i></div>
       <div class="entry">
         <input id="answer" type="text" autocomplete="off" autocorrect="off" autocapitalize="off"
                spellcheck="false" enterkeyhint="go" placeholder="Your answer">
-        <button id="dive">Dive</button>
+        <button id="throw">Throw</button>
       </div>
       <div class="verdict" id="verdict"></div>
     </div>
-    <p class="howto">The rarer the answer, the deeper you sink. Fifteen seconds each.</p>
   </div>
-  <div class="gauge" id="gauge">
-    <div class="sub" id="sub">
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <ellipse cx="12" cy="12" rx="9" ry="5" fill="#E8CF5C"/>
-        <circle cx="9" cy="12" r="1.8" fill="#151C24"/>
-        <path d="M17 12 L23 8 V16 Z" fill="#E8894A"/>
-      </svg>
+
+  <div class="bottom">
+    <div class="sky" id="sky">
+      <div class="trail" id="trail"></div>
+      <div class="plane" id="plane">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M23 12 L2.5 4 L10 12 Z" fill="#F4E58C"/>
+          <path d="M23 12 L10 12 L2.5 20 Z" fill="#C9AE3F"/>
+          <path d="M23 12 L10 12" stroke="#8C7A28" stroke-width="0.9" fill="none"/>
+          <path d="M23 12 L2.5 4" stroke="#FBF3C4" stroke-width="0.7" fill="none"/>
+        </svg>
+      </div>
+      <div class="ground"></div>
     </div>
+    <p class="howto">A rarer answer throws it further. Wrong guesses cost only time.</p>
   </div>
 </div>
 
 <div class="win" id="over" hidden>
-  <h2 id="over-title">Surfaced</h2>
+  <h2 id="over-title">Landed</h2>
   <p id="over-text"></p>
   <div class="recap" id="recap"></div>
-  <div class="controls"><button class="ctrl" id="again">Dive again</button></div>
+  <div class="controls"><button class="ctrl" id="again">Throw again</button></div>
 </div>
 
-<p class="note" id="note" hidden>Storage is blocked here, so your dives won't be saved.</p>
+<p class="note" id="note" hidden>Storage is blocked here, so your throws won't be saved.</p>
 
 <script>
 (function(){
   "use strict";
 
-  var KEY = "arcade.trench.v1";
-  var PROMPTS = 7, SECONDS = 15;
+  var KEY = "arcade.glider.v1";
+  var PROMPTS = 7, SECONDS = 30;
 
-  /* Every category is a CLOSED set, which is the whole trick. A rarity game
-     normally needs a crowd to tell it which answers are obscure; with a bounded
-     category the list can be complete, so no valid answer is ever turned away,
-     and rarity becomes "how well known is this member", which is one ordering
-     per category rather than a guess per answer.
-
-     Answers are stored best-known first. The tier comes from position in the
-     list, so the only judgement is the running order - being one place out
-     changes nothing. */
   var PACKS = [
   { q:"Name a country in Africa", a:[
     "Egypt","South Africa","Nigeria","Kenya","Morocco","Ethiopia","Ghana","Algeria","Tunisia","Libya",
@@ -248,39 +258,39 @@
     "Eris","Haumea","Makemake"] }
   ];
 
-  /* Six bands by where an answer sits in its list. Everyone knows Egypt; almost
-     nobody reaches for Comoros; the points follow that and nothing else. */
+  /* Six bands by where an answer sits in its list. Everyone reaches for Egypt;
+     almost nobody for Comoros; the throw follows that and nothing else. */
   var TIERS = [
-    { at:0.12, name:"Surface",  pts:4 },
-    { at:0.30, name:"Shallows", pts:8 },
-    { at:0.50, name:"Reef",     pts:16 },
-    { at:0.70, name:"Deep",     pts:32 },
-    { at:0.88, name:"Abyss",    pts:64 },
-    { at:1.01, name:"Trench",   pts:100 }
+    { at:0.12, name:"Wobble",       pts:4 },
+    { at:0.30, name:"Glide",        pts:8 },
+    { at:0.50, name:"Soar",         pts:16 },
+    { at:0.70, name:"Sail",         pts:32 },
+    { at:0.88, name:"Thermal",      pts:64 },
+    { at:1.01, name:"Stratosphere", pts:100 }
   ];
-  // 10 metres a point, so a perfect dive is seven hundred points and seven
-  // kilometres down - about the floor of a hadal trench
-  var PER_POINT = 10;
-  var ZONES = [
-    { to:200,  name:"the sunlight zone" },
-    { to:1000, name:"the twilight zone" },
-    { to:4000, name:"the midnight zone" },
-    { to:6000, name:"the abyssal plain" },
-    { to:99999, name:"the hadal trench" }
+  var PER_POINT = 1;                       // a point is a metre; a perfect seven is 700
+  var MAX = PROMPTS * 100 * PER_POINT;
+  var REACH = [
+    { to:40,  name:"Still on the desk" },
+    { to:120, name:"Across the room" },
+    { to:260, name:"Down the corridor" },
+    { to:450, name:"Over the playground" },
+    { to:640, name:"Out past the treeline" },
+    { to:1e9, name:"Somewhere over the horizon" }
   ];
 
   /* Spread across the list rather than against its length, so the last name on
      any list is worth the most. Dividing by n left a short category - the eight
-     Australian states - unable to award the deepest band at all, however obscure
+     Australian states - unable to award the best throw at all, however obscure
      the answer given. */
   function tierFor(rank, n){
     var f = n > 1 ? rank / (n - 1) : 1;
     for(var i = 0; i < TIERS.length; i++) if(f < TIERS[i].at) return TIERS[i];
     return TIERS[TIERS.length - 1];
   }
-  function zoneFor(m){
-    for(var i = 0; i < ZONES.length; i++) if(m < ZONES[i].to) return ZONES[i].name;
-    return ZONES[ZONES.length - 1].name;
+  function reachFor(m){
+    for(var i = 0; i < REACH.length; i++) if(m < REACH[i].to) return REACH[i].name;
+    return REACH[REACH.length - 1].name;
   }
 
   /* Matching has to be forgiving or a closed list feels like a quiz that will
@@ -358,10 +368,11 @@
   /* ---------- state ---------- */
 
   function el(id){ return document.getElementById(id); }
-  var mode = "daily", order = [], at = 0, depth = 0, said = [], running = false;
-  var left = SECONDS, ticker = null, store = { best:{}, daily:null, dive:null }, storable = true;
+  var mode = "daily", order = [], at = 0, flown = 0, said = [], running = false;
+  var left = SECONDS, ticker = null, tries = 0;
+  var store = { best:{}, daily:null, run:null }, storable = true;
 
-  var MODES = [{ id:"daily", label:"Daily dive" }, { id:"endless", label:"Endless" }];
+  var MODES = [{ id:"daily", label:"Daily throw" }, { id:"endless", label:"Endless" }];
 
   function save(){
     if(!storable) return;
@@ -373,110 +384,166 @@
     catch(e){ storable = false; el("note").hidden = false; return null; }
   }
 
-  /* ---------- the gauge ---------- */
+  /* ---------- the flight ---------- */
 
-  function buildGauge(){
-    var g = el("gauge"), max = PROMPTS * 100 * PER_POINT;
-    ZONES.forEach(function(z, i){
-      if(i === ZONES.length - 1) return;
+  function buildSky(){
+    var sky = el("sky");
+    // a few soft banks of cloud: without them the plane crosses a blank panel
+    [[8,18,62,17],[34,52,86,22],[58,12,70,15],[76,40,54,14],[20,70,96,20]].forEach(function(c){
+      var n = document.createElement("div");
+      n.className = "cloud";
+      n.style.left = c[0] + "%"; n.style.top = c[1] + "%";
+      n.style.width = c[2] + "px"; n.style.height = c[3] + "px";
+      sky.appendChild(n);
+    });
+    REACH.forEach(function(z, i){
+      if(i === REACH.length - 1) return;
       var d = document.createElement("div");
-      d.className = "zone";
-      d.style.top = Math.min(98, z.to / max * 100) + "%";
-      g.insertBefore(d, el("sub"));
+      d.className = "mark";
+      d.style.left = (3 + z.to / MAX * 91) + "%";
+      d.innerHTML = "<b>" + z.to + "m</b>";
+      sky.insertBefore(d, el("trail"));
     });
   }
-  function paintGauge(){
-    var max = PROMPTS * 100 * PER_POINT;
-    el("sub").style.top = "calc(" + Math.min(96, depth / max * 100) + "% - 2px)";
+  function paintFlight(lift){
+    var x = 3 + Math.min(1, flown / MAX) * 91;
+    el("plane").style.left = "calc(" + x + "% - 15px)";
+    // a good throw rides higher before it settles
+    el("plane").style.bottom = (38 + (lift || 0)) + "%";
+    el("trail").style.width = "calc(" + Math.max(0, x - 3) + "% + 6px)";
   }
 
-  /* ---------- a dive ---------- */
+  /* ---------- a throw ---------- */
 
   function paintStatus(){
-    el("depth-n").textContent = depth;
+    el("flown-n").textContent = flown;
     var b = store.best[mode];
     el("best-n").textContent = b ? b + "m" : "\u2014";
-    el("zone-name").textContent = zoneFor(depth).replace(/^the /, "The ");
-    paintGauge();
+    el("reach").textContent = reachFor(flown);
+    paintFlight(0);
   }
 
   function showPrompt(){
     var pack = PACKS[order[at]];
-    el("qnum").textContent = "Prompt " + (at + 1) + " of " + PROMPTS;
+    el("qnum").textContent = "Throw " + (at + 1) + " of " + PROMPTS;
+    el("tries").textContent = "";
     el("prompt").textContent = pack.q;
+    el("verdict").textContent = "";
+    el("verdict").dataset.tone = "";
     el("answer").value = "";
     el("answer").disabled = false;
-    el("dive").disabled = false;
+    el("answer").dataset.wrong = "false";
+    el("throw").disabled = false;
+    tries = 0;
     left = SECONDS;
     paintTimer();
     startClock();
-    // a phone keyboard popping up unasked is worse than one tap, so only take
-    // focus when there is a real keyboard to take it with
     if(!("ontouchstart" in window)) el("answer").focus();
   }
 
   function paintTimer(){
     el("timer-bar").style.width = Math.max(0, left / SECONDS * 100) + "%";
-    el("timer").dataset.low = left <= 4;
+    el("timer").dataset.low = left <= 6;
   }
   function startClock(){
     stopClock();
     running = true;
     var last = Date.now();
     ticker = setInterval(function(){
-      if(document.hidden) { last = Date.now(); return; }
+      if(document.hidden){ last = Date.now(); return; }
       var now = Date.now();
       left -= (now - last) / 1000;
       last = now;
       paintTimer();
-      if(left <= 0){ left = 0; paintTimer(); answer(""); }
+      if(left <= 0){ left = 0; paintTimer(); timeUp(); }
     }, 100);
   }
   function stopClock(){ running = false; if(ticker){ clearInterval(ticker); ticker = null; } }
 
-  function answer(text){
-    if(!running && text !== "") return;
+  /* A guess that is not on the list costs nothing but the clock. Ending the
+     throw on a wrong word punished not knowing the exact wording rather than
+     not knowing the answer, and a closed list makes that far too easy to trip
+     over. Keep guessing until something lands or the time is gone. */
+  function guess(text){
+    if(!running) return;
+    var pack = PACKS[order[at]];
+    if(!String(text).trim()) return;
+    var rank = lookup(pack, text);
+    if(rank < 0){
+      tries++;
+      el("tries").textContent = tries + (tries === 1 ? " miss" : " misses");
+      var v = el("verdict");
+      v.dataset.tone = "wrong";
+      v.innerHTML = "<b>" + esc(text.trim()) + "</b> is not on the list \u2014 keep going";
+      v.classList.remove("flash"); void v.offsetWidth; v.classList.add("flash");
+      var box = el("answer");
+      box.dataset.wrong = "true";
+      box.value = "";
+      setTimeout(function(){ box.dataset.wrong = "false"; }, 320);
+      if(!("ontouchstart" in window)) box.focus();
+      return;
+    }
+    land(rank);
+  }
+
+  function esc(s){
+    return String(s).replace(/[&<>"]/g, function(c){
+      return { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c];
+    });
+  }
+
+  function land(rank){
     stopClock();
     var pack = PACKS[order[at]];
-    var rank = lookup(pack, text);
+    var t = tierFor(rank, pack.a.length);
+    flown += t.pts * PER_POINT;
+    said.push({ q:pack.q, said:pack.a[rank], pts:t.pts, tier:t.name,
+                best:pack.a[pack.a.length - 1], tries:tries });
     var v = el("verdict");
-    var rec;
-    if(rank < 0){
-      rec = { q:pack.q, said:text, pts:0, tier:text.trim() ? "Not on the list" : "Out of time",
-              best:pack.a[pack.a.length - 1] };
-      v.dataset.tone = "miss";
-      v.innerHTML = '<div class="tier">' + rec.tier + "</div>" +
-        '<div class="said">' + (text.trim() ? "Nothing doing. " : "") +
-        "The rarest here was <b>" + pack.a[pack.a.length - 1] + "</b>.</div>";
-    } else {
-      var t = tierFor(rank, pack.a.length);
-      depth += t.pts * PER_POINT;
-      rec = { q:pack.q, said:pack.a[rank], pts:t.pts, tier:t.name, best:pack.a[pack.a.length - 1] };
-      v.dataset.tone = "hit";
-      v.innerHTML = '<div class="tier">' + t.name + ' <span class="pts">+' + (t.pts * PER_POINT) + "m</span></div>" +
-        '<div class="said">' + pack.a[rank] + " \u00b7 " + (rank + 1) + " of " + pack.a.length + " by fame</div>";
-    }
+    v.dataset.tone = "hit";
+    v.innerHTML = "<b>" + t.name + " \u00b7 " + (t.pts * PER_POINT) + "m</b> \u2014 " +
+      esc(pack.a[rank]) + ", " + (rank + 1) + " of " + pack.a.length + " by fame";
     v.classList.remove("flash"); void v.offsetWidth; v.classList.add("flash");
-    said.push(rec);
     el("answer").disabled = true;
-    el("dive").disabled = true;
+    el("throw").disabled = true;
+    el("plane").classList.remove("launch"); void el("plane").offsetWidth;
+    el("plane").classList.add("launch");
     paintStatus();
+    paintFlight(Math.min(22, t.pts * 0.22));
+    setTimeout(function(){ paintFlight(0); }, 900);
+    advance();
+  }
+
+  function timeUp(){
+    stopClock();
+    var pack = PACKS[order[at]];
+    said.push({ q:pack.q, said:"", pts:0, tier:"Out of time",
+                best:pack.a[pack.a.length - 1], tries:tries });
+    var v = el("verdict");
+    v.dataset.tone = "wrong";
+    v.innerHTML = "Out of time \u2014 the rarest was <b>" + esc(pack.a[pack.a.length - 1]) + "</b>";
+    v.classList.remove("flash"); void v.offsetWidth; v.classList.add("flash");
+    el("answer").disabled = true;
+    el("throw").disabled = true;
+    advance();
+  }
+
+  function advance(){
     at++;
-    saveDive();
+    saveRun();
     setTimeout(function(){
       if(at >= PROMPTS) finish(); else showPrompt();
-    }, 1500);
+    }, 1700);
   }
 
   function finish(){
     stopClock();
-    var zone = zoneFor(depth);
-    el("over-title").textContent = depth >= 6000 ? "The trench floor" : "Surfaced";
-    el("over-text").textContent = depth + " metres \u00b7 " + zone +
-      (depth > (store.best[mode] || 0) ? " \u00b7 your deepest yet" : "");
-    if(depth > (store.best[mode] || 0)) store.best[mode] = depth;
-    if(mode === "daily") store.daily = { date: today(), depth: depth, said: said };
-    store.dive = null;
+    el("over-title").textContent = flown >= 640 ? "Over the horizon" : "Landed";
+    el("over-text").textContent = flown + " metres \u00b7 " + reachFor(flown).toLowerCase() +
+      (flown > (store.best[mode] || 0) ? " \u00b7 your furthest yet" : "");
+    if(flown > (store.best[mode] || 0)) store.best[mode] = flown;
+    if(mode === "daily") store.daily = { date: today(), flown: flown, said: said };
+    store.run = null;
 
     var r = el("recap");
     r.innerHTML = "";
@@ -485,56 +552,75 @@
       row.className = "rec";
       row.dataset.tone = s.pts ? "hit" : "miss";
       row.innerHTML = '<span class="n">' + (i + 1) + "</span>" +
-        '<span class="mine">' + (s.said || "\u2014") +
-        '<span class="best">' + s.q.replace(/^Name /, "") + " \u00b7 rarest: " + s.best + "</span></span>" +
-        '<span class="p">' + (s.pts ? "+" + s.pts * PER_POINT + "m" : "0") + "</span>";
+        '<span class="mine">' + esc(s.said || "\u2014") +
+        (s.tries ? ' <span class="best">after ' + s.tries + (s.tries === 1 ? " miss" : " misses") + "</span>" : "") +
+        '<span class="best">' + esc(s.q.replace(/^Name /, "")) + " \u00b7 rarest: " + esc(s.best) + "</span></span>" +
+        '<span class="p">' + (s.pts ? s.pts * PER_POINT + "m" : "0") + "</span>";
       r.appendChild(row);
     });
 
     el("play").hidden = true;
     el("over").hidden = false;
-    el("again").textContent = mode === "daily" ? "Try the endless dive" : "Dive again";
+    el("again").textContent = mode === "daily" ? "Try the endless run" : "Throw again";
     paintStatus();
     save();
   }
 
-  // written down between prompts, never inside one: a half-answered prompt with
-  // four seconds left is not something worth restoring
-  function saveDive(){
+  // written down between throws, never inside one: a half-guessed prompt with
+  // nine seconds left is not something worth restoring
+  function saveRun(){
     if(mode === "daily" && at >= PROMPTS) return;
-    store.dive = at > 0 && at < PROMPTS
-      ? { mode:mode, order:order, at:at, depth:depth, said:said, date:today() }
+    store.run = at > 0 && at < PROMPTS
+      ? { mode:mode, order:order, at:at, flown:flown, said:said, date:today() }
       : null;
     save();
+  }
+
+  function pickPrompts(rng){
+    var pool = PACKS.map(function(_, i){ return i; });
+    for(var i = pool.length - 1; i > 0; i--){
+      var j = Math.floor(rng() * (i + 1)), t = pool[i];
+      pool[i] = pool[j]; pool[j] = t;
+    }
+    return pool.slice(0, PROMPTS);
+  }
+  function today(){
+    var d = new Date();
+    return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0") +
+           "-" + String(d.getUTCDate()).padStart(2, "0");
+  }
+  function daySeed(s){
+    var h = 2166136261;
+    for(var i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
   }
 
   function start(which){
     mode = which;
     syncChips();
     if(mode === "daily" && store.daily && store.daily.date === today()){
-      // one dive a day is the point of a daily, so show what it came to
       order = pickPrompts(mulberry(daySeed(today())));
-      depth = store.daily.depth;
+      flown = store.daily.flown;
       said = store.daily.said || [];
       at = PROMPTS;
       finish();
-      el("over-text").textContent = depth + " metres \u00b7 " + zoneFor(depth) +
-        " \u00b7 today's dive is done";
+      el("over-text").textContent = flown + " metres \u00b7 " + reachFor(flown).toLowerCase() +
+        " \u00b7 today's throw is done";
       return;
     }
     order = mode === "daily" ? pickPrompts(mulberry(daySeed(today())))
                              : pickPrompts(mulberry((Date.now() ^ (Math.random() * 4294967295)) >>> 0));
-    at = 0; depth = 0; said = [];
+    at = 0; flown = 0; said = [];
     el("play").hidden = false;
     el("over").hidden = true;
     paintStatus();
     showPrompt();
   }
 
-  function resume(d){
-    mode = d.mode;
+  function resume(r){
+    mode = r.mode;
     syncChips();
-    order = d.order; at = d.at; depth = d.depth; said = d.said || [];
+    order = r.order; at = r.at; flown = r.flown; said = r.said || [];
     el("play").hidden = false;
     el("over").hidden = true;
     paintStatus();
@@ -556,26 +642,20 @@
       chiprow.children[i].setAttribute("aria-pressed", MODES[i].id === mode);
   }
 
-  function submit(){
-    if(!running) return;
-    answer(el("answer").value);
-  }
-  el("dive").addEventListener("click", submit);
+  el("throw").addEventListener("click", function(){ guess(el("answer").value); });
   el("answer").addEventListener("keydown", function(e){
-    if(e.key === "Enter"){ e.preventDefault(); submit(); }
+    if(e.key === "Enter"){ e.preventDefault(); guess(el("answer").value); }
   });
-  el("again").addEventListener("click", function(){
-    start(mode === "daily" ? "endless" : "endless");
-  });
+  el("again").addEventListener("click", function(){ start("endless"); });
 
-  window.addEventListener("pagehide", saveDive);
-  document.addEventListener("visibilitychange", function(){ if(document.hidden) saveDive(); });
+  window.addEventListener("pagehide", saveRun);
+  document.addEventListener("visibilitychange", function(){ if(document.hidden) saveRun(); });
 
-  buildGauge();
+  buildSky();
   var saved = load();
-  if(saved){ store = { best: saved.best || {}, daily: saved.daily || null, dive: saved.dive || null }; }
-  if(store.dive && store.dive.order && store.dive.at > 0 && store.dive.at < PROMPTS &&
-     (store.dive.mode !== "daily" || store.dive.date === today())) resume(store.dive);
+  if(saved) store = { best: saved.best || {}, daily: saved.daily || null, run: saved.run || null };
+  if(store.run && store.run.order && store.run.at > 0 && store.run.at < PROMPTS &&
+     (store.run.mode !== "daily" || store.run.date === today())) resume(store.run);
   else start("daily");
 
   if("serviceWorker" in navigator){
