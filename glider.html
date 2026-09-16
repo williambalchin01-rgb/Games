@@ -58,10 +58,28 @@
   /* ---- the flight ---- */
   .sky{
     position:relative;flex:1;min-height:120px;border-radius:var(--radius);overflow:hidden;
-    background:linear-gradient(#16222E 0%, #1B2B39 45%, #223447 100%);
+    background:
+      radial-gradient(70px 70px at 82% 16%, rgba(232,207,92,.16), transparent 70%),
+      linear-gradient(#141F2B 0%, #1B2B39 38%, #24394D 72%, #2E4A61 100%);
     border:1px solid var(--line);
   }
-  .cloud{position:absolute;border-radius:40px;background:rgba(255,255,255,.045);pointer-events:none}
+  /* the sun, and a few birds, so there is something up there besides the plane */
+  .sun{position:absolute;left:80%;top:12%;width:26px;height:26px;border-radius:50%;
+       background:#E8CF5C;opacity:.30;box-shadow:0 0 22px rgba(232,207,92,.35)}
+  .bird{position:absolute;color:rgba(255,255,255,.22);font-size:9px;line-height:1;
+        animation:flap 3.2s ease-in-out infinite}
+  @keyframes flap{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+
+  /* Layers that slide as the plane gets on, at different rates, so the sky
+     reads as passing rather than as a picture with a plane on top. */
+  .layer{position:absolute;inset:0;pointer-events:none;
+         transition:transform 1.1s cubic-bezier(.25,.8,.35,1)}
+  .cloud{position:absolute;border-radius:40px;background:rgba(255,255,255,.05);pointer-events:none}
+  .cloud::before,.cloud::after{content:"";position:absolute;border-radius:50%;background:inherit}
+  .cloud::before{width:55%;height:180%;left:12%;top:-70%}
+  .cloud::after{width:38%;height:150%;right:14%;top:-52%}
+  .hill{position:absolute;bottom:18px;border-radius:50% 50% 0 0 / 100% 100% 0 0;
+        background:rgba(12,22,31,.55)}
   .mark{position:absolute;top:0;bottom:18px;width:1px;background:rgba(255,255,255,.07)}
   .mark b{
     position:absolute;bottom:-15px;left:2px;font-size:8px;font-weight:400;letter-spacing:.05em;
@@ -69,17 +87,14 @@
   }
   .ground{position:absolute;left:0;right:0;bottom:0;height:18px;background:rgba(0,0,0,.25);
           border-top:1px solid rgba(255,255,255,.10)}
-  .trail{
-    position:absolute;left:3%;bottom:38%;height:0;border-top:1px dashed rgba(232,207,92,.42);
-    transition:width .85s cubic-bezier(.25,.8,.35,1);
-  }
-  .plane{
-    position:absolute;bottom:38%;width:30px;height:30px;margin-bottom:-15px;
-    transition:left .85s cubic-bezier(.25,.8,.35,1), bottom .85s cubic-bezier(.3,.9,.4,1);
-  }
-  .plane svg{width:100%;height:100%;display:block;filter:drop-shadow(0 2px 3px rgba(0,0,0,.5))}
-  .plane.launch{animation:bob .85s ease}
-  @keyframes bob{0%{transform:rotate(-14deg)}40%{transform:rotate(-7deg)}100%{transform:none}}
+  .trail{position:absolute;left:0;top:0;pointer-events:none;overflow:visible}
+  .trail path{fill:none;stroke:rgba(232,207,92,.40);stroke-width:1.4;stroke-dasharray:4 5}
+  /* No transition on the plane: it is flown frame by frame along an arc, which
+     a straight tween between two points cannot do. */
+  /* anchored top-left, because planeXY works down from the top of the sky the
+     same way the trail's SVG coordinates do */
+  .plane{position:absolute;left:0;top:0;width:30px;height:30px;will-change:transform}
+  .plane svg{width:100%;height:100%;display:block;filter:drop-shadow(0 3px 4px rgba(0,0,0,.55))}
 
   .howto{margin:0;text-align:center;font-size:12px;color:var(--muted)}
   @media (max-height: 700px){ .howto{display:none} .bottom{min-height:118px} }
@@ -124,7 +139,9 @@
 
   <div class="bottom">
     <div class="sky" id="sky">
-      <div class="trail" id="trail"></div>
+      <div class="layer" id="far"></div>
+      <div class="layer" id="near"></div>
+      <svg class="trail" id="trail" width="100%" height="100%" aria-hidden="true"><path id="trail-path"/></svg>
       <div class="plane" id="plane">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M23 12 L2.5 4 L10 12 Z" fill="#F4E58C"/>
@@ -174,7 +191,7 @@
     "Oklahoma","Utah","Iowa","Kansas","Arkansas","Mississippi","Connecticut","New Mexico","Nebraska","Idaho",
     "Maine","Montana","West Virginia","New Hampshire","Rhode Island","Delaware","South Dakota","North Dakota","Wyoming","Vermont"] },
 
-  { q:"Name a member state of the European Union", a:[
+  { q:"Name a country in the European Union", a:[
     "France","Germany","Italy","Spain","Netherlands","Belgium","Portugal","Greece","Ireland","Austria",
     "Poland","Sweden","Denmark","Finland","Czechia","Hungary","Romania","Croatia","Bulgaria","Slovakia",
     "Slovenia","Lithuania","Latvia","Estonia","Cyprus","Luxembourg","Malta"],
@@ -206,30 +223,17 @@
     "China","Ukraine","Finland","Norway","Poland","Belarus","Kazakhstan","Mongolia","North Korea","Estonia",
     "Latvia","Lithuania","Georgia","Azerbaijan"] },
 
-  { q:"Name one of the first twenty chemical elements", a:[
-    "Hydrogen","Helium","Carbon","Oxygen","Nitrogen","Sodium","Calcium","Neon","Aluminium","Silicon",
-    "Sulfur","Chlorine","Magnesium","Potassium","Lithium","Phosphorus","Argon","Boron","Fluorine","Beryllium"],
-    alt:{ "Aluminium":["Aluminum"], "Sulfur":["Sulphur"] } },
-
-  { q:"Name one of the twenty standard amino acids", a:[
-    "Glycine","Alanine","Lysine","Cysteine","Tryptophan","Tyrosine","Serine","Leucine","Valine","Proline",
-    "Arginine","Histidine","Glutamine","Asparagine","Methionine","Threonine","Phenylalanine","Isoleucine","Aspartic acid","Glutamic acid"],
-    alt:{ "Aspartic acid":["Aspartate"], "Glutamic acid":["Glutamate"] } },
-
-  { q:"Name a sovereign country in Oceania", a:[
+  { q:"Name a country in Oceania", a:[
     "Australia","New Zealand","Fiji","Papua New Guinea","Samoa","Tonga","Vanuatu","Solomon Islands","Micronesia","Palau",
     "Kiribati","Nauru","Tuvalu","Marshall Islands"],
     alt:{ "Micronesia":["Federated States of Micronesia","FSM"] } },
 
-  { q:"Name a sovereign country in the Caribbean", a:[
+  { q:"Name a country in the Caribbean", a:[
     "Cuba","Jamaica","Haiti","Dominican Republic","Bahamas","Barbados","Trinidad and Tobago","Grenada","Saint Lucia","Antigua and Barbuda",
     "Dominica","Saint Vincent and the Grenadines","Saint Kitts and Nevis"],
     alt:{ "Trinidad and Tobago":["Trinidad"], "Antigua and Barbuda":["Antigua"],
           "Saint Vincent and the Grenadines":["St Vincent"], "Saint Kitts and Nevis":["St Kitts"],
           "Saint Lucia":["St Lucia"] } },
-
-  { q:"Name one of the ten main cloud types", a:[
-    "Cumulus","Cirrus","Stratus","Cumulonimbus","Nimbostratus","Altocumulus","Stratocumulus","Altostratus","Cirrostratus","Cirrocumulus"] },
 
   { q:"Name an Australian state or territory", a:[
     "New South Wales","Victoria","Queensland","Western Australia","Tasmania","South Australia","Northern Territory","Australian Capital Territory"],
@@ -253,10 +257,99 @@
           "Sisters of Battle":["Adepta Sororitas"], "Custodes":["Adeptus Custodes"],
           "Space Marines":["Adeptus Astartes"], "Leagues of Votann":["Votann","Squats"] } },
 
-  { q:"Name a planet or IAU dwarf planet in the solar system", a:[
+  { q:"Name a planet or dwarf planet", a:[
     "Earth","Mars","Jupiter","Saturn","Venus","Mercury","Neptune","Uranus","Pluto","Ceres",
     "Eris","Haumea","Makemake"] }
-  ];
+  ,
+
+  { q:"Name a chemical element", a:[
+    "Oxygen","Hydrogen","Carbon","Gold","Iron","Helium","Nitrogen","Silver","Copper","Calcium",
+    "Sodium","Aluminium","Lead","Zinc","Mercury","Uranium","Chlorine","Neon","Silicon","Sulfur",
+    "Potassium","Magnesium","Nickel","Tin","Platinum","Titanium","Lithium","Phosphorus","Argon","Iodine",
+    "Fluorine","Boron","Chromium","Manganese","Cobalt","Arsenic","Bromine","Barium","Radium","Plutonium",
+    "Krypton","Xenon","Radon","Beryllium","Tungsten","Bismuth","Antimony","Cadmium","Vanadium","Zirconium",
+    "Palladium","Selenium","Strontium","Caesium","Rubidium","Gallium","Germanium","Iridium","Osmium","Rhodium",
+    "Ruthenium","Molybdenum","Niobium","Tantalum","Hafnium","Rhenium","Thallium","Indium","Tellurium","Scandium",
+    "Yttrium","Lanthanum","Cerium","Neodymium","Samarium","Europium","Gadolinium","Terbium","Dysprosium","Holmium",
+    "Erbium","Thulium","Ytterbium","Lutetium","Praseodymium","Promethium","Actinium","Thorium","Protactinium","Neptunium",
+    "Americium","Curium","Berkelium","Californium","Einsteinium","Fermium","Mendelevium","Nobelium","Lawrencium","Rutherfordium",
+    "Dubnium","Seaborgium","Bohrium","Hassium","Meitnerium","Darmstadtium","Roentgenium","Copernicium","Nihonium","Flerovium",
+    "Moscovium","Livermorium","Tennessine","Oganesson","Technetium","Polonium","Astatine","Francium"],
+    alt:{ "Aluminium":["Aluminum"], "Sulfur":["Sulphur"], "Caesium":["Cesium"] } },
+
+  { q:"Name a country in Europe", a:[
+    "France","Germany","Spain","Italy","United Kingdom","Ireland","Portugal","Netherlands","Belgium","Switzerland",
+    "Austria","Greece","Sweden","Norway","Denmark","Finland","Poland","Russia","Ukraine","Czechia",
+    "Hungary","Romania","Croatia","Turkey","Iceland","Bulgaria","Serbia","Slovakia","Slovenia","Lithuania",
+    "Latvia","Estonia","Albania","Belarus","Bosnia and Herzegovina","Cyprus","Luxembourg","Malta","Monaco","Montenegro",
+    "North Macedonia","Moldova","Andorra","San Marino","Liechtenstein","Vatican City","Kosovo"],
+    alt:{ "United Kingdom":["UK","Britain","Great Britain","England"], "Czechia":["Czech Republic"],
+          "Netherlands":["Holland"], "Bosnia and Herzegovina":["Bosnia"], "Vatican City":["Vatican"],
+          "North Macedonia":["Macedonia"] } },
+
+  { q:"Name a country in Asia", a:[
+    "China","India","Japan","Thailand","Vietnam","South Korea","Indonesia","Philippines","Malaysia","Singapore",
+    "Pakistan","Bangladesh","Nepal","Sri Lanka","Israel","Saudi Arabia","Iran","Iraq","Turkey","Afghanistan",
+    "North Korea","Cambodia","Myanmar","United Arab Emirates","Qatar","Jordan","Lebanon","Syria","Kuwait","Oman",
+    "Yemen","Mongolia","Kazakhstan","Uzbekistan","Georgia","Armenia","Azerbaijan","Laos","Maldives","Bhutan",
+    "Brunei","Bahrain","Kyrgyzstan","Tajikistan","Turkmenistan","Timor-Leste"],
+    alt:{ "United Arab Emirates":["UAE"], "Myanmar":["Burma"], "Timor-Leste":["East Timor"] } },
+
+  { q:"Name a US president", a:[
+    "Abraham Lincoln","George Washington","John F Kennedy","Donald Trump","Barack Obama","Joe Biden","George W Bush","Bill Clinton","Franklin D Roosevelt","Ronald Reagan",
+    "Thomas Jefferson","Theodore Roosevelt","Richard Nixon","Jimmy Carter","George H W Bush","Harry Truman","Dwight Eisenhower","Lyndon Johnson","Gerald Ford","John Adams",
+    "James Madison","Ulysses Grant","Andrew Jackson","Woodrow Wilson","Herbert Hoover","James Monroe","John Quincy Adams","William Howard Taft","Calvin Coolidge","Warren Harding",
+    "Andrew Johnson","James Polk","Martin Van Buren","Zachary Taylor","William Henry Harrison","John Tyler","Millard Fillmore","Franklin Pierce","James Buchanan","Rutherford Hayes",
+    "James Garfield","Chester Arthur","Grover Cleveland","Benjamin Harrison","William McKinley"],
+    alt:{ "John F Kennedy":["JFK","Kennedy","John F. Kennedy"], "Franklin D Roosevelt":["FDR","Roosevelt","Franklin Roosevelt","Franklin D. Roosevelt"],
+          "George W Bush":["George W. Bush"], "George H W Bush":["George H. W. Bush","George Bush"],
+          "Dwight Eisenhower":["Eisenhower","Dwight D Eisenhower","Dwight D. Eisenhower"],
+          "Lyndon Johnson":["LBJ","Lyndon B Johnson","Lyndon B. Johnson"], "Ulysses Grant":["Ulysses S Grant","Ulysses S. Grant"],
+          "Rutherford Hayes":["Rutherford B Hayes","Rutherford B. Hayes"] } },
+
+  { q:"Name a British prime minister since 1900", a:[
+    "Winston Churchill","Margaret Thatcher","Tony Blair","Boris Johnson","David Cameron","Gordon Brown","Theresa May","Keir Starmer","Rishi Sunak","Liz Truss",
+    "John Major","Harold Wilson","Clement Attlee","Neville Chamberlain","Edward Heath","James Callaghan","Anthony Eden","Harold Macmillan","David Lloyd George","Alec Douglas-Home",
+    "Ramsay MacDonald","Stanley Baldwin","Herbert Asquith","Arthur Balfour","Andrew Bonar Law","Henry Campbell-Bannerman"],
+    alt:{ "Alec Douglas-Home":["Douglas-Home","Alec Douglas Home"], "Andrew Bonar Law":["Bonar Law"],
+          "Henry Campbell-Bannerman":["Campbell-Bannerman"], "Herbert Asquith":["Asquith","H H Asquith"] } },
+
+  { q:"Name a London Underground line", a:[
+    "Central","Northern","Piccadilly","Victoria","Jubilee","District","Circle","Bakerloo","Metropolitan","Hammersmith and City",
+    "Waterloo and City","Elizabeth"],
+    alt:{ "Hammersmith and City":["Hammersmith & City"], "Waterloo and City":["Waterloo & City"],
+          "Elizabeth":["Elizabeth Line"] } },
+
+  { q:"Name a Star Wars film", a:[
+    "A New Hope","The Empire Strikes Back","Return of the Jedi","The Force Awakens","The Phantom Menace","Revenge of the Sith","Rogue One","Attack of the Clones","The Last Jedi","The Rise of Skywalker",
+    "Solo","The Clone Wars"],
+    alt:{ "A New Hope":["Star Wars","Episode IV"], "Solo":["Solo A Star Wars Story"],
+          "Rogue One":["Rogue One A Star Wars Story"] } },
+
+  { q:"Name a Beatles album", a:[
+    "Abbey Road","Sgt Peppers Lonely Hearts Club Band","Revolver","The White Album","Let It Be","Rubber Soul","Help","A Hard Days Night","Yellow Submarine","Magical Mystery Tour",
+    "Please Please Me","With the Beatles","Beatles for Sale"],
+    alt:{ "Sgt Peppers Lonely Hearts Club Band":["Sgt Pepper","Sergeant Pepper","Sgt Peppers"],
+          "The White Album":["White Album","The Beatles"] } },
+
+  { q:"Name an Olympian god", a:[
+    "Zeus","Poseidon","Athena","Apollo","Aphrodite","Ares","Hera","Artemis","Hermes","Hephaestus",
+    "Demeter","Dionysus"] },
+
+  { q:"Name a Formula One world champion", a:[
+    "Lewis Hamilton","Michael Schumacher","Ayrton Senna","Max Verstappen","Sebastian Vettel","Fernando Alonso","Nigel Mansell","Niki Lauda","Jackie Stewart","Alain Prost",
+    "Jenson Button","Damon Hill","Kimi Raikkonen","Nelson Piquet","James Hunt","Emerson Fittipaldi","Mika Hakkinen","Graham Hill","Jim Clark","Juan Manuel Fangio",
+    "John Surtees","Jack Brabham","Mario Andretti","Alan Jones","Keke Rosberg","Nico Rosberg","Jody Scheckter","Denny Hulme","Phil Hill","Alberto Ascari",
+    "Giuseppe Farina","Mike Hawthorn","Jochen Rindt"],
+    alt:{ "Kimi Raikkonen":["Raikkonen"], "Mika Hakkinen":["Hakkinen"], "Giuseppe Farina":["Nino Farina","Farina"] } },
+
+  { q:"Name a US state capital", a:[
+    "Sacramento","Austin","Boston","Denver","Nashville","Atlanta","Honolulu","Phoenix","Salt Lake City","Indianapolis",
+    "Columbus","Albany","Richmond","Raleigh","Tallahassee","Springfield","Madison","Des Moines","Lincoln","Topeka",
+    "Oklahoma City","Little Rock","Jackson","Montgomery","Baton Rouge","Santa Fe","Boise","Helena","Cheyenne","Bismarck",
+    "Saint Paul","Jefferson City","Frankfort","Charleston","Columbia","Harrisburg","Trenton","Hartford","Providence","Concord",
+    "Augusta","Montpelier","Dover","Annapolis","Juneau","Carson City","Olympia","Salem","Lansing","Pierre"],
+    alt:{ "Saint Paul":["St Paul"] } }];
 
   /* Six bands by where an answer sits in its list. Everyone reaches for Egypt;
      almost nobody for Comoros; the throw follows that and nothing else. */
@@ -387,15 +480,40 @@
   /* ---------- the flight ---------- */
 
   function buildSky(){
-    var sky = el("sky");
-    // a few soft banks of cloud: without them the plane crosses a blank panel
-    [[8,18,62,17],[34,52,86,22],[58,12,70,15],[76,40,54,14],[20,70,96,20]].forEach(function(c){
+    var sky = el("sky"), far = el("far"), near = el("near");
+    sky.insertBefore(Object.assign(document.createElement("div"), { className:"sun" }), far);
+
+    // two banks of cloud at different depths, plus hills and a few birds
+    [[6,14,64,15],[30,30,92,19],[62,10,72,14],[88,26,58,13],[112,16,80,17],[140,34,66,14]]
+      .forEach(function(c){
+        var n = document.createElement("div");
+        n.className = "cloud";
+        n.style.left = c[0] + "%"; n.style.top = c[1] + "%";
+        n.style.width = c[2] + "px"; n.style.height = c[3] + "px";
+        far.appendChild(n);
+      });
+    [[18,58,86,18],[70,66,104,20],[124,54,78,16]].forEach(function(c){
       var n = document.createElement("div");
       n.className = "cloud";
-      n.style.left = c[0] + "%"; n.style.top = c[1] + "%";
-      n.style.width = c[2] + "px"; n.style.height = c[3] + "px";
-      sky.appendChild(n);
+      n.style.cssText = "left:" + c[0] + "%;top:" + c[1] + "%;width:" + c[2] +
+                        "px;height:" + c[3] + "px;background:rgba(255,255,255,.075)";
+      near.appendChild(n);
     });
+    [[14,120,44],[44,150,58],[78,132,50],[118,160,62]].forEach(function(h){
+      var n = document.createElement("div");
+      n.className = "hill";
+      n.style.left = h[0] + "%"; n.style.width = h[1] + "px"; n.style.height = h[2] + "px";
+      near.appendChild(n);
+    });
+    [[26,22],[31,18],[96,30]].forEach(function(bd){
+      var n = document.createElement("div");
+      n.className = "bird";
+      n.textContent = "\u2053";
+      n.style.left = bd[0] + "%"; n.style.top = bd[1] + "%";
+      n.style.animationDelay = (bd[0] % 7) / 5 + "s";
+      far.appendChild(n);
+    });
+
     REACH.forEach(function(z, i){
       if(i === REACH.length - 1) return;
       var d = document.createElement("div");
@@ -405,13 +523,66 @@
       sky.insertBefore(d, el("trail"));
     });
   }
-  function paintFlight(lift){
-    var x = 3 + Math.min(1, flown / MAX) * 91;
-    el("plane").style.left = "calc(" + x + "% - 15px)";
-    // a good throw rides higher before it settles
-    el("plane").style.bottom = (38 + (lift || 0)) + "%";
-    el("trail").style.width = "calc(" + Math.max(0, x - 3) + "% + 6px)";
+
+  /* ---------- flying it ---------- */
+
+  var shownFlown = 0, flightRaf = null;
+
+  function planeXY(metres){
+    var box = el("sky").getBoundingClientRect();
+    var f = Math.min(1, metres / MAX);
+    return {
+      x: box.width * (0.03 + f * 0.91) - 15,
+      // it climbs as it gets going and eases down again towards the far end
+      y: box.height - 18 - box.height * (0.26 + Math.sin(f * Math.PI) * 0.22) - 15
+    };
   }
+
+  function setPlane(px, py, angle){
+    el("plane").style.transform = "translate(" + px + "px," + py + "px) rotate(" + angle + "deg)";
+  }
+
+  function drawTrail(toMetres){
+    var box = el("sky").getBoundingClientRect();
+    var d = "", step = Math.max(2, MAX / 90);
+    for(var m = 0; m <= toMetres + 0.001; m += step){
+      var p = planeXY(Math.min(m, toMetres));
+      d += (d ? "L" : "M") + (p.x + 15).toFixed(1) + " " + (p.y + 15).toFixed(1) + " ";
+    }
+    var e = planeXY(toMetres);
+    d += "L" + (e.x + 15).toFixed(1) + " " + (e.y + 15).toFixed(1);
+    el("trail-path").setAttribute("d", toMetres > 0 ? d : "");
+  }
+
+  /* Flown along the arc a frame at a time rather than tweened between two
+     points: the plane follows the line it leaves behind, and pitches to
+     whatever way it is actually heading. */
+  function flyTo(metres, ms){
+    if(flightRaf) cancelAnimationFrame(flightRaf);
+    var from = shownFlown, span = metres - from, t0 = null;
+    var dur = ms || (600 + Math.min(700, Math.abs(span) * 4));
+    function frame(now){
+      if(t0 === null) t0 = now;
+      var k = Math.min(1, (now - t0) / dur);
+      var eased = 1 - Math.pow(1 - k, 3);
+      shownFlown = from + span * eased;
+      var p = planeXY(shownFlown);
+      var ahead = planeXY(Math.min(MAX, shownFlown + MAX * 0.02));
+      var angle = Math.atan2(ahead.y - p.y, Math.max(0.001, ahead.x - p.x)) * 180 / Math.PI;
+      // a gentle sway so it never looks pinned in place
+      var sway = Math.sin(now / 620) * (k < 1 ? 1.2 : 2.2);
+      setPlane(p.x, p.y + sway, angle + sway * 1.6);
+      drawTrail(shownFlown);
+      var slide = -(shownFlown / MAX);
+      el("far").style.transform = "translateX(" + (slide * 12) + "%)";
+      el("near").style.transform = "translateX(" + (slide * 26) + "%)";
+      if(k < 1) flightRaf = requestAnimationFrame(frame);
+      else flightRaf = requestAnimationFrame(frame);   // keep swaying once landed
+    }
+    flightRaf = requestAnimationFrame(frame);
+  }
+
+  function paintFlight(){ flyTo(flown); }
 
   /* ---------- a throw ---------- */
 
@@ -420,7 +591,7 @@
     var b = store.best[mode];
     el("best-n").textContent = b ? b + "m" : "\u2014";
     el("reach").textContent = reachFor(flown);
-    paintFlight(0);
+    flyTo(flown);
   }
 
   function showPrompt(){
@@ -506,11 +677,7 @@
     v.classList.remove("flash"); void v.offsetWidth; v.classList.add("flash");
     el("answer").disabled = true;
     el("throw").disabled = true;
-    el("plane").classList.remove("launch"); void el("plane").offsetWidth;
-    el("plane").classList.add("launch");
     paintStatus();
-    paintFlight(Math.min(22, t.pts * 0.22));
-    setTimeout(function(){ paintFlight(0); }, 900);
     advance();
   }
 
