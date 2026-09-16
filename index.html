@@ -28,6 +28,12 @@
      line - the title is what identifies a game anyway. */
   @media (max-height: 760px){
     .game p{display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
+    .game{padding:7px 11px;gap:11px}
+    .menu{gap:6px;padding-top:6px}
+    .art{width:36px;height:36px}
+    .title{font-size:22px}
+    header{padding-bottom:6px}
+    .note{margin-top:8px}
   }
   .game .meta{margin-top:4px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-variant-numeric:tabular-nums}
   .art{flex:none;width:40px;height:40px}
@@ -44,6 +50,25 @@
 </header>
 
 <div class="menu">
+
+  <a class="game" href="./trench.html">
+    <svg class="art" viewBox="0 0 52 52" aria-hidden="true">
+      <rect x="2" y="2" width="48" height="48" rx="4" fill="#12202C"/>
+      <rect x="2" y="2" width="48" height="13" fill="#2A4A63"/>
+      <rect x="2" y="15" width="48" height="12" fill="#1C3446"/>
+      <rect x="2" y="27" width="48" height="12" fill="#12242F"/>
+      <path d="M2 39 H50 V50 H2 Z" fill="#0A141B"/>
+      <path d="M2 50 L14 40 L22 46 L30 38 L40 46 L50 40 V50 Z" fill="#26333F"/>
+      <ellipse cx="30" cy="33" rx="7" ry="4" fill="#E8CF5C"/>
+      <circle cx="27.5" cy="33" r="1.4" fill="#151C24"/>
+      <path d="M36 33 L42 30 V36 Z" fill="#E8894A"/>
+    </svg>
+    <div>
+      <h2>Trench</h2>
+      <p>Seven prompts. The rarer your answer, the deeper you sink.</p>
+      <div class="meta" id="trench-meta"></div>
+    </div>
+  </a>
 
   <a class="game" href="./sudoku.html">
     <svg class="art" viewBox="0 0 52 52" aria-hidden="true">
@@ -178,6 +203,15 @@
     if(b.best) bits.push("Best " + b.best);
     if(b.score) bits.push("Game in progress · " + b.score);
     document.getElementById("blocks-meta").textContent = bits.join("  ·  ");
+  }
+
+  var tr = read("arcade.trench.v1");
+  if(tr){
+    var tb = [];
+    if(tr.best && tr.best.daily) tb.push("Best " + tr.best.daily + "m");
+    else if(tr.best && tr.best.endless) tb.push("Best " + tr.best.endless + "m");
+    if(tr.daily && tr.daily.date) tb.push("Today " + tr.daily.depth + "m");
+    document.getElementById("trench-meta").textContent = tb.join("  \u00B7  ");
   }
 
   var su = read("arcade.sudoku.v1");

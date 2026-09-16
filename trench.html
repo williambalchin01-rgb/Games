@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#151C24">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Arcade">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<link rel="icon" href="./icon-192.png">
+<title>Trench</title>
+<link rel="stylesheet" href="./app.css">
+<style>
+  .statline{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:6px 2px 10px}
+  .depth{font-size:22px;font-weight:200;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  .depth span{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-left:6px}
+
+  .wrap{flex:1;display:flex;gap:12px;padding:6px 0;min-height:0}
+  .main{flex:1;display:flex;flex-direction:column;justify-content:center;gap:12px;min-width:0}
+
+  /* the dive gauge: zones down the side with a marker that sinks as you score */
+  .gauge{
+    width:34px;flex:none;position:relative;border-radius:8px;overflow:hidden;
+    background:linear-gradient(#2A4A63 0%, #1E3A50 14%, #16293a 30%, #101D2A 58%, #0B141D 82%, #070E14 100%);
+    border:1px solid var(--line);
+  }
+  .zone{position:absolute;left:0;right:0;border-top:1px dashed rgba(255,255,255,.10)}
+  .zone b{
+    position:absolute;left:3px;top:2px;font-size:7px;font-weight:400;letter-spacing:.06em;
+    text-transform:uppercase;color:rgba(255,255,255,.30);writing-mode:horizontal-tb;
+  }
+  .sub{
+    position:absolute;left:50%;width:15px;height:15px;margin-left:-7.5px;
+    transition:top .7s cubic-bezier(.3,.7,.3,1);
+  }
+  .sub svg{width:100%;height:100%;display:block}
+
+  .card{
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    padding:14px;display:flex;flex-direction:column;gap:10px;
+  }
+  .qnum{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+  .prompt{font-size:19px;font-weight:300;line-height:1.3;margin:0}
+
+  .timer{height:4px;border-radius:2px;background:var(--line);overflow:hidden}
+  .timer i{display:block;height:100%;background:var(--accent);transition:width .1s linear}
+  .timer[data-low="true"] i{background:#E0574A}
+
+  .entry{display:flex;gap:8px}
+  .entry input{
+    flex:1;min-width:0;background:#1A232C;border:1px solid var(--line);border-radius:8px;
+    color:var(--ink);font:inherit;font-size:16px;padding:11px 12px;
+  }
+  .entry input:focus{outline:none;border-color:var(--accent)}
+  .entry button{
+    flex:none;background:var(--accent);color:var(--ground);border-radius:8px;
+    padding:0 16px;font-size:14px;font-weight:500;
+  }
+  .entry button:disabled{background:var(--line);color:var(--muted)}
+
+  .verdict{min-height:64px;display:flex;flex-direction:column;gap:5px;justify-content:center}
+  .verdict .tier{font-size:17px;font-weight:500}
+  .verdict .said{font-size:13px;color:var(--muted)}
+  .verdict[data-tone="miss"] .tier{color:#E0574A}
+  .verdict .pts{font-variant-numeric:tabular-nums}
+  .flash{animation:flash .5s ease}
+  @keyframes flash{0%{transform:translateY(6px);opacity:0}100%{transform:none;opacity:1}}
+
+  .recap{display:flex;flex-direction:column;gap:6px;margin-top:10px;text-align:left}
+  .rec{display:flex;gap:9px;align-items:baseline;font-size:12.5px;border-top:1px solid var(--line);padding-top:6px}
+  .rec .n{color:var(--muted);font-variant-numeric:tabular-nums;width:14px;flex:none}
+  .rec .mine{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .rec .p{font-variant-numeric:tabular-nums;color:var(--accent)}
+  .rec[data-tone="miss"] .p{color:#E0574A}
+  .rec .best{display:block;font-size:11px;color:var(--muted)}
+
+  .howto{margin:0;text-align:center;font-size:12px;color:var(--muted)}
+  @media (max-height: 700px){ .howto{display:none} }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="./index.html">&larr; Arcade</a>
+  <div class="eyebrow" id="zone-name">The sunlight zone</div>
+</header>
+
+<div class="chiprow" id="modes"></div>
+
+<div class="statline">
+  <span class="depth"><span id="depth-n">0</span><span>metres down</span></span>
+  <span class="eyebrow">Best <span id="best-n">&mdash;</span></span>
+</div>
+
+<div class="wrap">
+  <div class="main">
+    <div class="card" id="play">
+      <div class="qnum" id="qnum">Prompt 1 of 7</div>
+      <p class="prompt" id="prompt">&nbsp;</p>
+      <div class="timer" id="timer"><i id="timer-bar"></i></div>
+      <div class="entry">
+        <input id="answer" type="text" autocomplete="off" autocorrect="off" autocapitalize="off"
+               spellcheck="false" enterkeyhint="go" placeholder="Your answer">
+        <button id="dive">Dive</button>
+      </div>
+      <div class="verdict" id="verdict"></div>
+    </div>
+    <p class="howto">The rarer the answer, the deeper you sink. Fifteen seconds each.</p>
+  </div>
+  <div class="gauge" id="gauge">
+    <div class="sub" id="sub">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <ellipse cx="12" cy="12" rx="9" ry="5" fill="#E8CF5C"/>
+        <circle cx="9" cy="12" r="1.8" fill="#151C24"/>
+        <path d="M17 12 L23 8 V16 Z" fill="#E8894A"/>
+      </svg>
+    </div>
+  </div>
+</div>
+
+<div class="win" id="over" hidden>
+  <h2 id="over-title">Surfaced</h2>
+  <p id="over-text"></p>
+  <div class="recap" id="recap"></div>
+  <div class="controls"><button class="ctrl" id="again">Dive again</button></div>
+</div>
+
+<p class="note" id="note" hidden>Storage is blocked here, so your dives won't be saved.</p>
+
+<script>
+(function(){
+  "use strict";
+
+  var KEY = "arcade.trench.v1";
+  var PROMPTS = 7, SECONDS = 15;
+
+  /* Every category is a CLOSED set, which is the whole trick. A rarity game
+     normally needs a crowd to tell it which answers are obscure; with a bounded
+     category the list can be complete, so no valid answer is ever turned away,
+     and rarity becomes "how well known is this member", which is one ordering
+     per category rather than a guess per answer.
+
+     Answers are stored best-known first. The tier comes from position in the
+     list, so the only judgement is the running order - being one place out
+     changes nothing. */
+  var PACKS = [
+  { q:"Name a country in Africa", a:[
+    "Egypt","South Africa","Nigeria","Kenya","Morocco","Ethiopia","Ghana","Algeria","Tunisia","Libya",
+    "Zimbabwe","Tanzania","Uganda","Sudan","Somalia","Senegal","Cameroon","Angola","Mozambique","Zambia",
+    "Botswana","Namibia","Rwanda","Ivory Coast","Mali","Madagascar","Democratic Republic of the Congo","Republic of the Congo","Niger","Chad",
+    "Burkina Faso","Malawi","Mauritius","Gabon","Benin","Liberia","Sierra Leone","Gambia","Togo","Guinea",
+    "Mauritania","South Sudan","Eritrea","Djibouti","Burundi","Lesotho","Eswatini","Seychelles","Cape Verde","Equatorial Guinea",
+    "Guinea-Bissau","Comoros","Sao Tome and Principe","Central African Republic"],
+    alt:{ "Ivory Coast":["Cote d'Ivoire"], "Democratic Republic of the Congo":["DRC","DR Congo","Congo-Kinshasa","Zaire"],
+          "Republic of the Congo":["Congo","Congo-Brazzaville"], "Eswatini":["Swaziland"],
+          "Cape Verde":["Cabo Verde"], "Sao Tome and Principe":["Sao Tome"], "Central African Republic":["CAR"] } },
+
+  { q:"Name a US state", a:[
+    "California","Texas","Florida","New York","Hawaii","Alaska","Nevada","Arizona","Colorado","Washington",
+    "Oregon","Illinois","Ohio","Michigan","Georgia","Virginia","Massachusetts","Pennsylvania","New Jersey","North Carolina",
+    "Louisiana","Tennessee","Missouri","Minnesota","Wisconsin","Indiana","Maryland","South Carolina","Alabama","Kentucky",
+    "Oklahoma","Utah","Iowa","Kansas","Arkansas","Mississippi","Connecticut","New Mexico","Nebraska","Idaho",
+    "Maine","Montana","West Virginia","New Hampshire","Rhode Island","Delaware","South Dakota","North Dakota","Wyoming","Vermont"] },
+
+  { q:"Name a member state of the European Union", a:[
+    "France","Germany","Italy","Spain","Netherlands","Belgium","Portugal","Greece","Ireland","Austria",
+    "Poland","Sweden","Denmark","Finland","Czechia","Hungary","Romania","Croatia","Bulgaria","Slovakia",
+    "Slovenia","Lithuania","Latvia","Estonia","Cyprus","Luxembourg","Malta"],
+    alt:{ "Czechia":["Czech Republic"], "Netherlands":["Holland"] } },
+
+  { q:"Name a letter of the Greek alphabet", a:[
+    "Alpha","Beta","Gamma","Delta","Omega","Sigma","Pi","Theta","Lambda","Epsilon",
+    "Zeta","Phi","Mu","Kappa","Omicron","Tau","Eta","Rho","Chi","Psi",
+    "Nu","Iota","Xi","Upsilon"] },
+
+  { q:"Name a country in South America", a:[
+    "Brazil","Argentina","Chile","Peru","Colombia","Venezuela","Ecuador","Bolivia","Uruguay","Paraguay",
+    "Guyana","Suriname"] },
+
+  { q:"Name a Canadian province or territory", a:[
+    "Ontario","Quebec","British Columbia","Alberta","Nova Scotia","Manitoba","Saskatchewan","New Brunswick","Newfoundland and Labrador","Yukon",
+    "Prince Edward Island","Northwest Territories","Nunavut"],
+    alt:{ "Newfoundland and Labrador":["Newfoundland"], "Prince Edward Island":["PEI"] } },
+
+  { q:"Name a sign of the zodiac", a:[
+    "Leo","Scorpio","Aries","Gemini","Taurus","Cancer","Virgo","Libra","Pisces","Aquarius",
+    "Sagittarius","Capricorn"] },
+
+  { q:"Name a country that borders Germany", a:[
+    "France","Netherlands","Belgium","Poland","Austria","Switzerland","Denmark","Czechia","Luxembourg"],
+    alt:{ "Czechia":["Czech Republic"], "Netherlands":["Holland"] } },
+
+  { q:"Name a country that borders Russia", a:[
+    "China","Ukraine","Finland","Norway","Poland","Belarus","Kazakhstan","Mongolia","North Korea","Estonia",
+    "Latvia","Lithuania","Georgia","Azerbaijan"] },
+
+  { q:"Name one of the first twenty chemical elements", a:[
+    "Hydrogen","Helium","Carbon","Oxygen","Nitrogen","Sodium","Calcium","Neon","Aluminium","Silicon",
+    "Sulfur","Chlorine","Magnesium","Potassium","Lithium","Phosphorus","Argon","Boron","Fluorine","Beryllium"],
+    alt:{ "Aluminium":["Aluminum"], "Sulfur":["Sulphur"] } },
+
+  { q:"Name one of the twenty standard amino acids", a:[
+    "Glycine","Alanine","Lysine","Cysteine","Tryptophan","Tyrosine","Serine","Leucine","Valine","Proline",
+    "Arginine","Histidine","Glutamine","Asparagine","Methionine","Threonine","Phenylalanine","Isoleucine","Aspartic acid","Glutamic acid"],
+    alt:{ "Aspartic acid":["Aspartate"], "Glutamic acid":["Glutamate"] } },
+
+  { q:"Name a sovereign country in Oceania", a:[
+    "Australia","New Zealand","Fiji","Papua New Guinea","Samoa","Tonga","Vanuatu","Solomon Islands","Micronesia","Palau",
+    "Kiribati","Nauru","Tuvalu","Marshall Islands"],
+    alt:{ "Micronesia":["Federated States of Micronesia","FSM"] } },
+
+  { q:"Name a sovereign country in the Caribbean", a:[
+    "Cuba","Jamaica","Haiti","Dominican Republic","Bahamas","Barbados","Trinidad and Tobago","Grenada","Saint Lucia","Antigua and Barbuda",
+    "Dominica","Saint Vincent and the Grenadines","Saint Kitts and Nevis"],
+    alt:{ "Trinidad and Tobago":["Trinidad"], "Antigua and Barbuda":["Antigua"],
+          "Saint Vincent and the Grenadines":["St Vincent"], "Saint Kitts and Nevis":["St Kitts"],
+          "Saint Lucia":["St Lucia"] } },
+
+  { q:"Name one of the ten main cloud types", a:[
+    "Cumulus","Cirrus","Stratus","Cumulonimbus","Nimbostratus","Altocumulus","Stratocumulus","Altostratus","Cirrostratus","Cirrocumulus"] },
+
+  { q:"Name an Australian state or territory", a:[
+    "New South Wales","Victoria","Queensland","Western Australia","Tasmania","South Australia","Northern Territory","Australian Capital Territory"],
+    alt:{ "Australian Capital Territory":["ACT"], "New South Wales":["NSW"], "Northern Territory":["NT"],
+          "Western Australia":["WA"], "South Australia":["SA"] } },
+
+  { q:"Name a property on a UK Monopoly board", a:[
+    "Mayfair","Park Lane","Old Kent Road","Bond Street","Oxford Street","Regent Street","Piccadilly","Trafalgar Square","Leicester Square","Whitechapel Road",
+    "The Angel Islington","Pall Mall","Strand","Fleet Street","Bow Street","Marlborough Street","Vine Street","Northumberland Avenue","Coventry Street","Euston Road",
+    "Whitehall","Marylebone Station","King's Cross Station","Liverpool Street Station","Fenchurch Street Station","Electric Company","Water Works"],
+    alt:{ "The Angel Islington":["Angel Islington","The Angel"], "King's Cross Station":["Kings Cross"],
+          "Marylebone Station":["Marylebone"], "Liverpool Street Station":["Liverpool Street"],
+          "Fenchurch Street Station":["Fenchurch Street"] } },
+
+  { q:"Name a faction from Warhammer 40,000", a:[
+    "Space Marines","Orks","Tyranids","Necrons","Eldar","Tau","Chaos Space Marines","Imperial Guard","Adeptus Mechanicus","Dark Eldar",
+    "Sisters of Battle","Grey Knights","Chaos Daemons","Genestealer Cults","Death Guard","Thousand Sons","World Eaters","Imperial Knights","Custodes","Harlequins",
+    "Leagues of Votann"],
+    alt:{ "Eldar":["Aeldari","Craftworlds","Craftworld Eldar"], "Dark Eldar":["Drukhari"],
+          "Tau":["T'au","Tau Empire"], "Imperial Guard":["Astra Militarum"],
+          "Sisters of Battle":["Adepta Sororitas"], "Custodes":["Adeptus Custodes"],
+          "Space Marines":["Adeptus Astartes"], "Leagues of Votann":["Votann","Squats"] } },
+
+  { q:"Name a planet or IAU dwarf planet in the solar system", a:[
+    "Earth","Mars","Jupiter","Saturn","Venus","Mercury","Neptune","Uranus","Pluto","Ceres",
+    "Eris","Haumea","Makemake"] }
+  ];
+
+  /* Six bands by where an answer sits in its list. Everyone knows Egypt; almost
+     nobody reaches for Comoros; the points follow that and nothing else. */
+  var TIERS = [
+    { at:0.12, name:"Surface",  pts:4 },
+    { at:0.30, name:"Shallows", pts:8 },
+    { at:0.50, name:"Reef",     pts:16 },
+    { at:0.70, name:"Deep",     pts:32 },
+    { at:0.88, name:"Abyss",    pts:64 },
+    { at:1.01, name:"Trench",   pts:100 }
+  ];
+  // 10 metres a point, so a perfect dive is seven hundred points and seven
+  // kilometres down - about the floor of a hadal trench
+  var PER_POINT = 10;
+  var ZONES = [
+    { to:200,  name:"the sunlight zone" },
+    { to:1000, name:"the twilight zone" },
+    { to:4000, name:"the midnight zone" },
+    { to:6000, name:"the abyssal plain" },
+    { to:99999, name:"the hadal trench" }
+  ];
+
+  /* Spread across the list rather than against its length, so the last name on
+     any list is worth the most. Dividing by n left a short category - the eight
+     Australian states - unable to award the deepest band at all, however obscure
+     the answer given. */
+  function tierFor(rank, n){
+    var f = n > 1 ? rank / (n - 1) : 1;
+    for(var i = 0; i < TIERS.length; i++) if(f < TIERS[i].at) return TIERS[i];
+    return TIERS[TIERS.length - 1];
+  }
+  function zoneFor(m){
+    for(var i = 0; i < ZONES.length; i++) if(m < ZONES[i].to) return ZONES[i].name;
+    return ZONES[ZONES.length - 1].name;
+  }
+
+  /* Matching has to be forgiving or a closed list feels like a quiz that will
+     not listen: case, accents, punctuation and a single typo are all let go. */
+  function norm(s){
+    return String(s || "").toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/&/g, " and ")
+      .replace(/[^a-z0-9 ]/g, "")
+      .replace(/\s+/g, " ").trim()
+      .replace(/^the /, "");
+  }
+  function within1(a, b){
+    if(Math.abs(a.length - b.length) > 1) return false;
+    var i = 0, j = 0, slips = 0;
+    while(i < a.length && j < b.length){
+      if(a[i] === b[j]){ i++; j++; continue; }
+      if(++slips > 1) return false;
+      if(a.length > b.length) i++;
+      else if(b.length > a.length) j++;
+      else { i++; j++; }
+    }
+    return slips + (a.length - i) + (b.length - j) <= 1;
+  }
+
+  // every spelling that counts, mapped to the answer it stands for
+  function keyIndex(pack){
+    if(pack.__idx) return pack.__idx;
+    var idx = [];
+    pack.a.forEach(function(ans, rank){
+      idx.push({ k: norm(ans), rank: rank });
+      ((pack.alt || {})[ans] || []).forEach(function(v){ idx.push({ k: norm(v), rank: rank }); });
+    });
+    pack.__idx = idx;
+    return idx;
+  }
+  function lookup(pack, said){
+    var s = norm(said);
+    if(!s) return -1;
+    var idx = keyIndex(pack), i;
+    for(i = 0; i < idx.length; i++) if(idx[i].k === s) return idx[i].rank;
+    for(i = 0; i < idx.length; i++)
+      if(s.length >= 5 && within1(s, idx[i].k)) return idx[i].rank;
+    return -1;
+  }
+
+  function mulberry(seed){
+    var t = seed >>> 0;
+    return function(){
+      t = (t + 0x6D2B79F5) >>> 0;
+      var x = Math.imul(t ^ (t >>> 15), 1 | t);
+      x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+      return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function pickPrompts(rng){
+    var pool = PACKS.map(function(_, i){ return i; });
+    for(var i = pool.length - 1; i > 0; i--){
+      var j = Math.floor(rng() * (i + 1)), t = pool[i];
+      pool[i] = pool[j]; pool[j] = t;
+    }
+    return pool.slice(0, PROMPTS);
+  }
+  function today(){
+    var d = new Date();
+    return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0") +
+           "-" + String(d.getUTCDate()).padStart(2, "0");
+  }
+  function daySeed(s){
+    var h = 2166136261;
+    for(var i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+
+  /* ---------- state ---------- */
+
+  function el(id){ return document.getElementById(id); }
+  var mode = "daily", order = [], at = 0, depth = 0, said = [], running = false;
+  var left = SECONDS, ticker = null, store = { best:{}, daily:null, dive:null }, storable = true;
+
+  var MODES = [{ id:"daily", label:"Daily dive" }, { id:"endless", label:"Endless" }];
+
+  function save(){
+    if(!storable) return;
+    try{ localStorage.setItem(KEY, JSON.stringify(store)); }
+    catch(e){ storable = false; el("note").hidden = false; }
+  }
+  function load(){
+    try{ var raw = localStorage.getItem(KEY); return raw ? JSON.parse(raw) : null; }
+    catch(e){ storable = false; el("note").hidden = false; return null; }
+  }
+
+  /* ---------- the gauge ---------- */
+
+  function buildGauge(){
+    var g = el("gauge"), max = PROMPTS * 100 * PER_POINT;
+    ZONES.forEach(function(z, i){
+      if(i === ZONES.length - 1) return;
+      var d = document.createElement("div");
+      d.className = "zone";
+      d.style.top = Math.min(98, z.to / max * 100) + "%";
+      g.insertBefore(d, el("sub"));
+    });
+  }
+  function paintGauge(){
+    var max = PROMPTS * 100 * PER_POINT;
+    el("sub").style.top = "calc(" + Math.min(96, depth / max * 100) + "% - 2px)";
+  }
+
+  /* ---------- a dive ---------- */
+
+  function paintStatus(){
+    el("depth-n").textContent = depth;
+    var b = store.best[mode];
+    el("best-n").textContent = b ? b + "m" : "\u2014";
+    el("zone-name").textContent = zoneFor(depth).replace(/^the /, "The ");
+    paintGauge();
+  }
+
+  function showPrompt(){
+    var pack = PACKS[order[at]];
+    el("qnum").textContent = "Prompt " + (at + 1) + " of " + PROMPTS;
+    el("prompt").textContent = pack.q;
+    el("answer").value = "";
+    el("answer").disabled = false;
+    el("dive").disabled = false;
+    left = SECONDS;
+    paintTimer();
+    startClock();
+    // a phone keyboard popping up unasked is worse than one tap, so only take
+    // focus when there is a real keyboard to take it with
+    if(!("ontouchstart" in window)) el("answer").focus();
+  }
+
+  function paintTimer(){
+    el("timer-bar").style.width = Math.max(0, left / SECONDS * 100) + "%";
+    el("timer").dataset.low = left <= 4;
+  }
+  function startClock(){
+    stopClock();
+    running = true;
+    var last = Date.now();
+    ticker = setInterval(function(){
+      if(document.hidden) { last = Date.now(); return; }
+      var now = Date.now();
+      left -= (now - last) / 1000;
+      last = now;
+      paintTimer();
+      if(left <= 0){ left = 0; paintTimer(); answer(""); }
+    }, 100);
+  }
+  function stopClock(){ running = false; if(ticker){ clearInterval(ticker); ticker = null; } }
+
+  function answer(text){
+    if(!running && text !== "") return;
+    stopClock();
+    var pack = PACKS[order[at]];
+    var rank = lookup(pack, text);
+    var v = el("verdict");
+    var rec;
+    if(rank < 0){
+      rec = { q:pack.q, said:text, pts:0, tier:text.trim() ? "Not on the list" : "Out of time",
+              best:pack.a[pack.a.length - 1] };
+      v.dataset.tone = "miss";
+      v.innerHTML = '<div class="tier">' + rec.tier + "</div>" +
+        '<div class="said">' + (text.trim() ? "Nothing doing. " : "") +
+        "The rarest here was <b>" + pack.a[pack.a.length - 1] + "</b>.</div>";
+    } else {
+      var t = tierFor(rank, pack.a.length);
+      depth += t.pts * PER_POINT;
+      rec = { q:pack.q, said:pack.a[rank], pts:t.pts, tier:t.name, best:pack.a[pack.a.length - 1] };
+      v.dataset.tone = "hit";
+      v.innerHTML = '<div class="tier">' + t.name + ' <span class="pts">+' + (t.pts * PER_POINT) + "m</span></div>" +
+        '<div class="said">' + pack.a[rank] + " \u00b7 " + (rank + 1) + " of " + pack.a.length + " by fame</div>";
+    }
+    v.classList.remove("flash"); void v.offsetWidth; v.classList.add("flash");
+    said.push(rec);
+    el("answer").disabled = true;
+    el("dive").disabled = true;
+    paintStatus();
+    at++;
+    saveDive();
+    setTimeout(function(){
+      if(at >= PROMPTS) finish(); else showPrompt();
+    }, 1500);
+  }
+
+  function finish(){
+    stopClock();
+    var zone = zoneFor(depth);
+    el("over-title").textContent = depth >= 6000 ? "The trench floor" : "Surfaced";
+    el("over-text").textContent = depth + " metres \u00b7 " + zone +
+      (depth > (store.best[mode] || 0) ? " \u00b7 your deepest yet" : "");
+    if(depth > (store.best[mode] || 0)) store.best[mode] = depth;
+    if(mode === "daily") store.daily = { date: today(), depth: depth, said: said };
+    store.dive = null;
+
+    var r = el("recap");
+    r.innerHTML = "";
+    said.forEach(function(s, i){
+      var row = document.createElement("div");
+      row.className = "rec";
+      row.dataset.tone = s.pts ? "hit" : "miss";
+      row.innerHTML = '<span class="n">' + (i + 1) + "</span>" +
+        '<span class="mine">' + (s.said || "\u2014") +
+        '<span class="best">' + s.q.replace(/^Name /, "") + " \u00b7 rarest: " + s.best + "</span></span>" +
+        '<span class="p">' + (s.pts ? "+" + s.pts * PER_POINT + "m" : "0") + "</span>";
+      r.appendChild(row);
+    });
+
+    el("play").hidden = true;
+    el("over").hidden = false;
+    el("again").textContent = mode === "daily" ? "Try the endless dive" : "Dive again";
+    paintStatus();
+    save();
+  }
+
+  // written down between prompts, never inside one: a half-answered prompt with
+  // four seconds left is not something worth restoring
+  function saveDive(){
+    if(mode === "daily" && at >= PROMPTS) return;
+    store.dive = at > 0 && at < PROMPTS
+      ? { mode:mode, order:order, at:at, depth:depth, said:said, date:today() }
+      : null;
+    save();
+  }
+
+  function start(which){
+    mode = which;
+    syncChips();
+    if(mode === "daily" && store.daily && store.daily.date === today()){
+      // one dive a day is the point of a daily, so show what it came to
+      order = pickPrompts(mulberry(daySeed(today())));
+      depth = store.daily.depth;
+      said = store.daily.said || [];
+      at = PROMPTS;
+      finish();
+      el("over-text").textContent = depth + " metres \u00b7 " + zoneFor(depth) +
+        " \u00b7 today's dive is done";
+      return;
+    }
+    order = mode === "daily" ? pickPrompts(mulberry(daySeed(today())))
+                             : pickPrompts(mulberry((Date.now() ^ (Math.random() * 4294967295)) >>> 0));
+    at = 0; depth = 0; said = [];
+    el("play").hidden = false;
+    el("over").hidden = true;
+    paintStatus();
+    showPrompt();
+  }
+
+  function resume(d){
+    mode = d.mode;
+    syncChips();
+    order = d.order; at = d.at; depth = d.depth; said = d.said || [];
+    el("play").hidden = false;
+    el("over").hidden = true;
+    paintStatus();
+    showPrompt();
+  }
+
+  /* ---------- chrome ---------- */
+
+  var chiprow = el("modes");
+  MODES.forEach(function(m){
+    var b = document.createElement("button");
+    b.className = "chip";
+    b.textContent = m.label;
+    b.addEventListener("click", function(){ start(m.id); });
+    chiprow.appendChild(b);
+  });
+  function syncChips(){
+    for(var i = 0; i < chiprow.children.length; i++)
+      chiprow.children[i].setAttribute("aria-pressed", MODES[i].id === mode);
+  }
+
+  function submit(){
+    if(!running) return;
+    answer(el("answer").value);
+  }
+  el("dive").addEventListener("click", submit);
+  el("answer").addEventListener("keydown", function(e){
+    if(e.key === "Enter"){ e.preventDefault(); submit(); }
+  });
+  el("again").addEventListener("click", function(){
+    start(mode === "daily" ? "endless" : "endless");
+  });
+
+  window.addEventListener("pagehide", saveDive);
+  document.addEventListener("visibilitychange", function(){ if(document.hidden) saveDive(); });
+
+  buildGauge();
+  var saved = load();
+  if(saved){ store = { best: saved.best || {}, daily: saved.daily || null, dive: saved.dive || null }; }
+  if(store.dive && store.dive.order && store.dive.at > 0 && store.dive.at < PROMPTS &&
+     (store.dive.mode !== "daily" || store.dive.date === today())) resume(store.dive);
+  else start("daily");
+
+  if("serviceWorker" in navigator){
+    window.addEventListener("load", function(){
+      navigator.serviceWorker.register("./sw.js").catch(function(){});
+    });
+  }
+})();
+</script>
+</body>
+</html>
