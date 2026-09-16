@@ -242,6 +242,23 @@
   // speed difference alone. Once the ball is loose defenders aim at where he is
   // heading instead, which is how anyone actually runs someone down.
   var PURSUIT_LEAD = 0.45; // seconds ahead of the carrier they aim
+
+  /* A ball carrier used to steer sideways at 8.4 yards a second while still
+     running forward at 6, so sliding across the field moved him at 10.3 - faster
+     than the 8.6 anyone chasing him can manage. No pursuit logic can catch a man
+     who is simply quicker, which is why wagging side to side beat running.
+
+     He now has one speed and spends it in whichever direction he likes: going
+     sideways is ground not gained. Sideways speed also has to be built up and
+     turned round, so a cut costs a moment rather than being free. One good cut
+     still beats running straight; wagging just stops him moving upfield. */
+  var RUN_SPEED = 6.4;     // the carrier's top speed, whatever direction he uses it in
+  var LAT_ACCEL = 24;      // yards per second per second to build or reverse a cut
+  var COMMIT_YD = 1.6;     // how far off line before he is running flat out sideways
+  // What going sideways costs in ground. At 1 a runner at full lateral speed
+  // makes no progress at all, which turned steering into a pure loss and made
+  // standing still and running straight the only sensible play.
+  var SIDE_COST = 0.35;
   var ZONE_REACH = 9;      // how far a zone defender will stray from his patch
   var HIST = 40;
   var DRIVES = 8;          // four each, alternating
@@ -407,8 +424,8 @@
       var man, lag = d.lag;
       if(play.phase === "carry" && play.carrier){
         var c = play.carrier;
-        var aimX = clamp(c.x + (c.vx || 0) * PURSUIT_LEAD, 0, FIELD_W);
-        var aimY = c.y + (c.vy || SPD.carry) * PURSUIT_LEAD;
+        var aimX = clamp(c.x + (c.svx || 0) * PURSUIT_LEAD, 0, FIELD_W);
+        var aimY = c.y + (c.svy === undefined ? RUN_SPEED : c.svy) * PURSUIT_LEAD;
         var pd = dist(d.x, d.y, aimX, aimY);
         if(pd > 0.01){
           var ps = SPD.pursue * dt;
@@ -493,18 +510,26 @@
       }
     }
 
-    // ball carrier: runs upfield, steered sideways by the player
+    // ball carrier: one speed, spent on going forward or going sideways
     if(play.phase === "carry"){
       var c = play.carrier;
       var px = c.x, py = c.y;
-      if(play.steerX !== null){
-        var dx = play.steerX - c.x;
-        var lat = clamp(dx, -SPD.rec * dt * 1.1, SPD.rec * dt * 1.1);
-        c.x = clamp(c.x + lat, 0.8, FIELD_W - 0.8);
-      }
-      c.y += SPD.carry * dt;
+      var want = 0;
+      if(play.steerX !== null) want = clamp((play.steerX - c.x) / COMMIT_YD, -1, 1);
+      var targetVx = want * RUN_SPEED;
+      var step = LAT_ACCEL * dt;
+      c.lvx = (c.lvx || 0) + clamp(targetVx - (c.lvx || 0), -step, step);
+      // whatever is left of the budget after going sideways goes upfield
+      var sideways = Math.abs(c.lvx);
+      var forward = RUN_SPEED * Math.max(0, 1 - SIDE_COST * sideways / RUN_SPEED);
+      c.x = clamp(c.x + c.lvx * dt, 0.8, FIELD_W - 0.8);
+      c.y += forward * dt;
       c.vx = (c.x - px) / dt;
       c.vy = (c.y - py) / dt;
+      // a smoothed heading for anyone chasing: leading off the raw frame-by-frame
+      // velocity let a wag whip their aim across the field and back
+      c.svx = (c.svx === undefined ? c.vx : c.svx * 0.86 + c.vx * 0.14);
+      c.svy = (c.svy === undefined ? c.vy : c.svy * 0.86 + c.vy * 0.14);
 
       if(c.y >= FIELD_L){ endPlay(st, play, "touchdown", FIELD_L); return; }
       if(c.x <= 0.8 || c.x >= FIELD_W - 0.8){
