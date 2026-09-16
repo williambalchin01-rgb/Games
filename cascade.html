@@ -25,25 +25,43 @@
     display:flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:20px;
     padding:5px 11px 5px 6px;font-size:13px;font-variant-numeric:tabular-nums;
   }
-  .goal svg{width:20px;height:20px;display:block}
+  .goal svg{width:21px;height:21px;display:block;filter:drop-shadow(0 1px 1px rgba(0,0,0,.5))}
   .goal[data-done="true"]{border-color:var(--accent);color:var(--accent)}
   /* swap the count for a tick: the number is collapsed rather than removed so
      the chip keeps its width, and the tick sets its own size back */
   .goal[data-done="true"] .n{font-size:0}
   .goal[data-done="true"] .n::after{content:"\2713";font-size:14px;line-height:1}
 
-  .wrap{flex:1;display:flex;flex-direction:column;justify-content:center;gap:12px;padding:10px 0}
+  .wrap{
+    flex:1;display:flex;flex-direction:column;justify-content:center;gap:12px;padding:10px 0;
+    position:relative;
+  }
+  /* a soft pool of light behind the board, so the page is not a flat slab */
+  .wrap::before{
+    content:"";position:absolute;inset:-10% -20%;pointer-events:none;
+    background:radial-gradient(52% 40% at 50% 50%, rgba(79,168,139,.09), transparent 70%);
+  }
 
   /* Tiles are absolutely placed and moved with transforms, so a fall is one
      transition rather than a redraw. Percentages in a translate are of the
      tile's own size, which keeps the whole thing resolution-independent. */
   .board{
     position:relative;width:min(100%, 48vh);aspect-ratio:1;margin:0 auto;
-    touch-action:none;overflow:hidden;border-radius:var(--radius);
-    /* a panel behind the pieces, so the board reads as somewhere to play
-       rather than shapes floating on the page */
-    background:var(--surface);border:1px solid var(--line);
+    touch-action:none;overflow:hidden;border-radius:14px;
+    /* a lit panel rather than a flat one: the pieces sit on something */
+    background:
+      radial-gradient(120% 90% at 50% 0%, #26333F 0%, #1B242D 55%, #161E26 100%);
+    border:1px solid #303E4B;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.05), 0 10px 30px rgba(0,0,0,.35);
   }
+  /* the squares of the board, so a piece has somewhere to be rather than
+     floating in the dark */
+  .sq{
+    position:absolute;top:0;left:0;width:12.5%;height:12.5%;padding:1.5%;
+    pointer-events:none;
+  }
+  .sq i{display:block;width:100%;height:100%;border-radius:5px;background:rgba(255,255,255,.028)}
+  .sq[data-alt="1"] i{background:rgba(255,255,255,.055)}
   .tile{
     position:absolute;top:0;left:0;width:12.5%;height:12.5%;padding:2.5%;
     transition:transform .19s cubic-bezier(.3,.7,.4,1);will-change:transform;
@@ -53,10 +71,15 @@
     width:100%;height:100%;position:relative;
     transition:transform .13s ease, opacity .13s ease;
   }
-  .face svg{width:100%;height:100%;display:block;transform:scale(1.13)}
+  .face svg{
+    width:100%;height:100%;display:block;transform:scale(1.13);
+    filter:drop-shadow(0 2px 2px rgba(0,0,0,.45));
+  }
+  .defs{position:absolute;width:0;height:0;overflow:hidden}
   .tile[data-held="true"] .face{transform:scale(1.16)}
   .tile[data-hint="true"] .face{animation:nudge 1.1s ease-in-out infinite}
-  .tile.clearing .face{transform:scale(1.35);opacity:0}
+  .tile.clearing{z-index:3}
+  .tile.clearing .face{transform:scale(1.45) rotate(14deg);opacity:0}
   .tile.wrong{animation:wrong .26s ease}
   @keyframes nudge{0%,70%,100%{transform:scale(1)}82%{transform:scale(1.14)}}
   @keyframes wrong{0%,100%{transform:translate(var(--tx),var(--ty))}
@@ -67,7 +90,64 @@
   .rainbow{
     width:100%;height:100%;border-radius:50%;
     background:conic-gradient(#E0574A,#E8894A,#E8CF5C,#8FCB52,#4A86D1,#A470D0,#E0574A);
-    box-shadow:inset 0 0 0 2px rgba(255,255,255,.85);
+    box-shadow:inset 0 0 0 2px rgba(255,255,255,.85), 0 2px 3px rgba(0,0,0,.5);
+    animation:spin 5s linear infinite;
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* ---- the effects layer: everything here is decoration and is removed
+     again as soon as its animation is done ---- */
+  .fx{position:absolute;pointer-events:none;top:0;left:0}
+
+  .burst{
+    width:12.5%;height:12.5%;border-radius:50%;
+    box-shadow:0 0 0 2px var(--c) inset;
+    animation:burst .42s cubic-bezier(.2,.8,.4,1) forwards;
+  }
+  @keyframes burst{
+    0%{transform:translate(var(--tx),var(--ty)) scale(.5);opacity:.95}
+    100%{transform:translate(var(--tx),var(--ty)) scale(2.1);opacity:0}
+  }
+
+  .beam{
+    background:linear-gradient(var(--dir), transparent, var(--c) 18%, #fff 50%, var(--c) 82%, transparent);
+    animation:beam .38s ease-out forwards;border-radius:3px;
+  }
+  @keyframes beam{0%{opacity:0;filter:brightness(1.6)}18%{opacity:.95}100%{opacity:0}}
+
+  .shock{
+    width:12.5%;height:12.5%;border-radius:50%;
+    background:radial-gradient(circle, #fff 0%, var(--c) 40%, transparent 70%);
+    animation:shock .48s ease-out forwards;
+  }
+  @keyframes shock{
+    0%{transform:translate(var(--tx),var(--ty)) scale(.4);opacity:1}
+    100%{transform:translate(var(--tx),var(--ty)) scale(3.4);opacity:0}
+  }
+
+  /* the flyer actually crosses the board, which is the whole point of it */
+  .plane{
+    width:12.5%;height:12.5%;
+    transition:transform var(--fly) cubic-bezier(.4,0,.5,1);
+    z-index:4;
+  }
+  .plane svg{width:100%;height:100%;display:block;filter:drop-shadow(0 2px 3px rgba(0,0,0,.6))}
+  .plane .rotor{transform-origin:12px 12px;animation:spin .22s linear infinite}
+
+  /* sized to a cell like the other effects, because a percentage translate is
+     of the element's own box - a bare text node would land nowhere near the
+     square it belongs to */
+  .pop{
+    width:12.5%;height:12.5%;display:flex;align-items:center;justify-content:center;
+    font-size:15px;font-weight:600;font-variant-numeric:tabular-nums;
+    color:#F4F7F9;text-shadow:0 2px 6px rgba(0,0,0,.85);white-space:nowrap;
+    animation:pop 1s cubic-bezier(.2,.8,.3,1) forwards;
+  }
+  .pop b{color:var(--sel);margin-left:5px}
+  @keyframes pop{
+    0%{transform:translate(var(--tx),var(--ty)) scale(.7);opacity:0}
+    18%{transform:translate(var(--tx),calc(var(--ty) - 4px)) scale(1.1);opacity:1}
+    100%{transform:translate(var(--tx),calc(var(--ty) - 34px)) scale(1);opacity:0}
   }
 
   .toast{
@@ -95,7 +175,8 @@
 
 <div class="wrap">
   <div class="board" id="board"></div>
-  <p class="howto">Swipe a piece into its neighbour. Four in a row makes a blaster.</p>
+  <svg class="defs" id="defs" aria-hidden="true"><defs></defs></svg>
+  <p class="howto">Swipe a piece into its neighbour. Four in a line makes a stripe, a 2&times;2 block makes a bomb, an L makes a flyer.</p>
 </div>
 
 <div class="win" id="over" hidden>
@@ -246,11 +327,30 @@
     return out;
   }
 
+  /* Four in a square, which no run can see: a 2x2 block contains no line of
+     three, so without this it is not a match at all. */
+  function squares(){
+    var out = [], r, c, a, b, d, e;
+    for(r = 0; r < ROWS - 1; r++){
+      for(c = 0; c < COLS - 1; c++){
+        a = board[idx(r, c)];
+        if(!matchable(a)) continue;
+        b = board[idx(r, c + 1)]; d = board[idx(r + 1, c)]; e = board[idx(r + 1, c + 1)];
+        if(matchable(b) && matchable(d) && matchable(e) &&
+           b.p === a.p && d.p === a.p && e.p === a.p){
+          out.push({ cells:[idx(r,c), idx(r,c+1), idx(r+1,c), idx(r+1,c+1)], dir:"sq" });
+        }
+      }
+    }
+    return out;
+  }
+
   /* An L or a T is one shape, not two runs, so overlapping runs are merged
-     before anything is scored or turned into a blaster. */
+     before anything is scored or turned into a blaster. A square that touches
+     a run is part of the same shape for the same reason. */
   function shapes(){
     var groups = [];
-    runs().forEach(function(run){
+    runs().concat(squares()).forEach(function(run){
       var touching = groups.filter(function(g){
         return run.cells.some(function(i){ return g.cells.indexOf(i) !== -1; });
       });
@@ -270,16 +370,53 @@
     return groups;
   }
 
+  /* What a shape earns, richest first. A square is worth more than a line of
+     four because it is harder to set up on purpose, and an L harder still. */
   function blasterFor(g){
-    var longest = 0, hasH = false, hasV = false;
+    var longest = 0, hasH = false, hasV = false, hasSq = false;
     g.runs.forEach(function(run){
+      if(run.dir === "sq"){ hasSq = true; return; }
       if(run.cells.length > longest) longest = run.cells.length;
       if(run.dir === "h") hasH = true; else hasV = true;
     });
     if(longest >= 5) return "rainbow";
-    if(hasH && hasV) return "bomb";
+    if(hasH && hasV) return "flyer";
+    if(hasSq) return "bomb";
     if(longest === 4) return hasH ? "row" : "col";
     return null;
+  }
+
+  /* Where a flyer goes. It is worth having it choose well rather than at
+     random: sent at whatever the level is actually asking for, it feels like a
+     reward instead of a firework. */
+  function flyTarget(from){
+    var wantCrate = false, wantPieces = [];
+    spec.goals.forEach(function(goal, k){
+      if(progress[k] >= goal.n) return;
+      if(goal.p === "crate") wantCrate = true; else wantPieces.push(goal.p);
+    });
+    var best = -1, bestScore = -1, i, t;
+    for(i = 0; i < CELLS; i++){
+      t = board[i];
+      if(!t || i === from) continue;
+      var worth = 0;
+      if(t.crate) worth = wantCrate ? 6 : 1;
+      else if(wantPieces.indexOf(t.p) !== -1) worth = 4;
+      else worth = 1;
+      // count what the blast would also catch, so it lands on a cluster
+      neighbours(i).forEach(function(j){
+        var n = board[j];
+        if(!n) return;
+        if(n.crate) worth += wantCrate ? 3 : 0.5;
+        else if(wantPieces.indexOf(n.p) !== -1) worth += 2;
+        else worth += 0.25;
+      });
+      // and far enough away that the flight is worth watching
+      var d = Math.abs(rowOf(i) - rowOf(from)) + Math.abs(colOf(i) - colOf(from));
+      worth += Math.min(d, 8) * 0.2;
+      if(worth > bestScore){ bestScore = worth; best = i; }
+    }
+    return best < 0 ? from : best;
   }
 
   function commonPiece(){
@@ -293,13 +430,24 @@
     return bestP;
   }
 
+  // what set off where, this round, so the effects layer can show it
+  var flights = [], beams = [], shocks = [];
+
   function blastCells(i, tile, pickPiece){
     var r = rowOf(i), c = colOf(i), out = [], k, dr, dc;
+    if(tile.special === "row" || tile.special === "col") beams.push({ at:i, dir:tile.special, p:tile.p });
+    if(tile.special === "bomb") shocks.push({ at:i, p:tile.p });
     if(tile.special === "row"){ for(k = 0; k < COLS; k++) out.push(idx(r, k)); }
     else if(tile.special === "col"){ for(k = 0; k < ROWS; k++) out.push(idx(k, c)); }
     else if(tile.special === "bomb"){
       for(dr = -1; dr <= 1; dr++) for(dc = -1; dc <= 1; dc++)
         if(inBoard(r + dr, c + dc)) out.push(idx(r + dr, c + dc));
+    } else if(tile.special === "flyer"){
+      var to = flyTarget(i);
+      out.push(i);
+      out.push(to);
+      neighbours(to).forEach(function(j){ out.push(j); });
+      flights.push({ from:i, to:to, p:tile.p });
     } else if(tile.special === "rainbow"){
       var want = (pickPiece === undefined || pickPiece === null) ? commonPiece() : pickPiece;
       for(k = 0; k < CELLS; k++) if(matchable(board[k]) && board[k].p === want) out.push(k);
@@ -339,14 +487,59 @@
 
   // ---------------------------------------------------------------- render
 
+  function shade(hex, amt){
+    var n = parseInt(hex.slice(1), 16), r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    function m(v){ return Math.round(amt > 0 ? v + (255 - v) * amt : v * (1 + amt)); }
+    return "rgb(" + m(r) + "," + m(g) + "," + m(b) + ")";
+  }
+
+  /* One radial gradient per piece, lit from the top left. A flat fill reads as
+     a sticker; a lit one reads as an object, and it costs a single <defs>. */
+  function buildGradients(){
+    var defs = document.querySelector("#defs defs"), out = "";
+    PIECES.forEach(function(pc, i){
+      out += '<radialGradient id="g' + i + '" cx="34%" cy="28%" r="78%">'
+           +   '<stop offset="0%" stop-color="' + shade(pc.colour, 0.42) + '"/>'
+           +   '<stop offset="52%" stop-color="' + pc.colour + '"/>'
+           +   '<stop offset="100%" stop-color="' + shade(pc.colour, -0.30) + '"/>'
+           + "</radialGradient>"
+        // the highlight has to be cut to the piece, or it hangs off the corners
+        // of a triangle as a smudge that looks like a rendering fault
+           + '<clipPath id="cp' + i + '">' + pc.shape + "</clipPath>";
+    });
+    out += '<linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1">'
+         +   '<stop offset="0%" stop-color="#fff" stop-opacity=".55"/>'
+         +   '<stop offset="100%" stop-color="#fff" stop-opacity="0"/>'
+         + "</linearGradient>";
+    defs.innerHTML = out;
+  }
+
   function faceMarkup(t){
     if(t.crate) return '<svg viewBox="0 0 24 24" aria-hidden="true">' + CRATE + "</svg>";
     if(t.special === "rainbow") return '<div class="rainbow"></div>';
-    var svg = '<svg viewBox="0 0 24 24" aria-hidden="true"><g fill="' + PIECES[t.p].colour + '">'
-            + PIECES[t.p].shape + "</g>";
-    if(t.special === "row")  svg += '<rect x="0" y="9.4" width="24" height="5.2" rx="2.6" fill="#F4F7F9" opacity=".92"/>';
-    if(t.special === "col")  svg += '<rect x="9.4" y="0" width="5.2" height="24" rx="2.6" fill="#F4F7F9" opacity=".92"/>';
-    if(t.special === "bomb") svg += '<circle cx="12" cy="12" r="6" fill="none" stroke="#F4F7F9" stroke-width="2.6" opacity=".92"/>';
+    var svg = '<svg viewBox="0 0 24 24" aria-hidden="true"><g fill="url(#g' + t.p + ')">'
+            + PIECES[t.p].shape + "</g>"
+            + '<g clip-path="url(#cp' + t.p + ')">'
+            +   '<ellipse cx="10" cy="7" rx="6.4" ry="4.2" fill="url(#gloss)" opacity=".55"/>'
+            + "</g>";
+    // arrows, a fuse, a rotor: each marking says what the thing will do
+    if(t.special === "row")
+      svg += '<rect x="1" y="9.6" width="22" height="4.8" rx="2.4" fill="#F7FAFC" opacity=".95"/>'
+           + '<path d="M4.4 12 L8 8.8 V15.2 Z M19.6 12 L16 8.8 V15.2 Z" fill="' + PIECES[t.p].colour + '"/>';
+    if(t.special === "col")
+      svg += '<rect x="9.6" y="1" width="4.8" height="22" rx="2.4" fill="#F7FAFC" opacity=".95"/>'
+           + '<path d="M12 4.4 L8.8 8 H15.2 Z M12 19.6 L8.8 16 H15.2 Z" fill="' + PIECES[t.p].colour + '"/>';
+    if(t.special === "bomb")
+      svg += '<circle cx="12" cy="13" r="6.6" fill="#232E39"/>'
+           + '<circle cx="12" cy="13" r="6.6" fill="none" stroke="#F7FAFC" stroke-width="1.6" opacity=".9"/>'
+           + '<circle cx="9.6" cy="10.6" r="1.7" fill="#F7FAFC" opacity=".75"/>'
+           + '<path d="M13.6 6.9 q2.6 -2.2 4.4 -0.5" stroke="#E8CF5C" stroke-width="1.8" fill="none" stroke-linecap="round"/>'
+           + '<circle cx="18.4" cy="6.1" r="1.7" fill="#E8894A"/>';
+    if(t.special === "flyer")
+      svg += '<circle cx="12" cy="12" r="7" fill="#232E39" opacity=".92"/>'
+           + '<g class="rotor"><rect x="2.4" y="10.8" width="19.2" height="2.4" rx="1.2" fill="#F7FAFC"/>'
+           + '<rect x="10.8" y="2.4" width="2.4" height="19.2" rx="1.2" fill="#F7FAFC" opacity=".55"/></g>'
+           + '<circle cx="12" cy="12" r="2.4" fill="' + PIECES[t.p].colour + '"/>';
     return svg + "</svg>";
   }
 
@@ -367,10 +560,96 @@
   }
   function look(t){ return t.crate ? "crate" : t.p + ":" + (t.special || ""); }
 
+  /* ---------- effects ---------- */
+
+  // every one of these removes itself when its animation ends, so the board
+  // never accumulates leftovers however long a cascade runs
+  function fx(cls, r, c, colour, life){
+    var n = document.createElement("div");
+    n.className = "fx " + cls;
+    n.style.setProperty("--tx", (c * 100) + "%");
+    n.style.setProperty("--ty", (r * 100) + "%");
+    n.style.transform = "translate(" + (c * 100) + "%," + (r * 100) + "%)";
+    if(colour) n.style.setProperty("--c", colour);
+    boardEl.appendChild(n);
+    setTimeout(function(){ n.remove(); }, life || 600);
+    return n;
+  }
+
+  function burstAt(i, t){
+    if(!t) return;
+    fx("burst", rowOf(i), colOf(i), t.crate ? "#8A7154" : PIECES[t.p].colour, 480);
+  }
+
+  function beamAt(b){
+    var r = rowOf(b.at), c = colOf(b.at), colour = PIECES[b.p].colour;
+    var n = document.createElement("div");
+    n.className = "fx beam";
+    n.style.setProperty("--c", colour);
+    if(b.dir === "row"){
+      n.style.setProperty("--dir", "90deg");
+      n.style.left = "0"; n.style.width = "100%";
+      n.style.top = (r * 12.5 + 4.6) + "%"; n.style.height = "3.2%";
+    } else {
+      n.style.setProperty("--dir", "180deg");
+      n.style.top = "0"; n.style.height = "100%";
+      n.style.left = (c * 12.5 + 4.6) + "%"; n.style.width = "3.2%";
+    }
+    boardEl.appendChild(n);
+    setTimeout(function(){ n.remove(); }, 430);
+  }
+
+  function shockAt(sh){
+    fx("shock", rowOf(sh.at), colOf(sh.at), PIECES[sh.p].colour, 520);
+  }
+
+  function scorePop(cells, points, chain){
+    var rs = 0, cs = 0, n = 0;
+    cells.forEach(function(i){ rs += rowOf(i); cs += colOf(i); n++; });
+    if(!n) return;
+    var node = fx("pop", Math.max(0, rs / n - 0.4), Math.min(COLS - 1.6, cs / n), null, 1050);
+    node.innerHTML = "+" + points + (chain > 1 ? "<b>\u00d7" + chain + "</b>" : "");
+  }
+
+  /* The flyer is the one effect worth waiting for: it leaves its square,
+     crosses the board and only then does its damage. */
+  function flyAway(f){
+    var n = document.createElement("div");
+    n.className = "fx plane";
+    var colour = PIECES[f.p] ? PIECES[f.p].colour : "#E6EBEF";
+    n.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">'
+      + '<circle cx="12" cy="12" r="7" fill="#232E39"/>'
+      + '<g class="rotor"><rect x="2.4" y="10.8" width="19.2" height="2.4" rx="1.2" fill="#F7FAFC"/>'
+      + '<rect x="10.8" y="2.4" width="2.4" height="19.2" rx="1.2" fill="#F7FAFC" opacity=".55"/></g>'
+      + '<circle cx="12" cy="12" r="2.6" fill="' + colour + '"/></svg>';
+    var d = Math.abs(rowOf(f.to) - rowOf(f.from)) + Math.abs(colOf(f.to) - colOf(f.from));
+    var ms = Math.round(210 + Math.min(d, 14) * 26);
+    n.style.setProperty("--fly", ms + "ms");
+    n.style.transform = "translate(" + (colOf(f.from) * 100) + "%," + (rowOf(f.from) * 100) + "%)";
+    boardEl.appendChild(n);
+    // one frame at the start point, or the browser has nothing to move from
+    boardEl.offsetHeight;
+    n.style.transform = "translate(" + (colOf(f.to) * 100) + "%," + (rowOf(f.to) * 100) + "%)";
+    setTimeout(function(){ n.remove(); }, ms + 90);
+    return ms;
+  }
+
   function place(n, r, c){
     n.style.setProperty("--tx", (c * 100) + "%");
     n.style.setProperty("--ty", (r * 100) + "%");
     n.style.transform = "translate(" + (c * 100) + "%," + (r * 100) + "%)";
+  }
+
+  function buildCells(){
+    for(var i = 0; i < CELLS; i++){
+      var r = rowOf(i), c = colOf(i);
+      var n = document.createElement("div");
+      n.className = "sq";
+      n.dataset.alt = (r + c) % 2;
+      n.style.transform = "translate(" + (c * 100) + "%," + (r * 100) + "%)";
+      n.innerHTML = "<i></i>";
+      boardEl.appendChild(n);
+    }
   }
 
   function render(){
@@ -400,9 +679,11 @@
       var chip = document.createElement("div");
       chip.className = "goal";
       chip.dataset.done = left === 0 ? "true" : "false";
+      // the same lit fill the board uses, so a chip and its piece match
       var art = goal.p === "crate"
         ? '<svg viewBox="0 0 24 24" aria-hidden="true">' + CRATE + "</svg>"
-        : '<svg viewBox="0 0 24 24" aria-hidden="true"><g fill="' + PIECES[goal.p].colour + '">' + PIECES[goal.p].shape + "</g></svg>";
+        : '<svg viewBox="0 0 24 24" aria-hidden="true"><g fill="url(#g' + goal.p + ')">'
+          + PIECES[goal.p].shape + "</g></svg>";
       chip.innerHTML = art + '<span class="n">' + left + "</span>";
       g.appendChild(chip);
     });
@@ -463,11 +744,13 @@
     return false;
   }
 
+  function anyMatch(){ return runs().length > 0 || squares().length > 0; }
+
   function wouldMatch(a, b){
     var ta = board[a], tb = board[b];
     if(!matchable(ta) || !matchable(tb)) return false;
     board[a] = tb; board[b] = ta;
-    var hit = runs().length > 0;
+    var hit = anyMatch();
     board[a] = ta; board[b] = tb;
     return hit;
   }
@@ -515,6 +798,7 @@
     Object.keys(nodes).forEach(function(k){ nodes[k].remove(); });
     nodes = Object.create(null);
     boardEl.innerHTML = "";
+    buildCells();
     fillBoard();
     while(!anyMove()) reshuffle();
     render();
@@ -585,6 +869,7 @@
       chain++;
 
       var clear = new Set(), made = [];
+      flights = []; beams = []; shocks = [];
       groups.forEach(function(g){
         var kind = blasterFor(g);
         if(kind){
@@ -620,11 +905,21 @@
       score += gained * chain;
       paintStatus();
 
+      // a flyer has to arrive before anything it hit is allowed to go
+      var wait = 0;
+      flights.forEach(function(f){ wait = Math.max(wait, flyAway(f)); });
+      if(wait) await sleep(wait);
+
+      beams.forEach(beamAt);
+      shocks.forEach(shockAt);
+      scorePop(Array.from(clear), gained * chain, chain);
+
       clear.forEach(function(i){
         var t = board[i];
         if(t && nodes[t.id]) nodes[t.id].classList.add("clearing");
+        burstAt(i, t);
       });
-      await sleep(chain === 1 ? 140 : 110);
+      await sleep(chain === 1 ? 200 : 170);
       clear.forEach(function(i){
         if(board[i]){ drop(board[i]); board[i] = null; }
       });
@@ -694,7 +989,7 @@
       seeds = [a, b];
     } else {
       board[a] = tb; board[b] = ta;
-      if(!runs().length){
+      if(!anyMatch()){
         board[a] = ta; board[b] = tb;
         return false;
       }
@@ -737,7 +1032,7 @@
         var a = loose[i], b = loose[j], t = board[a];
         board[a] = board[b]; board[b] = t;
       }
-    } while(guard++ < 60 && (runs().length || !anyMove()));
+    } while(guard++ < 60 && (anyMatch() || !anyMove()));
   }
 
   // ---------------------------------------------------------------- input
@@ -847,6 +1142,7 @@
   el("primary").addEventListener("click", function(){ if(!busy) startLevel(level); });
   el("secondary").addEventListener("click", function(){ if(!busy) startLevel(level + 1); });
 
+  buildGradients();
   var saved = load();
   best = (saved && saved.best) || {};
   startLevel((saved && saved.level) || 1);
