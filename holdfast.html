@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#151C24">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Arcade">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<link rel="icon" href="./icon-192.png">
+<title>Holdfast</title>
+<link rel="stylesheet" href="./app.css">
+<style>
+  .statline{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:6px 2px 8px;font-size:12px}
+  .turnno{font-size:15px;font-weight:300;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  .turnno span:first-of-type{font-size:21px;font-weight:200;margin:0 4px}
+  .turnno span{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-left:6px}
+  .tally{display:flex;gap:12px;align-items:baseline}
+  .tally b{font-weight:500;font-variant-numeric:tabular-nums}
+  .you b{color:#6FB3F2} .them b{color:#E0574A}
+
+  .wrap{flex:1;display:flex;flex-direction:column;justify-content:center;gap:10px;padding:4px 0}
+
+  .board{
+    width:min(100%, 46vh);aspect-ratio:1;margin:0 auto;display:grid;
+    grid-template-columns:repeat(7,1fr);gap:2px;touch-action:manipulation;
+    background:#0E1620;border:1px solid var(--line);border-radius:10px;padding:2px;
+  }
+  .tile{
+    position:relative;border-radius:3px;display:flex;align-items:center;justify-content:center;
+    cursor:pointer;transition:box-shadow .1s ease;
+  }
+  .tile[data-land="plain"]{background:#2F4436}
+  .tile[data-land="forest"]{background:#22361F}
+  .tile[data-land="hill"]{background:#4A4433}
+  .tile[data-land="water"]{background:#1B3348;cursor:default}
+  .tile[data-go="true"]{box-shadow:inset 0 0 0 2px rgba(111,179,242,.85)}
+  .tile[data-hit="true"]{box-shadow:inset 0 0 0 2px #E0574A}
+  .tile[data-sel="true"]{box-shadow:inset 0 0 0 3px var(--sel)}
+
+  .town{position:absolute;inset:14%;border-radius:2px;border:2px solid rgba(255,255,255,.35);
+        background:rgba(255,255,255,.08)}
+  .town[data-own="0"]{border-color:#6FB3F2;background:rgba(111,179,242,.20)}
+  .town[data-own="1"]{border-color:#E0574A;background:rgba(224,87,74,.20)}
+  .town[data-cap="true"]{border-radius:50%}
+
+  .unit{position:relative;width:74%;height:74%}
+  .unit svg{width:100%;height:100%;display:block;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6))}
+  .hp{
+    position:absolute;left:8%;right:8%;bottom:-1px;height:3px;border-radius:2px;
+    background:rgba(0,0,0,.55);overflow:hidden;
+  }
+  .hp i{display:block;height:100%;background:#8FCB52}
+  .hp[data-low="true"] i{background:#E8894A}
+
+  .shop{display:grid;grid-template-columns:repeat(4,1fr);gap:5px}
+  .buy{
+    background:var(--surface);border:1px solid var(--line);border-radius:8px;
+    padding:7px 2px;font-size:11px;color:var(--ink);display:flex;flex-direction:column;
+    align-items:center;gap:2px;line-height:1.2;
+  }
+  .buy svg{width:18px;height:18px}
+  .buy small{color:var(--muted);font-size:10px;font-variant-numeric:tabular-nums}
+  .buy:disabled{opacity:.4}
+  .buy[aria-pressed="true"]{border-color:var(--accent)}
+
+  .msg{margin:0;text-align:center;font-size:12.5px;color:var(--muted);min-height:17px}
+  @media (max-height: 700px){ .board{width:min(100%, 40vh)} }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="./index.html">&larr; Arcade</a>
+  <button class="chip" id="new-game">New</button>
+</header>
+
+<div class="statline">
+  <span class="turnno">Turn <span id="turn-n">1</span><span id="turn-of">of 20</span></span>
+  <span class="tally">
+    <span class="you">You <b id="you-towns">1</b> towns <b id="you-gold">8</b>g</span>
+    <span class="them">Rival <b id="them-towns">1</b></span>
+  </span>
+</div>
+
+<div class="wrap">
+  <div class="board" id="board"></div>
+  <div class="shop" id="shop"></div>
+  <p class="msg" id="msg">Tap a soldier, then where to send him.</p>
+</div>
+
+<div class="win" id="over" hidden>
+  <h2 id="over-title">Done</h2>
+  <p id="over-text"></p>
+</div>
+
+<div class="controls">
+  <button class="ctrl" data-primary="true" id="end-turn">End turn</button>
+</div>
+
+<p class="note" id="note" hidden>Storage is blocked here, so your game won't be saved.</p>
+
+<script>
+(function(){
+  "use strict";
+
+  var KEY = "arcade.holdfast.v1";
+
+  /* Seven across, not nine. On the bigger board a warrior needed twelve turns
+     just to walk to the enemy capital, so the dramatic ending almost never
+     happened and every game was settled by counting towns at the horn. */
+  var W = 7, H = 7;
+  /* A hard end, because two even sides will otherwise grind for ever: whoever
+     holds the most towns when the horn goes wins it, and taking a capital still
+     ends it there and then. It also gives every turn a cost, which is what makes
+     the early ones worth thinking about. */
+  var MAX_TURNS = 20;
+
+  // what a tile is made of. Cost is what it takes to move onto it.
+  var LAND = {
+    plain:  { move:1, defence:1.0,  yield:1 },
+    forest: { move:2, defence:1.25, yield:1 },
+    hill:   { move:2, defence:1.5,  yield:2 },
+    water:  { move:0, defence:1.0,  yield:0 }
+  };
+
+  var UNITS = {
+    warrior: { cost:2, hp:10, atk:2.0, def:2.0, move:1, reach:1, name:"Warrior" },
+    archer:  { cost:3, hp:8,  atk:2.4, def:1.4, move:1, reach:2, name:"Archer" },
+    rider:   { cost:3, hp:10, atk:2.2, def:1.6, move:2, reach:1, name:"Rider" },
+    guard:   { cost:4, hp:16, atk:1.6, def:3.0, move:1, reach:1, name:"Guard" }
+  };
+
+  function idx(x, y){ return y * W + x; }
+  function inMap(x, y){ return x >= 0 && y >= 0 && x < W && y < H; }
+  function nbrs(x, y){
+    var out = [];
+    [[1,0],[-1,0],[0,1],[0,-1]].forEach(function(d){
+      if(inMap(x + d[0], y + d[1])) out.push([x + d[0], y + d[1]]);
+    });
+    return out;
+  }
+  function mulberry(seed){
+    var t = seed >>> 0;
+    return function(){
+      t = (t + 0x6D2B79F5) >>> 0;
+      var x = Math.imul(t ^ (t >>> 15), 1 | t);
+      x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+      return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  /* The map is mirrored through the centre, so neither side starts with the
+     better half. A strategy game that is decided by the deal is not a strategy
+     game. */
+  function makeMap(rng){
+    var tiles = new Array(W * H);
+    for(var y = 0; y < H; y++){
+      for(var x = 0; x < W; x++){
+        if(x + y > (W - 1)) continue;                 // fill one half, mirror the rest
+        var r = rng(), t = "plain";
+        if(r > 0.86) t = "water";
+        else if(r > 0.66) t = "hill";
+        else if(r > 0.40) t = "forest";
+        tiles[idx(x, y)] = t;
+        tiles[idx(W - 1 - x, H - 1 - y)] = t;
+      }
+    }
+    for(var i = 0; i < W * H; i++) if(!tiles[i]) tiles[i] = "plain";
+
+    // the two capitals, opposite corners, always on open ground
+    tiles[idx(1, 1)] = "plain";
+    tiles[idx(W - 2, H - 2)] = "plain";
+
+    var towns = [
+      { x:1, y:1, owner:0, capital:true },
+      { x:W - 2, y:H - 2, owner:1, capital:true }
+    ];
+    // neutral towns, mirrored so both sides have the same ones to reach for
+    [[4,0],[0,4]].forEach(function(sp){
+      tiles[idx(sp[0], sp[1])] = "plain";
+      tiles[idx(W - 1 - sp[0], H - 1 - sp[1])] = "plain";
+      towns.push({ x:sp[0], y:sp[1], owner:-1, capital:false });
+      towns.push({ x:W - 1 - sp[0], y:H - 1 - sp[1], owner:-1, capital:false });
+    });
+    var mid = (W - 1) / 2;
+    tiles[idx(mid, mid)] = "plain";
+    towns.push({ x:mid, y:mid, owner:-1, capital:false });
+    return { tiles:tiles, towns:towns };
+  }
+
+  function newGame(seed){
+    var rng = mulberry(seed >>> 0);
+    var m = makeMap(rng);
+    var g = {
+      seed: seed >>> 0,
+      tiles: m.tiles,
+      towns: m.towns,
+      units: [],
+      gold: [5, 5],
+      turn: 1,
+      side: 0,
+      over: null,
+      log: []
+    };
+    addUnit(g, 0, "warrior", 1, 2);
+    addUnit(g, 1, "warrior", W - 2, H - 3);
+    if(!unitAt(g, 2, 1)) addUnit(g, 0, "warrior", 2, 1);
+    if(!unitAt(g, W - 3, H - 2)) addUnit(g, 1, "warrior", W - 3, H - 2);
+    return g;
+  }
+
+  var nextUid = 1;
+  function addUnit(g, owner, kind, x, y){
+    var u = { uid: nextUid++, owner:owner, kind:kind, x:x, y:y,
+              hp: UNITS[kind].hp, moved:false, acted:false };
+    g.units.push(u);
+    return u;
+  }
+  function unitAt(g, x, y){
+    for(var i = 0; i < g.units.length; i++)
+      if(g.units[i].x === x && g.units[i].y === y) return g.units[i];
+    return null;
+  }
+  function townAt(g, x, y){
+    for(var i = 0; i < g.towns.length; i++)
+      if(g.towns[i].x === x && g.towns[i].y === y) return g.towns[i];
+    return null;
+  }
+
+  /* Where a unit can get to this turn, by movement points over terrain, blocked
+     by anyone standing in the way. */
+  function reachable(g, u){
+    var spec = UNITS[u.kind];
+    var best = {}, out = [];
+    best[idx(u.x, u.y)] = 0;
+    var queue = [[u.x, u.y, 0]];
+    while(queue.length){
+      var cur = queue.shift();
+      nbrs(cur[0], cur[1]).forEach(function(n){
+        var land = LAND[g.tiles[idx(n[0], n[1])]];
+        if(!land.move) return;                       // water is impassable
+        var cost = cur[2] + land.move;
+        if(cost > spec.move) return;
+        var occupied = unitAt(g, n[0], n[1]);
+        if(occupied) return;
+        var k = idx(n[0], n[1]);
+        if(best[k] !== undefined && best[k] <= cost) return;
+        best[k] = cost;
+        out.push([n[0], n[1]]);
+        queue.push([n[0], n[1], cost]);
+      });
+    }
+    return out;
+  }
+
+  function targets(g, u){
+    var spec = UNITS[u.kind], out = [];
+    g.units.forEach(function(v){
+      if(v.owner === u.owner) return;
+      if(Math.abs(v.x - u.x) + Math.abs(v.y - u.y) <= spec.reach) out.push(v);
+    });
+    return out;
+  }
+
+  /* Both sides hurt each other, the defender less so for the ground he stands
+     on. No randomness: a fight you can work out beforehand is one you can plan
+     around, which is the whole point of the genre. */
+  function fight(g, a, d){
+    var A = UNITS[a.kind], D = UNITS[d.kind];
+    var ground = LAND[g.tiles[idx(d.x, d.y)]].defence;
+    var town = townAt(g, d.x, d.y);
+    if(town && town.owner === d.owner) ground += 0.25;
+    // lethal enough that an attack is a decision rather than a nudge: a healthy
+    // warrior takes a plain-standing one down in three, two if it is hurt
+    var toDefender = Math.max(1, Math.round(A.atk * (a.hp / A.hp) * 2.6 / ground));
+    d.hp -= toDefender;
+    var killed = d.hp <= 0;
+    var toAttacker = 0;
+    if(!killed && UNITS[d.kind].reach >= Math.abs(a.x - d.x) + Math.abs(a.y - d.y)){
+      toAttacker = Math.max(1, Math.round(D.def * (d.hp / D.hp) * 1.2));
+      a.hp -= toAttacker;
+    }
+    if(killed) g.units.splice(g.units.indexOf(d), 1);
+    if(a.hp <= 0) g.units.splice(g.units.indexOf(a), 1);
+    return { toDefender:toDefender, toAttacker:toAttacker, killed:killed };
+  }
+
+  function claimTowns(g){
+    g.units.forEach(function(u){
+      var t = townAt(g, u.x, u.y);
+      if(t && t.owner !== u.owner){
+        if(t.capital && t.owner !== -1){
+          // taking a capital takes everything that side held
+          var loser = t.owner;
+          g.towns.forEach(function(o){ if(o.owner === loser) o.owner = u.owner; });
+          g.over = u.owner;
+        }
+        t.owner = u.owner;
+      }
+    });
+  }
+
+  function income(g, side){
+    var n = 1;                                  // a base trickle so you are never stuck
+    g.towns.forEach(function(t){ if(t.owner === side) n += t.capital ? 2 : 1; });
+    return n;
+  }
+
+  function holdings(g, side){
+    return g.towns.filter(function(t){ return t.owner === side; }).length;
+  }
+
+  function endTurn(g){
+    claimTowns(g);
+    if(g.over !== null) return;
+    g.side = 1 - g.side;
+    if(g.side === 0){
+      g.turn++;
+      if(g.turn > MAX_TURNS){
+        var a = holdings(g, 0), b = holdings(g, 1);
+        g.over = a === b ? -1 : (a > b ? 0 : 1);     // -1 is a draw on towns
+        return;
+      }
+    }
+    g.gold[g.side] += income(g, g.side);
+    g.units.forEach(function(u){ if(u.owner === g.side){ u.moved = false; u.acted = false; } });
+    // no towns and no units is a loss too
+    [0,1].forEach(function(s){
+      var has = g.towns.some(function(t){ return t.owner === s; }) ||
+                g.units.some(function(u){ return u.owner === s; });
+      if(!has && g.over === null) g.over = 1 - s;
+    });
+  }
+
+  /* Anywhere free within two steps of a town you hold. Looking only at the town
+     and its doorstep meant a crowded front left you unable to spend at all. */
+  function canBuild(g, side, kind){
+    if(g.gold[side] < UNITS[kind].cost) return null;
+    var best = null, bestD = 99;
+    g.towns.forEach(function(t){
+      if(t.owner !== side) return;
+      for(var y = t.y - 2; y <= t.y + 2; y++){
+        for(var x = t.x - 2; x <= t.x + 2; x++){
+          if(!inMap(x, y)) continue;
+          var d = Math.abs(x - t.x) + Math.abs(y - t.y);
+          if(d > 2 || d >= bestD) continue;
+          if(!LAND[g.tiles[idx(x, y)]].move) continue;
+          if(unitAt(g, x, y)) continue;
+          best = { x:x, y:y }; bestD = d;
+        }
+      }
+    });
+    return best;
+  }
+  function build(g, side, kind){
+    var spot = canBuild(g, side, kind);
+    if(!spot) return null;
+    g.gold[side] -= UNITS[kind].cost;
+    return addUnit(g, side, kind, spot.x, spot.y);
+  }
+
+
+  /* The opponent. It wants towns above all - they are what pays - and it will
+     take a fight it expects to win on the way. Deliberately readable rather than
+     clever: a player should be able to see why it did what it did. */
+  function aiValue(g, side, x, y){
+    var t = townAt(g, x, y);
+    if(t && t.owner !== side) return t.capital ? 14 : 9;
+    return 0;
+  }
+
+  function aiTurn(g, side, rng){
+    var spec, moved = true, guard = 0;
+
+    // spend first, so anything bought can still be used to hold a town
+    var order = ["rider", "archer", "warrior", "guard"];
+    while(guard++ < 8){
+      // an army you can afford is an army you should have: the cap grows with
+      // what you hold, so gold never piles up with nothing to buy
+      var mine = g.units.filter(function(u){ return u.owner === side; }).length;
+      if(mine >= 4 + holdings(g, side) * 2) break;
+      var want = null;
+      for(var i = 0; i < order.length; i++){
+        // keep a mix rather than a single-unit army
+        if(g.gold[side] >= UNITS[order[i]].cost && (rng() < 0.75 || i === order.length - 1)){
+          want = order[i]; break;
+        }
+      }
+      if(!want || !build(g, side, want)) break;
+    }
+
+    g.units.forEach(function(u){
+      if(u.owner !== side) return;
+      spec = UNITS[u.kind];
+
+      // a fight worth taking: kill if you can, otherwise hit what hurts least back
+      function tryFight(){
+        var opts = targets(g, u);
+        if(!opts.length) return false;
+        var best = null, bestScore = -1e9;
+        opts.forEach(function(v){
+          var V = UNITS[v.kind];
+          var dmg = Math.max(1, Math.round(spec.atk * (u.hp / spec.hp) * 2 /
+                    LAND[g.tiles[idx(v.x, v.y)]].defence));
+          var kills = dmg >= v.hp;
+          var back = kills ? 0 : Math.max(1, Math.round(V.def * (v.hp / V.hp) * 1.2));
+          var score = dmg * 2 + (kills ? 12 : 0) - back * 1.4;
+          if(townAt(g, v.x, v.y)) score += 3;
+          if(score > bestScore){ bestScore = score; best = v; }
+        });
+        if(best && bestScore > 0){ fight(g, u, best); u.acted = true; return true; }
+        return false;
+      }
+
+      if(tryFight()) return;
+
+      // otherwise walk towards whatever is worth most, nearest first
+      var goal = null, goalScore = -1e9;
+      for(var y = 0; y < H; y++) for(var x = 0; x < W; x++){
+        var v = aiValue(g, side, x, y);
+        if(!v) continue;
+        var d = Math.abs(x - u.x) + Math.abs(y - u.y);
+        var sc = v * 3 - d;
+        if(sc > goalScore){ goalScore = sc; goal = [x, y]; }
+      }
+      if(!goal){
+        // nothing to take: go for the enemy
+        g.units.forEach(function(v){
+          if(v.owner === side) return;
+          var d = Math.abs(v.x - u.x) + Math.abs(v.y - u.y);
+          var sc = 8 - d;
+          if(sc > goalScore){ goalScore = sc; goal = [v.x, v.y]; }
+        });
+      }
+      if(!goal) return;
+
+      var opts = reachable(g, u);
+      if(!opts.length) return;
+      var pick = null, pickD = Math.abs(goal[0] - u.x) + Math.abs(goal[1] - u.y);
+      opts.forEach(function(o){
+        var d = Math.abs(goal[0] - o[0]) + Math.abs(goal[1] - o[1]);
+        // standing on a town is worth a step out of the way
+        if(townAt(g, o[0], o[1]) && townAt(g, o[0], o[1]).owner !== side) d -= 2;
+        if(d < pickD){ pickD = d; pick = o; }
+      });
+      if(pick){ u.x = pick[0]; u.y = pick[1]; u.moved = true; claimTowns(g); }
+      tryFight();
+    });
+  }
+
+  /* ================= end of rules; DOM from here ================= */
+
+  function el(id){ return document.getElementById(id); }
+
+  var ART = {
+    warrior: '<path d="M12 2 L15 8 L12 22 L9 8 Z" fill="CLR"/><path d="M6 8 H18" stroke="CLR" stroke-width="2.4"/>',
+    archer:  '<path d="M7 3 q9 9 0 18" stroke="CLR" stroke-width="2.4" fill="none"/><path d="M6 12 H19" stroke="CLR" stroke-width="2"/><path d="M19 12 L15 9 M19 12 L15 15" stroke="CLR" stroke-width="2" fill="none"/>',
+    rider:   '<path d="M4 17 q3-9 9-9 h5 l2 4 -3 2 v5" stroke="CLR" stroke-width="2.4" fill="none"/><circle cx="7" cy="19" r="2" fill="CLR"/><circle cx="17" cy="19" r="2" fill="CLR"/>',
+    guard:   '<path d="M12 2 L21 6 V13 q0 6 -9 9 Q3 19 3 13 V6 Z" fill="CLR"/>'
+  };
+  var SIDE_COLOUR = ["#6FB3F2", "#E0574A"];
+
+  function unitSvg(kind, owner){
+    return '<svg viewBox="0 0 24 24" aria-hidden="true" stroke-linecap="round" stroke-linejoin="round">' +
+      ART[kind].replace(/CLR/g, SIDE_COLOUR[owner]) + "</svg>";
+  }
+
+  var g = null, sel = null, buying = null, busy = false, storable = true;
+  var tiles = [];
+
+  function save(){
+    if(!storable) return;
+    try{ localStorage.setItem(KEY, JSON.stringify(g)); }
+    catch(e){ storable = false; el("note").hidden = false; }
+  }
+  function load(){
+    try{ var raw = localStorage.getItem(KEY); return raw ? JSON.parse(raw) : null; }
+    catch(e){ storable = false; el("note").hidden = false; return null; }
+  }
+
+  function buildBoard(){
+    var b = el("board");
+    b.innerHTML = "";
+    tiles = [];
+    for(var y = 0; y < H; y++) for(var x = 0; x < W; x++){
+      var d = document.createElement("div");
+      d.className = "tile";
+      d.dataset.x = x; d.dataset.y = y;
+      b.appendChild(d);
+      tiles.push(d);
+    }
+  }
+
+  function render(){
+    var canGo = {}, canHit = {};
+    if(sel){
+      reachable(g, sel).forEach(function(p){ canGo[idx(p[0], p[1])] = 1; });
+      targets(g, sel).forEach(function(v){ canHit[idx(v.x, v.y)] = 1; });
+    }
+    for(var i = 0; i < W * H; i++){
+      var x = i % W, y = (i / W) | 0, t = tiles[i];
+      t.dataset.land = g.tiles[i];
+      t.dataset.go = !!canGo[i];
+      t.dataset.hit = !!canHit[i];
+      t.dataset.sel = !!(sel && sel.x === x && sel.y === y);
+      var html = "";
+      var town = townAt(g, x, y);
+      if(town) html += '<div class="town" data-own="' + town.owner + '" data-cap="' + !!town.capital + '"></div>';
+      var u = unitAt(g, x, y);
+      if(u){
+        var frac = Math.max(0, u.hp / UNITS[u.kind].hp);
+        html += '<div class="unit">' + unitSvg(u.kind, u.owner) +
+                '<div class="hp" data-low="' + (frac < 0.5) + '"><i style="width:' +
+                (frac * 100) + '%"></i></div></div>';
+      }
+      t.innerHTML = html;
+    }
+    el("turn-n").textContent = Math.min(g.turn, MAX_TURNS);
+    el("turn-of").textContent = "of " + MAX_TURNS;
+    el("you-towns").textContent = holdings(g, 0);
+    el("them-towns").textContent = holdings(g, 1);
+    el("you-gold").textContent = g.gold[0];
+    paintShop();
+    el("end-turn").disabled = busy || g.over !== null;
+  }
+
+  function paintShop(){
+    var shop = el("shop");
+    if(!shop.children.length){
+      Object.keys(UNITS).forEach(function(k){
+        var b = document.createElement("button");
+        b.className = "buy";
+        b.dataset.kind = k;
+        b.innerHTML = unitSvg(k, 0) + "<span>" + UNITS[k].name + "</span><small>" + UNITS[k].cost + "g</small>";
+        b.addEventListener("click", function(){ pickBuy(k); });
+        shop.appendChild(b);
+      });
+    }
+    for(var i = 0; i < shop.children.length; i++){
+      var b = shop.children[i], k = b.dataset.kind;
+      b.disabled = busy || g.over !== null || g.gold[0] < UNITS[k].cost || !canBuild(g, 0, k);
+      b.setAttribute("aria-pressed", buying === k);
+    }
+  }
+
+  function say(text){ el("msg").textContent = text; }
+
+  function pickBuy(kind){
+    if(busy || g.over !== null) return;
+    buying = (buying === kind) ? null : kind;
+    sel = null;
+    if(buying){
+      var spot = canBuild(g, 0, kind);
+      say(spot ? "Tap to raise a " + UNITS[kind].name.toLowerCase() + " near a town you hold."
+               : "Nowhere to put one.");
+    } else say("");
+    render();
+  }
+
+  function tap(x, y){
+    if(busy || g.over !== null) return;
+    if(buying){
+      var spot = canBuild(g, 0, buying);
+      // only the offered spot; a free choice would need a rule about how far
+      if(spot && spot.x === x && spot.y === y){
+        build(g, 0, buying);
+        say(UNITS[buying].name + " raised.");
+        buying = null;
+        save(); render();
+      } else if(spot){
+        say("He can only muster at the marked square.");
+      }
+      return;
+    }
+    var u = unitAt(g, x, y);
+    if(sel){
+      var hit = targets(g, sel).filter(function(v){ return v.x === x && v.y === y; })[0];
+      if(hit && !sel.acted){
+        var r = fight(g, sel, hit);
+        say(r.killed ? UNITS[hit.kind].name + " cut down." :
+            "Hit for " + r.toDefender + (r.toAttacker ? ", took " + r.toAttacker + " back." : "."));
+        sel.acted = true;
+        if(g.units.indexOf(sel) === -1) sel = null;
+        claimTowns(g);
+        checkOver();
+        save(); render();
+        return;
+      }
+      var canMove = reachable(g, sel).some(function(p){ return p[0] === x && p[1] === y; });
+      if(canMove && !sel.moved){
+        sel.x = x; sel.y = y; sel.moved = true;
+        claimTowns(g);
+        checkOver();
+        say("");
+        save(); render();
+        return;
+      }
+    }
+    sel = (u && u.owner === 0 && !(u.moved && u.acted)) ? u : null;
+    if(u && u.owner === 1) say(UNITS[u.kind].name + " \u00b7 " + u.hp + " health");
+    else if(sel) say(UNITS[sel.kind].name + (sel.moved ? " has moved" : "") + (sel.acted ? " and fought" : ""));
+    render();
+  }
+
+  function checkOver(){
+    if(g.over === null) return;
+    var won = g.over === 0, drew = g.over === -1;
+    el("over-title").textContent = drew ? "A stalemate" : (won ? "The field is yours" : "You are beaten");
+    el("over-text").textContent = drew
+      ? "Even on towns when the horn went."
+      : (won ? "You hold " + holdings(g, 0) + " towns to " + holdings(g, 1) + "."
+             : "They hold " + holdings(g, 1) + " towns to " + holdings(g, 0) + ".");
+    el("over").hidden = false;
+  }
+
+  async function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+
+  async function runRival(){
+    busy = true; sel = null; buying = null;
+    render();
+    say("The rival moves\u2026");
+    await sleep(420);
+    aiTurn(g, 1, Math.random);
+    claimTowns(g);
+    render();
+    await sleep(520);
+    endTurn(g);
+    busy = false;
+    checkOver();
+    if(g.over === null) say("Your move.");
+    save(); render();
+  }
+
+  el("end-turn").addEventListener("click", async function(){
+    if(busy || g.over !== null) return;
+    sel = null; buying = null;
+    endTurn(g);
+    checkOver();
+    save(); render();
+    if(g.over === null) await runRival();
+  });
+
+  el("board").addEventListener("click", function(e){
+    var t = e.target.closest ? e.target.closest(".tile") : null;
+    if(!t) return;
+    tap(+t.dataset.x, +t.dataset.y);
+  });
+
+  function fresh(){
+    g = newGame((Date.now() ^ (Math.random() * 4294967295)) >>> 0);
+    /* Moving first means committing first, and the side that answers can see
+       what it is answering. Measured over a thousand games between two copies
+       of the rival, that was worth about thirteen points of win rate, so the
+       player who goes first starts with a little more in the purse. */
+    g.gold[0] += 3;
+    sel = null; buying = null; busy = false;
+    el("over").hidden = true;
+    say("Tap a soldier, then where to send him.");
+    save(); render();
+  }
+
+  el("new-game").addEventListener("click", fresh);
+
+  buildBoard();
+  var saved = load();
+  if(saved && saved.tiles && saved.tiles.length === W * H && saved.towns){
+    g = saved;
+    if(g.over !== null) checkOver();
+    render();
+  } else fresh();
+
+  if("serviceWorker" in navigator){
+    window.addEventListener("load", function(){
+      navigator.serviceWorker.register("./sw.js").catch(function(){});
+    });
+  }
+})();
+</script>
+</body>
+</html>

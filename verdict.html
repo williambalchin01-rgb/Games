@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#151C24">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Arcade">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<link rel="icon" href="./icon-192.png">
+<title>Verdict</title>
+<link rel="stylesheet" href="./app.css">
+<style>
+  .statline{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:6px 2px 8px}
+  .solved{font-size:21px;font-weight:200;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  .solved span{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-left:6px}
+
+  /* The shared sheet gives the body a MINIMUM height of a screen, so a long
+     case pushes the whole page taller instead of scrolling inside it. Bounding
+     the body here is what lets the list below scroll on its own. */
+  body{height:100vh;height:100dvh;max-height:100dvh;overflow:hidden}
+  .wrap{flex:1;display:flex;flex-direction:column;gap:12px;padding:4px 0;min-height:0;overflow-y:auto}
+
+  .clues{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:12px 13px}
+  .clues h3{margin:0 0 8px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:400}
+  .clue{display:flex;gap:9px;font-size:13.5px;line-height:1.45;padding:3px 0}
+  .clue i{color:var(--sel);font-style:normal;flex:none;font-variant-numeric:tabular-nums}
+
+  .guests{display:flex;flex-direction:column;gap:6px}
+  .guest{
+    display:flex;align-items:center;gap:10px;text-align:left;width:100%;
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    padding:9px 11px;color:inherit;
+  }
+  .guest .who{flex:1;min-width:0}
+  .guest .nm{font-size:14.5px;font-weight:500;display:block}
+  .guest .bits{font-size:11.5px;color:var(--muted);display:block;margin-top:2px}
+  .guest .x{
+    flex:none;width:26px;height:26px;border-radius:50%;border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--muted);
+  }
+  .guest[data-out="true"]{opacity:.42}
+  .guest[data-out="true"] .nm{text-decoration:line-through}
+  .guest[data-out="true"] .x{border-color:#E0574A;color:#E0574A}
+  .guest[data-named="true"]{border-color:var(--accent)}
+  .guest[data-guilty="true"]{border-color:var(--accent);background:rgba(79,168,139,.13)}
+  .guest[data-wrong="true"]{border-color:#E0574A;background:rgba(224,87,74,.10)}
+
+  .howto{margin:0;text-align:center;font-size:12px;color:var(--muted)}
+  @media (max-height: 700px){
+    .howto{display:none}
+    .guest{padding:7px 10px}
+    .guest .nm{font-size:13.5px}
+    .guest .bits{font-size:10.5px}
+    .clues{padding:10px 11px}
+    .clue{font-size:12.5px;padding:2px 0}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="./index.html">&larr; Arcade</a>
+  <button class="chip" id="new-case">New case</button>
+</header>
+
+<div class="chiprow" id="levels"></div>
+
+<div class="statline">
+  <span class="solved"><span id="solved-n">0</span><span>cases closed</span></span>
+  <span class="eyebrow" id="streak"></span>
+</div>
+
+<div class="wrap">
+  <div class="clues">
+    <h3 id="clue-head">What you know</h3>
+    <div id="clue-list"></div>
+  </div>
+  <div class="guests" id="guests"></div>
+  <p class="howto">Tap the circle to rule someone out. Tap the name to accuse.</p>
+</div>
+
+<div class="win" id="over" hidden>
+  <h2 id="over-title"></h2>
+  <p id="over-text"></p>
+  <div class="controls"><button class="ctrl" id="again">Next case</button></div>
+</div>
+
+<p class="note" id="note" hidden>Storage is blocked here, so your record won't be saved.</p>
+
+<script>
+(function(){
+  "use strict";
+
+  var KEY = "arcade.verdict.v1";
+  var LEVELS = [
+    { id:"gentle",  label:"Gentle" },
+    { id:"tangled", label:"Tangled" },
+    { id:"knotty",  label:"Knotty" }
+  ];
+
+  var NAMES = ["Ainsley","Brydon","Calloway","Delacroix","Ellery","Fairweather"];
+  var FIRST = ["Margot","Hugo","Vivienne","Rupert","Cordelia","Bertram"];
+  var ROOMS = ["the library","the conservatory","the billiard room","the cellar","the study","the terrace"];
+  var ITEMS = ["a silver letter-opener","a length of curtain cord","a brass candlestick",
+               "a bottle of laudanum","a marble bookend","a duelling pistol"];
+  var TRAITS = ["left-handed","wearing gloves","soaked through","smelling of smoke",
+                "carrying a lantern","in evening dress"];
+
+  function mulberry(seed){
+    var t = seed >>> 0;
+    return function(){
+      t = (t + 0x6D2B79F5) >>> 0;
+      var x = Math.imul(t ^ (t >>> 15), 1 | t);
+      x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+      return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function shuffled(a, rng){
+    var o = a.slice();
+    for(var i = o.length - 1; i > 0; i--){
+      var j = Math.floor(rng() * (i + 1)), t = o[i];
+      o[i] = o[j]; o[j] = t;
+    }
+    return o;
+  }
+
+  /* Three rooms, three weapons, three traits across six guests, each shared by
+     exactly two of them. Giving everyone their own room made "the killer was in
+     the library" name the culprit outright, which is an answer rather than a
+     clue. Shared attributes are what make a line of reasoning necessary. */
+  function pairsOf(pool, rng){
+    var three = shuffled(pool, rng).slice(0, 3);
+    return shuffled(three.concat(three), rng);
+  }
+  function deal(rng){
+    var rooms = pairsOf(ROOMS, rng), items = pairsOf(ITEMS, rng), traits = pairsOf(TRAITS, rng);
+    var first = shuffled(FIRST, rng), sur = shuffled(NAMES, rng);
+    return sur.map(function(surname, i){
+      return { id:i, name: first[i] + " " + surname, room: rooms[i], item: items[i], trait: traits[i] };
+    });
+  }
+
+  /* Clue kinds. Each one is a statement that is true of the case, and each can
+     say whether a given guest is still possible. */
+  var KINDS = [
+    { id:"room",     text:function(c, g){ return "The killer was in " + g[c].room + "."; },
+                     keeps:function(c, g, x){ return g[x].room === g[c].room; } },
+    { id:"notRoom",  text:function(c, g, o){ return "Nobody in " + g[o].room + " did it."; },
+                     keeps:function(c, g, x, o){ return g[x].room !== g[o].room; } },
+    { id:"item",     text:function(c, g){ return "The weapon was " + g[c].item + "."; },
+                     keeps:function(c, g, x){ return g[x].item === g[c].item; } },
+    { id:"notItem",  text:function(c, g, o){ return "It was not " + g[o].item + "."; },
+                     keeps:function(c, g, x, o){ return g[x].item !== g[o].item; } },
+    { id:"trait",    text:function(c, g){ return "The killer was " + g[c].trait + "."; },
+                     keeps:function(c, g, x){ return g[x].trait === g[c].trait; } },
+    { id:"notTrait", text:function(c, g, o){ return "Whoever did it was not " + g[o].trait + "."; },
+                     keeps:function(c, g, x, o){ return g[x].trait !== g[o].trait; } },
+    { id:"cleared",  text:function(c, g, o){ return g[o].name + " was seen elsewhere all evening."; },
+                     keeps:function(c, g, x, o){ return x !== o; } },
+    { id:"pair",     text:function(c, g, o){
+                       return "It was either " + g[c].name + " or " + g[o].name + "."; },
+                     keeps:function(c, g, x, o){ return x === c || x === o; } }
+  ];
+
+  function survivors(guests, clues){
+    var out = [];
+    for(var x = 0; x < guests.length; x++){
+      var ok = true;
+      for(var i = 0; i < clues.length && ok; i++){
+        var k = KINDS.filter(function(K){ return K.id === clues[i].kind; })[0];
+        if(!k.keeps(clues[i].culprit, guests, x, clues[i].other)) ok = false;
+      }
+      if(ok) out.push(x);
+    }
+    return out;
+  }
+
+  /* Build clues one at a time, keeping only those that actually rule somebody
+     out, until a single name is left. Then drop any clue the rest already
+     implies, so the player is never given a line that does no work. */
+  function buildCase(rng, level){
+    var guests = deal(rng);
+    var culprit = Math.floor(rng() * guests.length);
+    var clues = [], guard = 0;
+
+    // the softer the level, the more of the plain "it was X" kinds turn up
+    var pool = level === "gentle" ? ["room","item","trait","cleared","notRoom","notItem"]
+             : level === "knotty" ? ["notRoom","notItem","notTrait","cleared","pair","room","item","trait"]
+             : ["room","item","trait","notRoom","notItem","notTrait","cleared","pair"];
+
+    var want = level === "gentle" ? 3 : (level === "knotty" ? 5 : 4);
+    while(survivors(guests, clues).length > 1 && guard++ < 300){
+      var kind = pool[Math.floor(rng() * pool.length)];
+      var other = Math.floor(rng() * guests.length);
+      /* A negative clue has to be aimed at an ATTRIBUTE the culprit does not
+         share, not merely at a different guest. Now that two people are in each
+         room and carry each weapon, "not the one in the cellar" can rule out the
+         culprit himself even when it names somebody else. */
+      if(kind === "cleared" && other === culprit) continue;
+      if(kind === "pair" && other === culprit) continue;
+      if(kind === "notRoom" && guests[other].room === guests[culprit].room) continue;
+      if(kind === "notItem" && guests[other].item === guests[culprit].item) continue;
+      if(kind === "notTrait" && guests[other].trait === guests[culprit].trait) continue;
+      var clue = { kind:kind, culprit:culprit, other:other };
+      var before = survivors(guests, clues).length;
+      var after = survivors(guests, clues.concat([clue])).length;
+      if(after === before || after === 0) continue;       // says nothing, or contradicts
+      // hold the last suspect back until the case is as long as the level wants,
+      // so an easy deal does not collapse to a single give-away line
+      if(after === 1 && clues.length + 1 < want && guard < 240) continue;
+      clues.push(clue);
+    }
+    // the answer must survive its own clues; anything else is a broken case
+    var left = survivors(guests, clues);
+    if(left.length !== 1 || left[0] !== culprit) return null;
+
+    // a clue the others already cover is noise; take it out
+    for(var i = clues.length - 1; i >= 0; i--){
+      var without = clues.slice(0, i).concat(clues.slice(i + 1));
+      var w = survivors(guests, without);
+      if(w.length === 1 && w[0] === culprit) clues.splice(i, 1);
+    }
+    var end = survivors(guests, clues);
+    if(end.length !== 1 || end[0] !== culprit) return null;
+    return {
+      guests: guests,
+      culprit: culprit,
+      clues: clues.map(function(c){
+        var k = KINDS.filter(function(K){ return K.id === c.kind; })[0];
+        return { kind:c.kind, culprit:c.culprit, other:c.other, text:k.text(c.culprit, guests, c.other) };
+      })
+    };
+  }
+
+  function makeCase(seed, level){
+    var rng = mulberry(seed >>> 0);
+    for(var attempt = 0; attempt < 200; attempt++){
+      var c = buildCase(rng, level);
+      var want = level === "gentle" ? 3 : (level === "knotty" ? 5 : 4);
+      if(c && c.clues.length >= Math.min(3, want)) return c;
+    }
+    return null;
+  }
+
+  /* ================= end of the case; DOM from here ================= */
+
+  function el(id){ return document.getElementById(id); }
+  var level = LEVELS[0], kase = null, crossed = {}, accused = null;
+  var store = { solved:0, streak:0, best:0 }, storable = true;
+
+  function save(){
+    if(!storable) return;
+    try{
+      localStorage.setItem(KEY, JSON.stringify({
+        solved:store.solved, streak:store.streak, best:store.best,
+        level:level.id, seed:kase ? kase.seed : null, crossed:crossed, accused:accused
+      }));
+    }catch(e){ storable = false; el("note").hidden = false; }
+  }
+  function load(){
+    try{ var raw = localStorage.getItem(KEY); return raw ? JSON.parse(raw) : null; }
+    catch(e){ storable = false; el("note").hidden = false; return null; }
+  }
+
+  function render(){
+    var cl = el("clue-list");
+    cl.innerHTML = "";
+    kase.clues.forEach(function(c, i){
+      var d = document.createElement("div");
+      d.className = "clue";
+      d.innerHTML = "<i>" + (i + 1) + "</i><span>" + c.text + "</span>";
+      cl.appendChild(d);
+    });
+    el("clue-head").textContent = kase.clues.length + " things you know";
+
+    var gs = el("guests");
+    gs.innerHTML = "";
+    kase.guests.forEach(function(g, i){
+      var b = document.createElement("div");
+      b.className = "guest";
+      b.dataset.i = i;
+      b.dataset.out = !!crossed[i];
+      if(accused !== null){
+        b.dataset.guilty = (i === kase.culprit);
+        b.dataset.wrong = (i === accused && i !== kase.culprit);
+      }
+      b.innerHTML =
+        '<button class="x" data-act="cross" aria-label="Rule out">\u2715</button>' +
+        '<span class="who" data-act="accuse"><span class="nm">' + g.name + "</span>" +
+        '<span class="bits">' + g.room + " \u00b7 " + g.item + " \u00b7 " + g.trait + "</span></span>";
+      gs.appendChild(b);
+    });
+
+    el("solved-n").textContent = store.solved;
+    el("streak").textContent = store.streak ? "Streak " + store.streak +
+      (store.best > store.streak ? " \u00b7 best " + store.best : "") : (store.best ? "Best " + store.best : "");
+    for(var i = 0; i < el("levels").children.length; i++)
+      el("levels").children[i].setAttribute("aria-pressed", LEVELS[i].id === level.id);
+  }
+
+  function accuse(i){
+    if(accused !== null) return;
+    accused = i;
+    var right = i === kase.culprit;
+    if(right){
+      store.solved++;
+      store.streak++;
+      if(store.streak > store.best) store.best = store.streak;
+    } else store.streak = 0;
+    el("over-title").textContent = right ? "Case closed" : "Wrong name";
+    el("over-text").textContent = right
+      ? kase.guests[i].name + " did it, and you said so."
+      : "It was " + kase.guests[kase.culprit].name + ", " + kase.guests[kase.culprit].trait +
+        ", in " + kase.guests[kase.culprit].room + ".";
+    el("over").hidden = false;
+    save(); render();
+  }
+
+  function dealCase(lv, seed){
+    level = lv;
+    var s = seed === undefined || seed === null
+      ? ((Date.now() ^ (Math.random() * 4294967295)) >>> 0) : seed;
+    var made = null, tries = 0;
+    // a seed can fail to yield a case; walk on until one deals
+    while(!made && tries++ < 40){ made = makeCase(s + tries, lv.id); }
+    if(!made){ made = makeCase(1, "gentle"); }
+    made.seed = s;
+    kase = made;
+    crossed = {};
+    accused = null;
+    el("over").hidden = true;
+    save(); render();
+  }
+
+  var chiprow = el("levels");
+  LEVELS.forEach(function(l){
+    var b = document.createElement("button");
+    b.className = "chip";
+    b.textContent = l.label;
+    b.addEventListener("click", function(){ dealCase(l); });
+    chiprow.appendChild(b);
+  });
+
+  el("guests").addEventListener("click", function(e){
+    var row = e.target.closest ? e.target.closest(".guest") : null;
+    if(!row) return;
+    var act = e.target.closest("[data-act]");
+    var i = +row.dataset.i;
+    if(act && act.dataset.act === "cross"){
+      if(accused !== null) return;
+      crossed[i] = !crossed[i];
+      save(); render();
+      return;
+    }
+    accuse(i);
+  });
+
+  el("new-case").addEventListener("click", function(){ dealCase(level); });
+  el("again").addEventListener("click", function(){ dealCase(level); });
+
+  var saved = load();
+  if(saved){
+    store = { solved:saved.solved || 0, streak:saved.streak || 0, best:saved.best || 0 };
+    var lv = LEVELS.filter(function(l){ return l.id === saved.level; })[0] || LEVELS[0];
+    if(saved.seed !== null && saved.seed !== undefined){
+      dealCase(lv, saved.seed);
+      crossed = saved.crossed || {};
+      if(saved.accused !== null && saved.accused !== undefined) accuse(saved.accused);
+      render();
+    } else dealCase(lv);
+  } else dealCase(LEVELS[0]);
+
+  if("serviceWorker" in navigator){
+    window.addEventListener("load", function(){
+      navigator.serviceWorker.register("./sw.js").catch(function(){});
+    });
+  }
+})();
+</script>
+</body>
+</html>
