@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#151C24">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Arcade">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<link rel="icon" href="./icon-192.png">
+<title>Sudoku</title>
+<link rel="stylesheet" href="./app.css">
+<style>
+  .statline{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:6px 2px 8px}
+  .clock{font-size:22px;font-weight:200;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  .clock span{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-left:7px}
+
+  .wrap{flex:1;display:flex;flex-direction:column;justify-content:center;gap:10px;padding:4px 0}
+
+  .grid{
+    width:min(100%, 42vh);aspect-ratio:1;margin:0 auto;
+    display:grid;grid-template-columns:repeat(9,1fr);
+    background:#2C3945;border:2px solid #3B4B5A;border-radius:8px;overflow:hidden;
+    gap:1px;padding:1px;touch-action:manipulation;
+  }
+  .cell{
+    background:#1E2831;display:flex;align-items:center;justify-content:center;
+    font-size:clamp(15px, 4.6vw, 23px);font-weight:300;color:var(--accent);
+    position:relative;cursor:pointer;-webkit-user-select:none;user-select:none;
+    transition:background-color .1s ease;
+  }
+  /* the three-by-three boxes, drawn as a heavier edge rather than a gap so the
+     grid stays one square block */
+  .cell[data-bx]{box-shadow:inset 2px 0 0 #3B4B5A}
+  .cell[data-by]{box-shadow:inset 0 2px 0 #3B4B5A}
+  .cell[data-bx][data-by]{box-shadow:inset 2px 0 0 #3B4B5A, inset 0 2px 0 #3B4B5A}
+
+  .cell[data-given="true"]{color:var(--ink);font-weight:400;background:#232E39}
+  .cell[data-peer="true"]{background:#26333F}
+  .cell[data-given="true"][data-peer="true"]{background:#2A3742}
+  .cell[data-same="true"]{background:#2F4A44}
+  .cell[data-sel="true"]{background:#3A5A52;box-shadow:inset 0 0 0 2px var(--accent)}
+  .cell[data-bad="true"]{color:#E0574A}
+  .cell[data-bad="true"][data-sel="true"]{box-shadow:inset 0 0 0 2px #E0574A}
+  .cell.pop{animation:cellpop .22s ease}
+  @keyframes cellpop{0%{transform:scale(1)}45%{transform:scale(1.22)}100%{transform:scale(1)}}
+
+  .notes{
+    position:absolute;inset:2px;display:grid;grid-template-columns:repeat(3,1fr);
+    font-size:clamp(6px, 1.7vw, 9px);color:var(--muted);line-height:1;
+  }
+  .notes b{display:flex;align-items:center;justify-content:center;font-weight:400}
+  .notes b[data-lit="true"]{color:#8FA3B4}
+
+  .pad{display:grid;grid-template-columns:repeat(9,1fr);gap:4px}
+  .num{
+    background:var(--surface);border:1px solid var(--line);border-radius:7px;
+    padding:11px 0;font-size:17px;font-weight:300;color:var(--ink);
+    font-variant-numeric:tabular-nums;
+  }
+  .num[data-spent="true"]{color:var(--line);background:transparent}
+  .num:active{background:var(--accent);color:var(--ground)}
+
+  .tools{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+  .tool{
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    padding:10px 4px;font-size:12px;color:var(--muted);
+    display:flex;flex-direction:column;align-items:center;gap:3px;
+  }
+  .tool svg{width:17px;height:17px;display:block;fill:none;stroke:currentColor;stroke-width:1.8;
+            stroke-linecap:round;stroke-linejoin:round}
+  .tool:disabled{opacity:.35}
+  .tool[aria-pressed="true"]{color:var(--ground);background:var(--accent);border-color:var(--accent)}
+
+  .howto{margin:0;text-align:center;font-size:12px;color:var(--muted)}
+  /* on a short phone the instruction line is the first thing that can go */
+  @media (max-height: 700px){ .howto{display:none} }
+  /* and on the shortest of them the chrome gives up its padding before the
+     grid does, because a grid you cannot read is worse than a tight page */
+  @media (max-height: 640px){
+    .grid{width:min(100%, 37vh)}
+    .num{padding:8px 0;font-size:15px}
+    .tool{padding:7px 3px;font-size:11px}
+    .tool svg{width:15px;height:15px}
+    .statline{padding:2px 2px 6px}
+    .clock{font-size:19px}
+    .wrap{gap:8px;padding:2px 0}
+  }
+  .dealing{text-align:center;color:var(--muted);font-size:13px;padding:24px 0}
+</style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="./index.html">&larr; Arcade</a>
+  <button class="chip" id="new-game">New</button>
+</header>
+
+<div class="chiprow" id="levels"></div>
+
+<div class="statline">
+  <span class="clock"><span id="clock-t">0:00</span><span id="tier-name">Gentle</span></span>
+  <span class="eyebrow">Best <span id="best-t">&mdash;</span></span>
+</div>
+
+<div class="wrap">
+  <div class="grid" id="grid"></div>
+  <div class="pad" id="pad"></div>
+  <div class="tools">
+    <button class="tool" id="notes-btn" aria-pressed="false">
+      <svg viewBox="0 0 24 24"><path d="M4 20h4l10-10a2.8 2.8 0 0 0-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg>
+      Notes
+    </button>
+    <button class="tool" id="erase-btn">
+      <svg viewBox="0 0 24 24"><path d="M8 20h11"/><path d="M14 5l5 5-8 8H6l-2-2 10-11z"/></svg>
+      Erase
+    </button>
+    <button class="tool" id="undo-btn" disabled>
+      <svg viewBox="0 0 24 24"><path d="M4 9h11a5 5 0 0 1 0 10h-6"/><path d="M8 5L4 9l4 4"/></svg>
+      Undo
+    </button>
+    <button class="tool" id="hint-btn">
+      <svg viewBox="0 0 24 24"><path d="M9 19h6"/><path d="M10 22h4"/><path d="M12 2a6 6 0 0 0-3.5 10.9V16h7v-3.1A6 6 0 0 0 12 2z"/></svg>
+      Hint
+    </button>
+  </div>
+  <p class="howto" id="howto">Tap a square, then a number. Notes go in small.</p>
+  <p class="dealing" id="dealing" hidden>Dealing a new grid&hellip;</p>
+</div>
+
+<div class="win" id="win" hidden>
+  <h2>Solved</h2>
+  <p id="win-text"></p>
+  <div class="controls"><button class="ctrl" id="again">Another</button></div>
+</div>
+
+<p class="note" id="note" hidden>Storage is blocked here, so your puzzle won't be saved between sessions.</p>
+
+<script>
+(function(){
+  "use strict";
+
+  var KEY = "arcade.sudoku.v1";
+
+  var UNITS = (function(){
+    var out = [];
+    for(var r = 0; r < 9; r++){
+      var row = [], col = [];
+      for(var c = 0; c < 9; c++){ row.push(r * 9 + c); col.push(c * 9 + r); }
+      out.push(row); out.push(col);
+    }
+    for(var br = 0; br < 3; br++) for(var bc = 0; bc < 3; bc++){
+      var box = [];
+      for(var i = 0; i < 3; i++) for(var j = 0; j < 3; j++)
+        box.push((br * 3 + i) * 9 + bc * 3 + j);
+      out.push(box);
+    }
+    return out;
+  })();
+
+  // every cell's row, column and box, and the cells it shares one with
+  var UNITS_OF = (function(){
+    var out = []; for(var i = 0; i < 81; i++) out.push([]);
+    UNITS.forEach(function(u){ u.forEach(function(i){ out[i].push(u); }); });
+    return out;
+  })();
+  var PEERS = (function(){
+    var out = [];
+    for(var i = 0; i < 81; i++){
+      var seen = {};
+      UNITS_OF[i].forEach(function(u){ u.forEach(function(j){ if(j !== i) seen[j] = 1; }); });
+      out.push(Object.keys(seen).map(Number));
+    }
+    return out;
+  })();
+
+  var ALL = 0x1FF;                       // bits 0..8 stand for the digits 1..9
+  function bit(d){ return 1 << (d - 1); }
+  function bitCount(m){ var n = 0; while(m){ m &= m - 1; n++; } return n; }
+  function firstDigit(m){ for(var d = 1; d <= 9; d++) if(m & bit(d)) return d; return 0; }
+
+  function mulberry(seed){
+    var t = seed >>> 0;
+    return function(){
+      t = (t + 0x6D2B79F5) >>> 0;
+      var x = Math.imul(t ^ (t >>> 15), 1 | t);
+      x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+      return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function shuffled(arr, rng){
+    var a = arr.slice();
+    for(var i = a.length - 1; i > 0; i--){
+      var j = Math.floor(rng() * (i + 1)), t = a[i];
+      a[i] = a[j]; a[j] = t;
+    }
+    return a;
+  }
+
+  function legal(g, i, d){
+    for(var k = 0; k < PEERS[i].length; k++) if(g[PEERS[i][k]] === d) return false;
+    return true;
+  }
+
+  /* A finished grid, filled in a random order so every puzzle starts somewhere
+     different. Plain backtracking is fast enough on an empty grid. */
+  function fullGrid(rng){
+    var g = new Array(81).fill(0);
+    var order = [1,2,3,4,5,6,7,8,9];
+    function go(i){
+      if(i === 81) return true;
+      var ds = shuffled(order, rng);
+      for(var k = 0; k < 9; k++){
+        if(legal(g, i, ds[k])){
+          g[i] = ds[k];
+          if(go(i + 1)) return true;
+          g[i] = 0;
+        }
+      }
+      return false;
+    }
+    go(0);
+    return g;
+  }
+
+  /* How many ways this grid can be finished, giving up once the cap is reached.
+     Only ever asked "is it more than one", so the cap is always 2. */
+  function countSolutions(g, cap, nodeCap){
+    var grid = g.slice(), found = 0, nodes = 0, bailed = false;
+    var limit = nodeCap || Infinity;
+    function go(){
+      if(++nodes > limit){ bailed = true; return true; }
+      // branch on the cell with the fewest options, which cuts the search hard
+      var best = -1, bestN = 10, bestMask = 0;
+      for(var i = 0; i < 81; i++){
+        if(grid[i]) continue;
+        var mask = ALL;
+        for(var k = 0; k < PEERS[i].length; k++){
+          var v = grid[PEERS[i][k]];
+          if(v) mask &= ~bit(v);
+        }
+        var n = bitCount(mask);
+        if(n === 0) return false;
+        if(n < bestN){ bestN = n; best = i; bestMask = mask; if(n === 1) break; }
+      }
+      if(best === -1){ found++; return found >= cap; }
+      for(var d = 1; d <= 9; d++){
+        if(!(bestMask & bit(d))) continue;
+        grid[best] = d;
+        if(go()) return true;
+        grid[best] = 0;
+      }
+      return false;
+    }
+    go();
+    // a search that ran out of budget has proved nothing, so say "not unique"
+    // and let the caller keep the clue: a slightly fuller grid beats a stall
+    return bailed ? -1 : found;
+  }
+
+  /* ---------- solving by technique, which is what difficulty actually means ----------
+     Clue count is a poor stand-in: a 30-clue puzzle needing only singles is
+     easier than a 34-clue one that needs a locked-candidate step. So a puzzle is
+     rated by the hardest technique needed to finish it without guessing. */
+
+  function candidateMasks(g){
+    var m = new Array(81).fill(0);
+    for(var i = 0; i < 81; i++){
+      if(g[i]) continue;
+      var mask = ALL;
+      for(var k = 0; k < PEERS[i].length; k++){
+        var v = g[PEERS[i][k]];
+        if(v) mask &= ~bit(v);
+      }
+      m[i] = mask;
+    }
+    return m;
+  }
+
+  function nakedSingle(g, m){
+    for(var i = 0; i < 81; i++)
+      if(!g[i] && bitCount(m[i]) === 1) return { at:i, d:firstDigit(m[i]) };
+    return null;
+  }
+
+  function hiddenSingle(g, m){
+    for(var u = 0; u < UNITS.length; u++){
+      for(var d = 1; d <= 9; d++){
+        var b = bit(d), spot = -1, n = 0, taken = false;
+        for(var k = 0; k < 9; k++){
+          var i = UNITS[u][k];
+          if(g[i] === d){ taken = true; break; }
+          if(!g[i] && (m[i] & b)){ spot = i; n++; }
+        }
+        if(!taken && n === 1) return { at:spot, d:d };
+      }
+    }
+    return null;
+  }
+
+  // a digit confined to one row or column inside a box (and the other way round)
+  // can be struck off the rest of that line or box
+  function lockedCandidates(g, m){
+    var changed = false;
+    for(var u = 0; u < UNITS.length; u++){
+      for(var d = 1; d <= 9; d++){
+        var b = bit(d), spots = [];
+        for(var k = 0; k < 9; k++){
+          var i = UNITS[u][k];
+          if(g[i] === d){ spots = null; break; }
+          if(!g[i] && (m[i] & b)) spots.push(i);
+        }
+        if(!spots || spots.length < 2 || spots.length > 3) continue;
+        /* Any other unit holding all of those spots can lose the digit
+           elsewhere. Only the three units through the first spot can possibly
+           hold them all, so there is no reason to walk all twenty-seven - and
+           walking them was most of what made rating a hard grid slow. */
+        UNITS_OF[spots[0]].forEach(function(other){
+          if(other === UNITS[u]) return;
+          for(var s = 1; s < spots.length; s++) if(other.indexOf(spots[s]) === -1) return;
+          other.forEach(function(j){
+            if(spots.indexOf(j) === -1 && !g[j] && (m[j] & b)){ m[j] &= ~b; changed = true; }
+          });
+        });
+      }
+    }
+    return changed;
+  }
+
+  // two cells in a unit sharing the same two candidates own them between them
+  function nakedPair(g, m){
+    var changed = false;
+    for(var u = 0; u < UNITS.length; u++){
+      for(var a = 0; a < 9; a++){
+        var ia = UNITS[u][a];
+        if(g[ia] || bitCount(m[ia]) !== 2) continue;
+        for(var c = a + 1; c < 9; c++){
+          var ib = UNITS[u][c];
+          if(g[ib] || m[ib] !== m[ia]) continue;
+          UNITS[u].forEach(function(j){
+            if(j !== ia && j !== ib && !g[j] && (m[j] & m[ia])){ m[j] &= ~m[ia]; changed = true; }
+          });
+        }
+      }
+    }
+    return changed;
+  }
+
+  var TECHNIQUES = ["singles", "locked", "pairs"];
+
+  /* Solve as far as logic allows and report the hardest technique it took.
+     Anything left over needs a guess, which is what marks the top tier. */
+  function rate(puzzle){
+    var g = puzzle.slice(), hardest = 0, guard = 0;
+    while(guard++ < 400){
+      var left = 0;
+      for(var i = 0; i < 81; i++) if(!g[i]) left++;
+      if(!left) return { solved:true, hardest:TECHNIQUES[hardest] };
+
+      var m = candidateMasks(g);
+      var step = nakedSingle(g, m) || hiddenSingle(g, m);
+      if(step){ g[step.at] = step.d; continue; }
+
+      if(lockedCandidates(g, m)){
+        if(hardest < 1) hardest = 1;
+        var s2 = nakedSingle(g, m) || hiddenSingle(g, m);
+        if(s2){ g[s2.at] = s2.d; continue; }
+      }
+      if(nakedPair(g, m)){
+        if(hardest < 2) hardest = 2;
+        var s3 = nakedSingle(g, m) || hiddenSingle(g, m);
+        if(s3){ g[s3.at] = s3.d; continue; }
+      }
+      return { solved:false, hardest:"search" };
+    }
+    return { solved:false, hardest:"search" };
+  }
+
+  /* Take clues away in pairs about the centre, which keeps the grid looking like
+     a newspaper puzzle, and stop the moment the answer stops being unique.
+
+     Handed out a few cells at a time: one full dig runs eighty-odd uniqueness
+     checks and can take most of a second, so a slice that could only stop
+     between whole digs was not a slice at all. */
+  function makeDigger(full, rng, keepAtLeast){
+    var puzzle = full.slice();
+    var order = shuffled(Array.from({length:81}, function(_, i){ return i; }), rng);
+    var k = 0, clues = 81;
+    return function(until){
+      while(k < order.length && clues > keepAtLeast){
+        var i = order[k++], j = 80 - i;
+        var pair = (i === j) ? [i] : [i, j];
+        if(pair.some(function(x){ return !puzzle[x]; })) continue;
+        if(clues - pair.length < keepAtLeast) continue;
+        var kept = pair.map(function(x){ return puzzle[x]; });
+        pair.forEach(function(x){ puzzle[x] = 0; });
+        if(countSolutions(puzzle, 2, 12000) !== 1) pair.forEach(function(x, n){ puzzle[x] = kept[n]; });
+        else clues -= pair.length;
+        if(Date.now() >= until) return { done:false };
+      }
+      return { done:true, puzzle:puzzle };
+    };
+  }
+
+  function dig(full, rng, keepAtLeast){
+    var d = makeDigger(full, rng, keepAtLeast), r;
+    do{ r = d(Infinity); }while(!r.done);
+    return r.puzzle;
+  }
+
+/* The ladder is built on technique, not clue count. The top tier needs more
+     than the three techniques here, which is honest rather than evasive: the
+     answer is still always unique, and the hint button means being stuck is
+     never the end of the puzzle. */
+  var LEVELS = [
+    { id:"gentle",   label:"Gentle",   keep:40, want:["singles"] },
+    { id:"steady",   label:"Steady",   keep:32, want:["singles"] },
+    { id:"tricky",   label:"Tricky",   keep:28, want:["locked", "pairs"] },
+    { id:"fiendish", label:"Fiendish", keep:24, want:["search"] }
+  ];
+
+  /* Dig, rate, and keep the first puzzle that lands in the band asked for. The
+     rating is the gate, not the clue count - the count only sets how hard the
+     digger tries.
+
+     Handed out a slice at a time rather than as one call: hitting the right band
+     can take a couple of hundred attempts, and a second of frozen tab is exactly
+     the fault this project has already fixed once. */
+  function makeStepper(level, rng, maxAttempts){
+    var attempts = 0, fallback = null, cap = maxAttempts || 400;
+    var digger = null, currentFull = null;
+    return function(sliceMs){
+      var until = Date.now() + (sliceMs || 12);
+      do{
+        if(!digger){
+          currentFull = fullGrid(rng);
+          digger = makeDigger(currentFull, rng, level.keep);
+        }
+        var d = digger(until);
+        if(!d.done) return { done:false, attempts:attempts };
+        digger = null;
+        var puzzle = d.puzzle;
+        var r = rate(puzzle);
+        var tier = r.solved ? r.hardest : "search";
+        attempts++;
+        if(!fallback) fallback = { puzzle:puzzle, full:currentFull, tier:tier };
+        if(level.want.indexOf(tier) !== -1)
+          return { done:true, puzzle:puzzle, full:currentFull, tier:tier, attempts:attempts };
+        if(attempts >= cap)
+          return { done:true, puzzle:fallback.puzzle, full:fallback.full, tier:fallback.tier,
+                   attempts:attempts, settled:true };
+      }while(Date.now() < until);
+      return { done:false, attempts:attempts };
+    };
+  }
+
+// the same thing in one go, for tests and for anywhere a pause does not matter
+  function makePuzzle(level, rng, maxAttempts){
+    var step = makeStepper(level, rng, maxAttempts), r;
+    do{ r = step(1e9); }while(!r.done);
+    return r;
+  }
+
+  /* ================= end of engine; DOM from here ================= */
+
+  function el(id){ return document.getElementById(id); }
+
+  var level = LEVELS[0];
+  var puzzle = null, solution = null, cells = null, notes = null;
+  var sel = -1, notesMode = false, history = [], elapsed = 0, running = false;
+  var best = {}, storable = true, ticker = null, stepper = null;
+
+  /* ---------- storage ---------- */
+
+  function save(){
+    if(!storable || !puzzle) return;
+    try{
+      localStorage.setItem(KEY, JSON.stringify({
+        level: level.id, puzzle: puzzle, solution: solution,
+        cells: cells, notes: notes, elapsed: elapsed, best: best
+      }));
+    }catch(e){ storable = false; el("note").hidden = false; }
+  }
+  function load(){
+    try{
+      var raw = localStorage.getItem(KEY);
+      return raw ? JSON.parse(raw) : null;
+    }catch(e){ storable = false; el("note").hidden = false; return null; }
+  }
+
+  /* ---------- the grid ---------- */
+
+  var cellNodes = [];
+
+  function buildGrid(){
+    var g = el("grid");
+    g.innerHTML = "";
+    cellNodes = [];
+    for(var i = 0; i < 81; i++){
+      var r = (i / 9) | 0, c = i % 9;
+      var n = document.createElement("div");
+      n.className = "cell";
+      if(c % 3 === 0 && c) n.dataset.bx = "1";
+      if(r % 3 === 0 && r) n.dataset.by = "1";
+      n.dataset.i = i;
+      g.appendChild(n);
+      cellNodes.push(n);
+    }
+  }
+
+  function noteMarkup(mask){
+    var out = '<div class="notes">';
+    for(var d = 1; d <= 9; d++)
+      out += "<b" + ((mask & bit(d)) ? ' data-lit="true">' + d : ">") + "</b>";
+    return out + "</div>";
+  }
+
+  // a filled cell that repeats a digit already in its row, column or box
+  function conflicted(i){
+    var v = cells[i];
+    if(!v) return false;
+    for(var k = 0; k < PEERS[i].length; k++) if(cells[PEERS[i][k]] === v) return true;
+    return false;
+  }
+
+  function paint(){
+    var selV = sel >= 0 ? cells[sel] : 0;
+    var peers = sel >= 0 ? PEERS[sel] : [];
+    for(var i = 0; i < 81; i++){
+      var n = cellNodes[i], v = cells[i];
+      var given = puzzle[i] !== 0;
+      n.dataset.given = given;
+      if(v){
+        if(n.firstChild && n.firstChild.nodeType !== 3) n.innerHTML = "";
+        if(n.textContent !== String(v)) n.textContent = v;
+        n.dataset.bad = conflicted(i);
+      } else {
+        n.dataset.bad = "false";
+        var want = notes[i] ? noteMarkup(notes[i]) : "";
+        if(n.innerHTML !== want) n.innerHTML = want;
+      }
+      n.dataset.sel = (i === sel);
+      n.dataset.peer = (sel >= 0 && peers.indexOf(i) !== -1);
+      // every copy of the digit you are looking at, which is how the next
+      // placement is usually spotted
+      n.dataset.same = (!!selV && v === selV && i !== sel);
+    }
+    paintPad();
+    el("undo-btn").disabled = !history.length;
+  }
+
+  function paintPad(){
+    var used = new Array(10).fill(0);
+    for(var i = 0; i < 81; i++) if(cells[i]) used[cells[i]]++;
+    var pad = el("pad");
+    for(var d = 1; d <= 9; d++) pad.children[d - 1].dataset.spent = used[d] >= 9;
+  }
+
+  /* ---------- playing ---------- */
+
+  function push(){
+    history.push({ cells: cells.slice(), notes: notes.slice() });
+    if(history.length > 200) history.shift();
+  }
+
+  function place(d){
+    if(sel < 0 || puzzle[sel]) return;
+    push();
+    if(notesMode){
+      if(cells[sel]) cells[sel] = 0;
+      notes[sel] ^= bit(d);
+    } else {
+      cells[sel] = (cells[sel] === d) ? 0 : d;
+      notes[sel] = 0;
+      if(cells[sel]){
+        // a digit placed cannot still be pencilled in anywhere it can see
+        PEERS[sel].forEach(function(j){ if(!cells[j]) notes[j] &= ~bit(d); });
+        cellNodes[sel].classList.remove("pop");
+        void cellNodes[sel].offsetWidth;
+        cellNodes[sel].classList.add("pop");
+      }
+    }
+    afterMove();
+  }
+
+  function erase(){
+    if(sel < 0 || puzzle[sel]) return;
+    if(!cells[sel] && !notes[sel]) return;
+    push();
+    cells[sel] = 0; notes[sel] = 0;
+    afterMove();
+  }
+
+  function undo(){
+    if(!history.length) return;
+    var s = history.pop();
+    cells = s.cells; notes = s.notes;
+    paint(); save();
+  }
+
+  /* A hint gives the next square that logic alone settles, so it teaches the
+     step rather than just filling a hole. Only when nothing is deducible does
+     it fall back to the answer. */
+  function hint(){
+    if(solved()) return;
+    var g = cells.slice();
+    for(var i = 0; i < 81; i++) if(g[i] && g[i] !== solution[i]) g[i] = 0;
+    var m = candidateMasks(g);
+    var step = nakedSingle(g, m) || hiddenSingle(g, m);
+    var at = step ? step.at : -1, d = step ? step.d : 0;
+    if(at < 0){
+      for(var k = 0; k < 81; k++) if(!cells[k]){ at = k; d = solution[k]; break; }
+    }
+    if(at < 0) return;
+    push();
+    cells[at] = d; notes[at] = 0;
+    PEERS[at].forEach(function(j){ if(!cells[j]) notes[j] &= ~bit(d); });
+    sel = at;
+    cellNodes[at].classList.remove("pop");
+    void cellNodes[at].offsetWidth;
+    cellNodes[at].classList.add("pop");
+    afterMove();
+  }
+
+  function solved(){
+    for(var i = 0; i < 81; i++) if(cells[i] !== solution[i]) return false;
+    return true;
+  }
+
+  function afterMove(){
+    paint();
+    if(solved()) finish(); else save();
+  }
+
+  function finish(){
+    running = false;
+    stopClock();
+    var was = best[level.id];
+    var record = !was || elapsed < was;
+    if(record) best[level.id] = elapsed;
+    el("win-text").textContent = level.label + " in " + clockText(elapsed) +
+      (record ? " \u00b7 your best yet" : (was ? " \u00b7 best " + clockText(was) : ""));
+    el("win").hidden = false;
+    paintBest();
+    save();
+  }
+
+  /* ---------- the clock ---------- */
+
+  function clockText(s){
+    var m = Math.floor(s / 60);
+    return m + ":" + String(s % 60).padStart(2, "0");
+  }
+  function paintClock(){ el("clock-t").textContent = clockText(elapsed); }
+  function paintBest(){ el("best-t").textContent = best[level.id] ? clockText(best[level.id]) : "\u2014"; }
+  function startClock(){
+    stopClock();
+    running = true;
+    ticker = setInterval(function(){
+      if(document.hidden || !running) return;
+      elapsed++;
+      paintClock();
+      if(elapsed % 5 === 0) save();
+    }, 1000);
+  }
+  function stopClock(){ if(ticker){ clearInterval(ticker); ticker = null; } }
+
+  /* ---------- dealing ---------- */
+
+  function showDealing(on){
+    el("dealing").hidden = !on;
+    el("grid").style.visibility = on ? "hidden" : "";
+    el("pad").style.opacity = on ? ".4" : "";
+  }
+
+  /* Built a slice at a time: landing a puzzle in the right band can take a few
+     hundred tries, and the tab has to stay alive while it happens. */
+  function deal(lv){
+    level = lv;
+    syncChips();
+    stopClock();
+    el("win").hidden = true;
+    showDealing(true);
+    var rng = mulberry((Date.now() ^ (Math.random() * 0xFFFFFFFF)) >>> 0);
+    stepper = makeStepper(level, rng);
+    var mine = stepper;
+    (function spin(){
+      if(stepper !== mine) return;            // a newer deal has taken over
+      var r = mine(12);
+      if(!r.done){ requestAnimationFrame(spin); return; }
+      stepper = null;
+      puzzle = r.puzzle;
+      solution = r.full;
+      cells = puzzle.slice();
+      notes = new Array(81).fill(0);
+      history = [];
+      sel = -1;
+      elapsed = 0;
+      showDealing(false);
+      paintClock(); paintBest(); paint();
+      startClock();
+      save();
+    })();
+  }
+
+  function resume(s){
+    level = LEVELS.filter(function(l){ return l.id === s.level; })[0] || LEVELS[0];
+    puzzle = s.puzzle; solution = s.solution;
+    cells = s.cells; notes = s.notes;
+    elapsed = s.elapsed || 0;
+    history = []; sel = -1;
+    syncChips(); showDealing(false);
+    paintClock(); paintBest(); paint();
+    if(solved()) el("win").hidden = false; else startClock();
+  }
+
+  /* ---------- chrome ---------- */
+
+  var chiprow = el("levels");
+  LEVELS.forEach(function(l){
+    var b = document.createElement("button");
+    b.className = "chip";
+    b.textContent = l.label;
+    b.setAttribute("aria-pressed", l.id === level.id);
+    b.addEventListener("click", function(){ if(l.id !== level.id || !puzzle) deal(l); });
+    chiprow.appendChild(b);
+  });
+  function syncChips(){
+    for(var i = 0; i < chiprow.children.length; i++)
+      chiprow.children[i].setAttribute("aria-pressed", LEVELS[i].id === level.id);
+    el("tier-name").textContent = level.label;
+  }
+
+  var pad = el("pad");
+  for(var d = 1; d <= 9; d++){
+    (function(n){
+      var b = document.createElement("button");
+      b.className = "num";
+      b.textContent = n;
+      b.addEventListener("click", function(){ place(n); });
+      pad.appendChild(b);
+    })(d);
+  }
+
+  el("grid").addEventListener("click", function(e){
+    var t = e.target.closest ? e.target.closest(".cell") : null;
+    if(!t) return;
+    var i = +t.dataset.i;
+    sel = (sel === i) ? -1 : i;
+    paint();
+  });
+
+  el("notes-btn").addEventListener("click", function(){
+    notesMode = !notesMode;
+    this.setAttribute("aria-pressed", notesMode);
+  });
+  el("erase-btn").addEventListener("click", erase);
+  el("undo-btn").addEventListener("click", undo);
+  el("hint-btn").addEventListener("click", hint);
+  el("new-game").addEventListener("click", function(){ deal(level); });
+  el("again").addEventListener("click", function(){ deal(level); });
+
+  // a keyboard is worth supporting since the same page opens on a desktop
+  document.addEventListener("keydown", function(e){
+    if(e.key >= "1" && e.key <= "9"){ place(+e.key); return; }
+    if(e.key === "Backspace" || e.key === "Delete"){ erase(); return; }
+    if(e.key === "n" || e.key === "N"){ el("notes-btn").click(); return; }
+    var move = { ArrowLeft:-1, ArrowRight:1, ArrowUp:-9, ArrowDown:9 }[e.key];
+    if(move === undefined) return;
+    e.preventDefault();
+    if(sel < 0){ sel = 0; } else {
+      var r = (sel / 9) | 0, c = sel % 9;
+      if(Math.abs(move) === 1){ c = Math.min(8, Math.max(0, c + move)); }
+      else { r = Math.min(8, Math.max(0, r + move / 9)); }
+      sel = r * 9 + c;
+    }
+    paint();
+  });
+
+  /* The clock does not tick while the app is in the background, and the moment
+     it goes there is the moment worth writing: a phone can kill a backgrounded
+     page outright, and coming back to a reset timer is the sort of thing that
+     makes a puzzle not worth resuming. */
+  document.addEventListener("visibilitychange", function(){ save(); });
+  window.addEventListener("pagehide", save);
+
+  buildGrid();
+  var saved = load();
+  best = (saved && saved.best) || {};
+  if(saved && saved.puzzle && saved.solution && saved.cells) resume(saved);
+  else deal(LEVELS[0]);
+
+  if("serviceWorker" in navigator){
+    window.addEventListener("load", function(){
+      navigator.serviceWorker.register("./sw.js").catch(function(){});
+    });
+  }
+})();
+</script>
+</body>
+</html>
