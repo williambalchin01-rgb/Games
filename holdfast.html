@@ -502,8 +502,12 @@
   function render(){
     var canGo = {}, canHit = {};
     if(sel){
-      reachable(g, sel).forEach(function(p){ canGo[idx(p[0], p[1])] = 1; });
-      targets(g, sel).forEach(function(v){ canHit[idx(v.x, v.y)] = 1; });
+      /* Only light what he can still do. Lighting every square he could reach
+         at the start of the turn meant a soldier who had already marched still
+         showed a ring of blue that did nothing when you tapped it - which reads
+         as a board that has stopped working. */
+      if(!sel.moved) reachable(g, sel).forEach(function(p){ canGo[idx(p[0], p[1])] = 1; });
+      if(!sel.acted) targets(g, sel).forEach(function(v){ canHit[idx(v.x, v.y)] = 1; });
     }
     for(var i = 0; i < W * H; i++){
       var x = i % W, y = (i / W) | 0, t = tiles[i];
@@ -588,26 +592,42 @@
         say(r.killed ? UNITS[hit.kind].name + " cut down." :
             "Hit for " + r.toDefender + (r.toAttacker ? ", took " + r.toAttacker + " back." : "."));
         sel.acted = true;
-        if(g.units.indexOf(sel) === -1) sel = null;
+        if(g.units.indexOf(sel) === -1 || sel.moved) sel = null;
         claimTowns(g);
         checkOver();
         save(); render();
         return;
       }
-      var canMove = reachable(g, sel).some(function(p){ return p[0] === x && p[1] === y; });
-      if(canMove && !sel.moved){
+      var canMove = !sel.moved && reachable(g, sel).some(function(p){ return p[0] === x && p[1] === y; });
+      if(canMove){
         sel.x = x; sel.y = y; sel.moved = true;
         claimTowns(g);
         checkOver();
-        say("");
+        // he can still swing if anyone is in range; otherwise he is done
+        if(targets(g, sel).length && !sel.acted) say("In range \u00b7 tap to strike.");
+        else { sel = null; say(spentOut() ? "Every soldier is spent. End the turn." : ""); }
         save(); render();
+        return;
+      }
+      if(sel.moved && !sel.acted && unitAt(g, x, y) === null){
+        say(UNITS[sel.kind].name + " has already marched this turn.");
+        render();
         return;
       }
     }
     sel = (u && u.owner === 0 && !(u.moved && u.acted)) ? u : null;
     if(u && u.owner === 1) say(UNITS[u.kind].name + " \u00b7 " + u.hp + " health");
     else if(sel) say(UNITS[sel.kind].name + (sel.moved ? " has moved" : "") + (sel.acted ? " and fought" : ""));
+    // a tap that changes nothing used to pass in silence, which reads as a
+    // broken board rather than a spent soldier
+    else if(u && u.owner === 0) say(UNITS[u.kind].name + " is spent. End the turn.");
+    else if(!u && !sel) say(spentOut() ? "Every soldier is spent. End the turn."
+                                       : "Tap a soldier, then where to send him.");
     render();
+  }
+
+  function spentOut(){
+    return g.units.every(function(u){ return u.owner !== 0 || (u.moved && u.acted); });
   }
 
   function checkOver(){
@@ -623,17 +643,26 @@
 
   async function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
 
+  /* The board is dead while the rival thinks, so anything that goes wrong in
+     here has to hand it back - a stuck "busy" locks the game solid. */
   async function runRival(){
     busy = true; sel = null; buying = null;
     render();
     say("The rival moves\u2026");
-    await sleep(420);
-    aiTurn(g, 1, Math.random);
-    claimTowns(g);
-    render();
-    await sleep(520);
-    endTurn(g);
-    busy = false;
+    try{
+      await sleep(420);
+      aiTurn(g, 1, Math.random);
+      claimTowns(g);
+      render();
+      await sleep(520);
+      endTurn(g);
+    } catch(e){
+      // he forfeits the rest of his turn rather than taking the game with him
+      g.side = 0;
+      g.units.forEach(function(u){ if(u.owner === 0){ u.moved = false; u.acted = false; } });
+    } finally {
+      busy = false;
+    }
     checkOver();
     if(g.over === null) say("Your move.");
     save(); render();
@@ -675,6 +704,11 @@
     g = saved;
     if(g.over !== null) checkOver();
     render();
+    /* The game is written down the moment you end your turn, before the rival
+       has played his. Close the app in that gap and it comes back as his move,
+       with every one of your soldiers already spent and nothing to hand it
+       back - so finish his turn for him on the way in. */
+    if(g.over === null && g.side === 1) runRival();
   } else fresh();
 
   if("serviceWorker" in navigator){
