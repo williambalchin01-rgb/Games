@@ -6,57 +6,59 @@
 <meta name="theme-color" content="#151C24">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Arcade">
+<meta name="apple-mobile-web-app-title" content="Verdict">
 <link rel="manifest" href="./manifest.json">
 <link rel="apple-touch-icon" href="./apple-touch-icon.png">
 <link rel="icon" href="./icon-192.png">
 <title>Verdict</title>
 <link rel="stylesheet" href="./app.css">
 <style>
-  .statline{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:6px 2px 8px}
-  .solved{font-size:21px;font-weight:200;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
-  .solved span{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-left:6px}
-
-  /* The shared sheet gives the body a MINIMUM height of a screen, so a long
-     case pushes the whole page taller instead of scrolling inside it. Bounding
-     the body here is what lets the list below scroll on its own. */
+  /* the page owns its own height so the case scrolls inside the frame rather
+     than pushing the header off the top of a phone */
   body{height:100vh;height:100dvh;max-height:100dvh;overflow:hidden}
-  .wrap{flex:1;display:flex;flex-direction:column;gap:12px;padding:4px 0;min-height:0;overflow-y:auto}
+  .statline{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:8px 2px 0}
+  .solved{font-size:20px;font-weight:200;font-variant-numeric:tabular-nums}
+  .solved span:last-child{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-left:6px}
 
-  .clues{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:12px 13px}
-  .clues h3{margin:0 0 8px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:400}
-  .clue{display:flex;gap:9px;font-size:13.5px;line-height:1.45;padding:3px 0}
-  .clue i{color:var(--sel);font-style:normal;flex:none;font-variant-numeric:tabular-nums}
+  .wrap{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:8px 0 4px;display:flex;flex-direction:column;gap:10px}
 
-  .guests{display:flex;flex-direction:column;gap:6px}
-  .guest{
-    display:flex;align-items:center;gap:10px;text-align:left;width:100%;
+  /* seventeen clues would otherwise push the table off the bottom of the page
+     and you would scroll between the two all evening */
+  .clues{
     background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
-    padding:9px 11px;color:inherit;
+    padding:11px 12px;max-height:40vh;overflow-y:auto;-webkit-overflow-scrolling:touch;
+    flex:none;   /* a flex child will otherwise shrink until only its heading is left */
   }
-  .guest .who{flex:1;min-width:0}
-  .guest .nm{font-size:14.5px;font-weight:500;display:block}
-  .guest .bits{font-size:11.5px;color:var(--muted);display:block;margin-top:2px}
-  .guest .x{
-    flex:none;width:26px;height:26px;border-radius:50%;border:1px solid var(--line);
-    display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--muted);
-  }
-  .guest[data-out="true"]{opacity:.42}
-  .guest[data-out="true"] .nm{text-decoration:line-through}
-  .guest[data-out="true"] .x{border-color:#E0574A;color:#E0574A}
-  .guest[data-named="true"]{border-color:var(--accent)}
-  .guest[data-guilty="true"]{border-color:var(--accent);background:rgba(79,168,139,.13)}
-  .guest[data-wrong="true"]{border-color:#E0574A;background:rgba(224,87,74,.10)}
+  #grids{display:flex;flex-direction:column;gap:10px;flex:none}
+  .clues h3{margin:0 0 7px;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:400}
+  .clue{display:flex;gap:8px;align-items:baseline;padding:3px 0;font-size:13px;line-height:1.35}
+  .clue i{flex:none;font-style:normal;font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums;width:13px}
+  .clue[data-struck="true"] span{opacity:.4;text-decoration:line-through}
 
-  .howto{margin:0;text-align:center;font-size:12px;color:var(--muted)}
-  @media (max-height: 700px){
-    .howto{display:none}
-    .guest{padding:7px 10px}
-    .guest .nm{font-size:13.5px}
-    .guest .bits{font-size:10.5px}
-    .clues{padding:10px 11px}
-    .clue{font-size:12.5px;padding:2px 0}
+  .gtitle{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 4px 2px}
+  .grid{border-collapse:separate;border-spacing:0;width:100%;table-layout:fixed}
+  .grid th{font-weight:400;padding:2px 1px;font-size:9.5px;color:var(--muted);text-align:center}
+  .grid th.rowhead{width:72px;text-align:right;padding-right:7px;font-size:11.5px;color:var(--ink);white-space:nowrap}
+  .grid td{padding:1.5px}
+  .cell{
+    width:100%;aspect-ratio:1;border:1px solid var(--line);border-radius:4px;background:#182029;
+    display:flex;align-items:center;justify-content:center;font-size:14px;line-height:1;padding:0;
   }
+  .cell[data-m="1"]{color:#E0574A}
+  .cell[data-m="2"]{color:var(--accent);background:rgba(79,168,139,.16);border-color:var(--accent)}
+  .legend{font-size:10px;color:var(--muted);line-height:1.5;margin:3px 2px 0}
+
+  .pick h4{margin:0 0 6px 2px;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:400}
+  .pick{margin-top:2px}
+  .opts{display:flex;flex-wrap:wrap;gap:5px}
+  .opt{
+    font-size:12px;border:1px solid var(--line);border-radius:18px;padding:6px 11px;
+    color:var(--muted);background:var(--surface);white-space:nowrap;
+  }
+  .opt[aria-pressed="true"]{color:var(--ground);background:var(--sel);border-color:var(--sel)}
+  .howto{margin:2px 2px 0;font-size:11.5px;color:var(--muted);line-height:1.4}
+  .solution{margin:6px 0 0;font-size:13px;line-height:1.5}
+  .solution b{font-weight:500;color:var(--accent)}
 </style>
 </head>
 <body>
@@ -78,13 +80,17 @@
     <h3 id="clue-head">What you know</h3>
     <div id="clue-list"></div>
   </div>
-  <div class="guests" id="guests"></div>
-  <p class="howto">Tap the circle to rule someone out. Tap the name to accuse.</p>
+  <div id="grids"></div>
+  <div class="pick" id="pick-who"><h4>Who did it</h4><div class="opts"></div></div>
+  <div class="pick" id="pick-what"><h4>With what</h4><div class="opts"></div></div>
+  <div class="controls"><button class="ctrl" id="accuse" disabled>Accuse</button></div>
+  <p class="howto">Tap a square once to rule it out, twice to pin it down. Tap a clue to strike it off.</p>
 </div>
 
 <div class="win" id="over" hidden>
   <h2 id="over-title"></h2>
   <p id="over-text"></p>
+  <p class="solution" id="over-solution"></p>
   <div class="controls"><button class="ctrl" id="again">Next case</button></div>
 </div>
 
@@ -95,19 +101,64 @@
   "use strict";
 
   var KEY = "arcade.verdict.v1";
-  var LEVELS = [
-    { id:"gentle",  label:"Gentle" },
-    { id:"tangled", label:"Tangled" },
-    { id:"knotty",  label:"Knotty" }
+
+  /* ================= the case ================= */
+
+  var PEOPLE = [
+    { first:"Margot",   last:"Ainsley" },
+    { first:"Hugo",     last:"Brydon" },
+    { first:"Vivienne", last:"Calloway" },
+    { first:"Rupert",   last:"Delacroix" },
+    { first:"Cordelia", last:"Ellery" },
+    { first:"Bertram",  last:"Fairweather" }
   ];
 
-  var NAMES = ["Ainsley","Brydon","Calloway","Delacroix","Ellery","Fairweather"];
-  var FIRST = ["Margot","Hugo","Vivienne","Rupert","Cordelia","Bertram"];
-  var ROOMS = ["the library","the conservatory","the billiard room","the cellar","the study","the terrace"];
-  var ITEMS = ["a silver letter-opener","a length of curtain cord","a brass candlestick",
-               "a bottle of laudanum","a marble bookend","a duelling pistol"];
-  var TRAITS = ["left-handed","wearing gloves","soaked through","smelling of smoke",
-                "carrying a lantern","in evening dress"];
+  /* Every value carries the three ways the clues need to say it: what he did,
+     what he did not do, and the bare phrase for "either ... or ...". Writing
+     them out beats assembling sentences from parts and getting "was not on the
+     library" for the trouble. */
+  var CATS = [
+    { id:"room", title:"Where", noun:"room", either:"was either", values:[
+      { full:"the library",       short:"Lib",   p:"was in the library",       n:"was not in the library",       alt:"in the library" },
+      { full:"the conservatory",  short:"Cons",  p:"was in the conservatory",  n:"was not in the conservatory",  alt:"in the conservatory" },
+      { full:"the billiard room", short:"Bill",  p:"was in the billiard room", n:"was not in the billiard room", alt:"in the billiard room" },
+      { full:"the cellar",        short:"Cell",  p:"was in the cellar",        n:"was not in the cellar",        alt:"in the cellar" },
+      { full:"the study",         short:"Study", p:"was in the study",         n:"was not in the study",         alt:"in the study" },
+      { full:"the terrace",       short:"Terr",  p:"was on the terrace",       n:"was not on the terrace",       alt:"on the terrace" }
+    ]},
+    { id:"item", title:"With what", noun:"weapon", either:"carried either", values:[
+      { full:"the letter-opener",  short:"Open",  p:"carried the letter-opener",  n:"did not carry the letter-opener",  alt:"the letter-opener" },
+      { full:"the curtain cord",   short:"Cord",  p:"carried the curtain cord",   n:"did not carry the curtain cord",   alt:"the curtain cord" },
+      { full:"the candlestick",    short:"Cand",  p:"carried the candlestick",    n:"did not carry the candlestick",    alt:"the candlestick" },
+      { full:"the laudanum",       short:"Laud",  p:"carried the laudanum",       n:"did not carry the laudanum",       alt:"the laudanum" },
+      { full:"the marble bookend", short:"Book",  p:"carried the marble bookend", n:"did not carry the marble bookend", alt:"the marble bookend" },
+      { full:"the duelling pistol",short:"Pist",  p:"carried the duelling pistol",n:"did not carry the duelling pistol",alt:"the duelling pistol" }
+    ]},
+    { id:"time", title:"When", noun:"hour", either:"was there either", values:[
+      { full:"half past eight", short:"8:30",  p:"was there at half past eight", n:"was not there at half past eight", alt:"at half past eight" },
+      { full:"nine o'clock",    short:"9:00",  p:"was there at nine",            n:"was not there at nine",            alt:"at nine" },
+      { full:"half past nine",  short:"9:30",  p:"was there at half past nine",  n:"was not there at half past nine",  alt:"at half past nine" },
+      { full:"ten o'clock",     short:"10:00", p:"was there at ten",             n:"was not there at ten",             alt:"at ten" },
+      { full:"half past ten",   short:"10:30", p:"was there at half past ten",   n:"was not there at half past ten",   alt:"at half past ten" },
+      { full:"eleven o'clock",  short:"11:00", p:"was there at eleven",          n:"was not there at eleven",          alt:"at eleven" }
+    ]}
+  ];
+
+  /* Three sizes of grid, and three vocabularies of clue. The size is what makes
+     the table longer; taking the plain "X was in the library" away at the
+     harder levels is what makes it deeper, because then every square has to be
+     reached through something else. */
+  var LEVELS = [
+    { id:"gentle",  label:"Gentle",  n:4, cats:["room","item"],
+      kinds:["is","isnt","either","notKiller","killerIs","killerIsnt","link"],
+      minCross:0,  minRounds:0 },
+    { id:"tangled", label:"Tangled", n:5, cats:["room","item","time"],
+      kinds:["isnt","either","link","unlink","notKiller","killerIs","killerIsnt","killerEither"],
+      minCross:8,  minRounds:5 },
+    { id:"knotty",  label:"Knotty",  n:6, cats:["room","item","time"],
+      kinds:["isnt","either","link","unlink","killerIsnt","killerEither"],
+      minCross:16, minRounds:7 }
+  ];
 
   function mulberry(seed){
     var t = seed >>> 0;
@@ -127,128 +178,227 @@
     return o;
   }
 
-  /* Three rooms, three weapons, three traits across six guests, each shared by
-     exactly two of them. Giving everyone their own room made "the killer was in
-     the library" name the culprit outright, which is an answer rather than a
-     clue. Shared attributes are what make a line of reasoning necessary. */
-  function pairsOf(pool, rng){
-    var three = shuffled(pool, rng).slice(0, 3);
-    return shuffled(three.concat(three), rng);
-  }
-  function deal(rng){
-    var rooms = pairsOf(ROOMS, rng), items = pairsOf(ITEMS, rng), traits = pairsOf(TRAITS, rng);
-    var first = shuffled(FIRST, rng), sur = shuffled(NAMES, rng);
-    return sur.map(function(surname, i){
-      return { id:i, name: first[i] + " " + surname, room: rooms[i], item: items[i], trait: traits[i] };
-    });
-  }
+  /* ---- the solver the puzzles are built and graded against ----
 
-  /* Clue kinds. Each one is a statement that is true of the case, and each can
-     say whether a given guest is still possible. */
-  var KINDS = [
-    { id:"room",     text:function(c, g){ return "The killer was in " + g[c].room + "."; },
-                     keeps:function(c, g, x){ return g[x].room === g[c].room; } },
-    { id:"notRoom",  text:function(c, g, o){ return "Nobody in " + g[o].room + " did it."; },
-                     keeps:function(c, g, x, o){ return g[x].room !== g[o].room; } },
-    { id:"item",     text:function(c, g){ return "The weapon was " + g[c].item + "."; },
-                     keeps:function(c, g, x){ return g[x].item === g[c].item; } },
-    { id:"notItem",  text:function(c, g, o){ return "It was not " + g[o].item + "."; },
-                     keeps:function(c, g, x, o){ return g[x].item !== g[o].item; } },
-    { id:"trait",    text:function(c, g){ return "The killer was " + g[c].trait + "."; },
-                     keeps:function(c, g, x){ return g[x].trait === g[c].trait; } },
-    { id:"notTrait", text:function(c, g, o){ return "Whoever did it was not " + g[o].trait + "."; },
-                     keeps:function(c, g, x, o){ return g[x].trait !== g[o].trait; } },
-    { id:"cleared",  text:function(c, g, o){ return g[o].name + " was seen elsewhere all evening."; },
-                     keeps:function(c, g, x, o){ return x !== o; } },
-    { id:"pair",     text:function(c, g, o){
-                       return "It was either " + g[c].name + " or " + g[o].name + "."; },
-                     keeps:function(c, g, x, o){ return x === c || x === o; } }
-  ];
+     Candidates are a box per category: could this guest be this value. Clues
+     shave it down, and the fact that every value belongs to exactly one guest
+     does the rest. Nothing here guesses: a case is only accepted if it falls
+     out of plain reasoning, so there is always a next step to find. */
+  function solve(spec, clues){
+    var n = spec.n, nc = spec.cats.length;
+    var cand = [], c, g, v;
+    for(c = 0; c < nc; c++){
+      var m = [];
+      for(g = 0; g < n; g++){ var r = []; for(v = 0; v < n; v++) r.push(true); m.push(r); }
+      cand.push(m);
+    }
+    var killer = []; for(g = 0; g < n; g++) killer.push(true);
+    var count = { clue:0, single:0, cross:0 }, rounds = 0, changed, dead = false;
 
-  function survivors(guests, clues){
-    var out = [];
-    for(var x = 0; x < guests.length; x++){
-      var ok = true;
-      for(var i = 0; i < clues.length && ok; i++){
-        var k = KINDS.filter(function(K){ return K.id === clues[i].kind; })[0];
-        if(!k.keeps(clues[i].culprit, guests, x, clues[i].other)) ok = false;
+    function drop(ci, gi, vi, tag){
+      if(!cand[ci][gi][vi]) return;
+      cand[ci][gi][vi] = false; count[tag]++; changed = true;
+      if(!cand[ci][gi].some(Boolean)) dead = true;
+    }
+    function dropKiller(gi, tag){
+      if(!killer[gi]) return;
+      killer[gi] = false; count[tag]++; changed = true;
+      if(!killer.some(Boolean)) dead = true;
+    }
+    function fixed(ci, gi){
+      var only = -1;
+      for(var k = 0; k < n; k++) if(cand[ci][gi][k]){ if(only >= 0) return -1; only = k; }
+      return only;
+    }
+    function theKiller(){
+      var only = -1;
+      for(var k = 0; k < n; k++) if(killer[k]){ if(only >= 0) return -1; only = k; }
+      return only;
+    }
+    // the guest who must hold this value, if only one can
+    function holder(ci, vi){
+      var only = -1;
+      for(var k = 0; k < n; k++) if(cand[ci][k][vi]){ if(only >= 0) return -1; only = k; }
+      return only;
+    }
+
+    var rule = {
+      is: function(q){ for(var k = 0; k < n; k++) if(k !== q.v) drop(q.c, q.g, k, "clue"); },
+      isnt: function(q){ drop(q.c, q.g, q.v, "clue"); },
+      either: function(q){ for(var k = 0; k < n; k++) if(k !== q.v && k !== q.v2) drop(q.c, q.g, k, "clue"); },
+      notKiller: function(q){ dropKiller(q.g, "clue"); },
+      killerEither: function(q){ for(var k = 0; k < n; k++) if(k !== q.g && k !== q.g2) dropKiller(k, "clue"); },
+      // the guest holding v in c also holds v2 in c2, and the other way about
+      link: function(q){
+        for(var k = 0; k < n; k++){
+          if(!cand[q.c][k][q.v]) drop(q.c2, k, q.v2, "cross");
+          if(!cand[q.c2][k][q.v2]) drop(q.c, k, q.v, "cross");
+        }
+      },
+      unlink: function(q){
+        for(var k = 0; k < n; k++){
+          if(fixed(q.c, k) === q.v) drop(q.c2, k, q.v2, "cross");
+          if(fixed(q.c2, k) === q.v2) drop(q.c, k, q.v, "cross");
+        }
+      },
+      killerIs: function(q){
+        for(var k = 0; k < n; k++) if(!cand[q.c][k][q.v]) dropKiller(k, "cross");
+        var who = theKiller();
+        if(who >= 0) for(var j = 0; j < n; j++) if(j !== q.v) drop(q.c, who, j, "cross");
+      },
+      killerIsnt: function(q){
+        for(var k = 0; k < n; k++) if(fixed(q.c, k) === q.v) dropKiller(k, "cross");
+        var who = theKiller();
+        if(who >= 0) drop(q.c, who, q.v, "cross");
       }
-      if(ok) out.push(x);
-    }
-    return out;
+    };
+
+    do {
+      changed = false; rounds++;
+      for(var i = 0; i < clues.length && !dead; i++) rule[clues[i].kind](clues[i]);
+      // one value to a guest, one guest to a value
+      for(c = 0; c < nc && !dead; c++){
+        for(g = 0; g < n; g++){
+          var f = fixed(c, g);
+          if(f >= 0) for(var g2 = 0; g2 < n; g2++) if(g2 !== g) drop(c, g2, f, "single");
+        }
+        for(v = 0; v < n; v++){
+          var h = holder(c, v);
+          if(h >= 0) for(var v2 = 0; v2 < n; v2++) if(v2 !== v) drop(c, h, v2, "single");
+        }
+      }
+    } while(changed && !dead && rounds < 60);
+
+    var whole = !dead && theKiller() >= 0;
+    for(c = 0; c < nc && whole; c++) for(g = 0; g < n; g++) if(fixed(c, g) < 0) whole = false;
+    var left = 0;
+    for(c = 0; c < nc; c++) for(g = 0; g < n; g++) for(v = 0; v < n; v++) if(cand[c][g][v]) left++;
+    for(g = 0; g < n; g++) if(killer[g]) left++;
+    return { ok: whole, dead: dead, rounds: rounds, count: count, left: left };
   }
 
-  /* Build clues one at a time, keeping only those that actually rule somebody
-     out, until a single name is left. Then drop any clue the rest already
-     implies, so the player is never given a line that does no work. */
-  function buildCase(rng, level){
-    var guests = deal(rng);
-    var culprit = Math.floor(rng() * guests.length);
-    var clues = [], guard = 0;
+  /* Every true thing that could be said about this case. The generator draws
+     its clues from here, so a clue is never wrong - only redundant, and the
+     pruning pass takes those out afterwards. */
+  function statements(spec, rng){
+    var n = spec.n, nc = spec.cats.length, sol = spec.sol, culprit = spec.culprit;
+    var out = [], c, g, v, c2;
+    function owner(ci, vi){ for(var k = 0; k < n; k++) if(sol[ci][k] === vi) return k; return -1; }
+    var allow = {}; spec.kinds.forEach(function(k){ allow[k] = 1; });
 
-    // the softer the level, the more of the plain "it was X" kinds turn up
-    var pool = level === "gentle" ? ["room","item","trait","cleared","notRoom","notItem"]
-             : level === "knotty" ? ["notRoom","notItem","notTrait","cleared","pair","room","item","trait"]
-             : ["room","item","trait","notRoom","notItem","notTrait","cleared","pair"];
-
-    var want = level === "gentle" ? 3 : (level === "knotty" ? 5 : 4);
-    while(survivors(guests, clues).length > 1 && guard++ < 300){
-      var kind = pool[Math.floor(rng() * pool.length)];
-      var other = Math.floor(rng() * guests.length);
-      /* A negative clue has to be aimed at an ATTRIBUTE the culprit does not
-         share, not merely at a different guest. Now that two people are in each
-         room and carry each weapon, "not the one in the cellar" can rule out the
-         culprit himself even when it names somebody else. */
-      if(kind === "cleared" && other === culprit) continue;
-      if(kind === "pair" && other === culprit) continue;
-      if(kind === "notRoom" && guests[other].room === guests[culprit].room) continue;
-      if(kind === "notItem" && guests[other].item === guests[culprit].item) continue;
-      if(kind === "notTrait" && guests[other].trait === guests[culprit].trait) continue;
-      var clue = { kind:kind, culprit:culprit, other:other };
-      var before = survivors(guests, clues).length;
-      var after = survivors(guests, clues.concat([clue])).length;
-      if(after === before || after === 0) continue;       // says nothing, or contradicts
-      // hold the last suspect back until the case is as long as the level wants,
-      // so an easy deal does not collapse to a single give-away line
-      if(after === 1 && clues.length + 1 < want && guard < 240) continue;
-      clues.push(clue);
+    for(c = 0; c < nc; c++) for(g = 0; g < n; g++){
+      if(allow.is) out.push({ kind:"is", c:c, g:g, v:sol[c][g] });
+      for(v = 0; v < n; v++) if(v !== sol[c][g]){
+        if(allow.isnt) out.push({ kind:"isnt", c:c, g:g, v:v });
+        if(allow.either) out.push({ kind:"either", c:c, g:g, v:sol[c][g], v2:v });
+      }
     }
-    // the answer must survive its own clues; anything else is a broken case
-    var left = survivors(guests, clues);
-    if(left.length !== 1 || left[0] !== culprit) return null;
-
-    // a clue the others already cover is noise; take it out
-    for(var i = clues.length - 1; i >= 0; i--){
-      var without = clues.slice(0, i).concat(clues.slice(i + 1));
-      var w = survivors(guests, without);
-      if(w.length === 1 && w[0] === culprit) clues.splice(i, 1);
+    for(c = 0; c < nc; c++) for(c2 = 0; c2 < nc; c2++){
+      if(c === c2) continue;
+      for(v = 0; v < n; v++){
+        var who = owner(c, v);
+        if(allow.link) out.push({ kind:"link", c:c, v:v, c2:c2, v2:sol[c2][who] });
+        if(allow.unlink) for(var v2 = 0; v2 < n; v2++) if(v2 !== sol[c2][who])
+          out.push({ kind:"unlink", c:c, v:v, c2:c2, v2:v2 });
+      }
     }
-    var end = survivors(guests, clues);
-    if(end.length !== 1 || end[0] !== culprit) return null;
+    for(c = 0; c < nc; c++){
+      if(allow.killerIs) out.push({ kind:"killerIs", c:c, v:sol[c][culprit] });
+      if(allow.killerIsnt) for(v = 0; v < n; v++) if(v !== sol[c][culprit])
+        out.push({ kind:"killerIsnt", c:c, v:v });
+    }
+    for(g = 0; g < n; g++) if(g !== culprit){
+      if(allow.notKiller) out.push({ kind:"notKiller", g:g });
+      if(allow.killerEither) out.push({ kind:"killerEither", g:culprit, g2:g });
+    }
+    return shuffled(out, rng);
+  }
+
+  function buildCase(rng, lv){
+    var n = lv.n;
+    var people = shuffled(PEOPLE, rng).slice(0, n);
+    var cats = lv.cats.map(function(id){
+      var cat = CATS.filter(function(k){ return k.id === id; })[0];
+      return { id:cat.id, title:cat.title, noun:cat.noun, either:cat.either,
+               values: shuffled(cat.values, rng).slice(0, n) };
+    });
+    var sol = cats.map(function(){
+      var order = shuffled([0,1,2,3,4,5].slice(0, n), rng);
+      return order;                                   // sol[c][guest] = value index
+    });
+    var culprit = Math.floor(rng() * n);
+    var spec = { n:n, cats:cats, sol:sol, culprit:culprit, kinds:lv.kinds };
+
+    var pool = statements(spec, rng);
+    var clues = [], best = solve(spec, clues);
+    for(var i = 0; i < pool.length && !best.ok; i++){
+      if(pool[i].kind === "killerEither" &&
+         clues.some(function(q){ return q.kind === "killerEither"; })) continue;
+      var trial = clues.concat([pool[i]]);
+      var r = solve(spec, trial);
+      if(r.dead) continue;                            // cannot happen, but never ship one
+      if(r.left >= best.left) continue;               // says nothing new
+      clues = trial; best = r;
+    }
+    if(!best.ok) return null;
+
+    // drop every clue the rest already covers, hardest-won first
+    for(var j = clues.length - 1; j >= 0; j--){
+      var without = clues.slice(0, j).concat(clues.slice(j + 1));
+      if(solve(spec, without).ok) clues = without;
+    }
+    var grade = solve(spec, clues);
+    if(!grade.ok) return null;
+
     return {
-      guests: guests,
-      culprit: culprit,
-      clues: clues.map(function(c){
-        var k = KINDS.filter(function(K){ return K.id === c.kind; })[0];
-        return { kind:c.kind, culprit:c.culprit, other:c.other, text:k.text(c.culprit, guests, c.other) };
-      })
+      n:n, cats:cats, sol:sol, culprit:culprit,
+      people: people.map(function(p){ return { name: p.first + " " + p.last, last: p.last }; }),
+      /* the clue keeps the constraint it was made from, not just the sentence:
+         it is what lets a case be checked against its own answer */
+      clues: clues.map(function(q){
+        var o = { text: phrase(q, spec, people) };
+        for(var f in q) if(Object.prototype.hasOwnProperty.call(q, f)) o[f] = q[f];
+        return o;
+      }),
+      grade: { rounds:grade.rounds, cross:grade.count.cross, single:grade.count.single, clue:grade.count.clue }
     };
   }
 
-  function makeCase(seed, level){
-    var rng = mulberry(seed >>> 0);
-    for(var attempt = 0; attempt < 200; attempt++){
-      var c = buildCase(rng, level);
-      var want = level === "gentle" ? 3 : (level === "knotty" ? 5 : 4);
-      if(c && c.clues.length >= Math.min(3, want)) return c;
+  function phrase(q, spec, people){
+    var cats = spec.cats;
+    function nm(i){ return people[i].first + " " + people[i].last; }
+    function val(c, v){ return cats[c].values[v]; }
+    switch(q.kind){
+      case "is":     return nm(q.g) + " " + val(q.c, q.v).p + ".";
+      case "isnt":   return nm(q.g) + " " + val(q.c, q.v).n + ".";
+      case "either": return nm(q.g) + " " + cats[q.c].either + " " + val(q.c, q.v).alt +
+                            " or " + val(q.c, q.v2).alt + ".";
+      case "link":   return "Whoever " + val(q.c, q.v).p + " " + val(q.c2, q.v2).p + ".";
+      case "unlink": return "Whoever " + val(q.c, q.v).p + " " + val(q.c2, q.v2).n + ".";
+      case "killerIs":   return "The killer " + val(q.c, q.v).p + ".";
+      case "killerIsnt": return "The killer " + val(q.c, q.v).n + ".";
+      case "notKiller":  return nm(q.g) + " was seen elsewhere all evening.";
+      case "killerEither": return "It was either " + nm(q.g) + " or " + nm(q.g2) + ".";
     }
-    return null;
+    return "";
+  }
+
+  function makeCase(seed, levelId){
+    var lv = LEVELS.filter(function(l){ return l.id === levelId; })[0] || LEVELS[0];
+    var rng = mulberry(seed >>> 0), fallback = null;
+    for(var attempt = 0; attempt < 90; attempt++){
+      var c = buildCase(rng, lv);
+      if(!c) continue;
+      if(c.grade.cross >= lv.minCross && c.grade.rounds >= lv.minRounds) return c;
+      if(!fallback || c.grade.cross > fallback.grade.cross) fallback = c;
+    }
+    return fallback;
   }
 
   /* ================= end of the case; DOM from here ================= */
 
   function el(id){ return document.getElementById(id); }
-  var level = LEVELS[0], kase = null, crossed = {}, accused = null;
+  var level = LEVELS[0], kase = null, marks = {}, struck = {}, pickWho = null, pickWhat = null, done = false;
   var store = { solved:0, streak:0, best:0 }, storable = true;
 
   function save(){
@@ -256,7 +406,8 @@
     try{
       localStorage.setItem(KEY, JSON.stringify({
         solved:store.solved, streak:store.streak, best:store.best,
-        level:level.id, seed:kase ? kase.seed : null, crossed:crossed, accused:accused
+        level:level.id, seed:kase ? kase.seed : null,
+        marks:marks, struck:struck, who:pickWho, what:pickWhat, done:done
       }));
     }catch(e){ storable = false; el("note").hidden = false; }
   }
@@ -265,72 +416,114 @@
     catch(e){ storable = false; el("note").hidden = false; return null; }
   }
 
-  function render(){
+  function markKey(c, g, v){ return c + ":" + g + ":" + v; }
+
+  function renderClues(){
     var cl = el("clue-list");
     cl.innerHTML = "";
     kase.clues.forEach(function(c, i){
       var d = document.createElement("div");
       d.className = "clue";
+      d.dataset.i = i;
+      d.dataset.struck = !!struck[i];
       d.innerHTML = "<i>" + (i + 1) + "</i><span>" + c.text + "</span>";
       cl.appendChild(d);
     });
     el("clue-head").textContent = kase.clues.length + " things you know";
+  }
 
-    var gs = el("guests");
-    gs.innerHTML = "";
-    kase.guests.forEach(function(g, i){
-      var b = document.createElement("div");
-      b.className = "guest";
-      b.dataset.i = i;
-      b.dataset.out = !!crossed[i];
-      if(accused !== null){
-        b.dataset.guilty = (i === kase.culprit);
-        b.dataset.wrong = (i === accused && i !== kase.culprit);
-      }
-      b.innerHTML =
-        '<button class="x" data-act="cross" aria-label="Rule out">\u2715</button>' +
-        '<span class="who" data-act="accuse"><span class="nm">' + g.name + "</span>" +
-        '<span class="bits">' + g.room + " \u00b7 " + g.item + " \u00b7 " + g.trait + "</span></span>";
-      gs.appendChild(b);
+  function renderGrids(){
+    var host = el("grids");
+    host.innerHTML = "";
+    kase.cats.forEach(function(cat, c){
+      var box = document.createElement("div");
+      var head = "<tr><th class=\"rowhead\"></th>" +
+        cat.values.map(function(v){ return "<th>" + v.short + "</th>"; }).join("") + "</tr>";
+      var body = kase.people.map(function(p, g){
+        return "<tr><th class=\"rowhead\">" + p.last + "</th>" +
+          cat.values.map(function(v, vi){
+            var m = marks[markKey(c, g, vi)] || 0;
+            return "<td><button class=\"cell\" data-c=\"" + c + "\" data-g=\"" + g +
+                   "\" data-v=\"" + vi + "\" data-m=\"" + m + "\">" +
+                   (m === 1 ? "✕" : m === 2 ? "✓" : "") + "</button></td>";
+          }).join("") + "</tr>";
+      }).join("");
+      box.innerHTML = '<div class="gtitle">' + cat.title + '</div>' +
+        '<table class="grid"><thead>' + head + '</thead><tbody>' + body + '</tbody></table>' +
+        '<div class="legend">' +
+        cat.values.map(function(v){ return v.short + " " + v.full; }).join(" · ") + '</div>';
+      host.appendChild(box);
     });
+  }
 
+  function renderPicks(){
+    var who = el("pick-who").querySelector(".opts");
+    who.innerHTML = "";
+    kase.people.forEach(function(p, i){
+      var b = document.createElement("button");
+      b.className = "opt"; b.dataset.who = i; b.textContent = p.name;
+      b.setAttribute("aria-pressed", pickWho === i);
+      who.appendChild(b);
+    });
+    var itemCat = kase.cats.filter(function(c){ return c.id === "item"; })[0];
+    var ci = kase.cats.indexOf(itemCat);
+    var what = el("pick-what").querySelector(".opts");
+    what.innerHTML = "";
+    itemCat.values.forEach(function(v, i){
+      var b = document.createElement("button");
+      b.className = "opt"; b.dataset.what = i; b.dataset.cat = ci; b.textContent = v.full;
+      b.setAttribute("aria-pressed", pickWhat === i);
+      what.appendChild(b);
+    });
+    el("accuse").disabled = done || pickWho === null || pickWhat === null;
+  }
+
+  function renderStats(){
     el("solved-n").textContent = store.solved;
     el("streak").textContent = store.streak ? "Streak " + store.streak +
-      (store.best > store.streak ? " \u00b7 best " + store.best : "") : (store.best ? "Best " + store.best : "");
+      (store.best > store.streak ? " · best " + store.best : "") : (store.best ? "Best " + store.best : "");
     for(var i = 0; i < el("levels").children.length; i++)
       el("levels").children[i].setAttribute("aria-pressed", LEVELS[i].id === level.id);
   }
 
-  function accuse(i){
-    if(accused !== null) return;
-    accused = i;
-    var right = i === kase.culprit;
+  function render(){ renderClues(); renderGrids(); renderPicks(); renderStats(); }
+
+  function solutionLine(){
+    var i = kase.culprit;
+    return "<b>" + kase.people[i].name + "</b>, " + kase.cats.map(function(cat, c){
+      return cat.values[kase.sol[c][i]].full;
+    }).join(", ") + ".";
+  }
+
+  function accuse(){
+    if(done || pickWho === null || pickWhat === null) return;
+    done = true;
+    var itemCat = kase.cats.filter(function(c){ return c.id === "item"; })[0];
+    var ci = kase.cats.indexOf(itemCat);
+    var right = pickWho === kase.culprit && pickWhat === kase.sol[ci][kase.culprit];
     if(right){
-      store.solved++;
-      store.streak++;
+      store.solved++; store.streak++;
       if(store.streak > store.best) store.best = store.streak;
     } else store.streak = 0;
-    el("over-title").textContent = right ? "Case closed" : "Wrong name";
+    el("over-title").textContent = right ? "Case closed" : "Wrong on the night";
     el("over-text").textContent = right
-      ? kase.guests[i].name + " did it, and you said so."
-      : "It was " + kase.guests[kase.culprit].name + ", " + kase.guests[kase.culprit].trait +
-        ", in " + kase.guests[kase.culprit].room + ".";
+      ? "Name and weapon both, and the table bears you out."
+      : (pickWho === kase.culprit ? "The right name, the wrong weapon." : "That is not your killer.");
+    el("over-solution").innerHTML = solutionLine();
     el("over").hidden = false;
     save(); render();
   }
 
   function dealCase(lv, seed){
     level = lv;
-    var s = seed === undefined || seed === null
+    var s = (seed === undefined || seed === null)
       ? ((Date.now() ^ (Math.random() * 4294967295)) >>> 0) : seed;
     var made = null, tries = 0;
-    // a seed can fail to yield a case; walk on until one deals
-    while(!made && tries++ < 40){ made = makeCase(s + tries, lv.id); }
-    if(!made){ made = makeCase(1, "gentle"); }
+    while(!made && tries++ < 30) made = makeCase(s + tries, lv.id);
+    if(!made) made = makeCase(1, "gentle");
     made.seed = s;
     kase = made;
-    crossed = {};
-    accused = null;
+    marks = {}; struck = {}; pickWho = null; pickWhat = null; done = false;
     el("over").hidden = true;
     save(); render();
   }
@@ -344,20 +537,48 @@
     chiprow.appendChild(b);
   });
 
-  el("guests").addEventListener("click", function(e){
-    var row = e.target.closest ? e.target.closest(".guest") : null;
-    if(!row) return;
-    var act = e.target.closest("[data-act]");
-    var i = +row.dataset.i;
-    if(act && act.dataset.act === "cross"){
-      if(accused !== null) return;
-      crossed[i] = !crossed[i];
-      save(); render();
-      return;
+  /* A tick means this guest and no other, so the rest of his row and the rest
+     of the column go out with it - the bookkeeping everyone does by hand. */
+  el("grids").addEventListener("click", function(e){
+    var cell = e.target.closest ? e.target.closest(".cell") : null;
+    if(!cell || done) return;
+    var c = +cell.dataset.c, g = +cell.dataset.g, v = +cell.dataset.v;
+    var m = (marks[markKey(c, g, v)] || 0);
+    m = (m + 1) % 3;
+    if(m === 0) delete marks[markKey(c, g, v)]; else marks[markKey(c, g, v)] = m;
+    if(m === 2){
+      for(var k = 0; k < kase.n; k++){
+        if(k !== v && !marks[markKey(c, g, k)]) marks[markKey(c, g, k)] = 1;
+        if(k !== g && !marks[markKey(c, k, v)]) marks[markKey(c, k, v)] = 1;
+      }
     }
-    accuse(i);
+    save(); renderGrids();
   });
 
+  el("clue-list").addEventListener("click", function(e){
+    var row = e.target.closest ? e.target.closest(".clue") : null;
+    if(!row) return;
+    var i = +row.dataset.i;
+    if(struck[i]) delete struck[i]; else struck[i] = 1;
+    save(); renderClues();
+  });
+
+  el("pick-who").addEventListener("click", function(e){
+    var b = e.target.closest ? e.target.closest("[data-who]") : null;
+    if(!b || done) return;
+    var i = +b.dataset.who;
+    pickWho = (pickWho === i) ? null : i;
+    save(); renderPicks();
+  });
+  el("pick-what").addEventListener("click", function(e){
+    var b = e.target.closest ? e.target.closest("[data-what]") : null;
+    if(!b || done) return;
+    var i = +b.dataset.what;
+    pickWhat = (pickWhat === i) ? null : i;
+    save(); renderPicks();
+  });
+
+  el("accuse").addEventListener("click", accuse);
   el("new-case").addEventListener("click", function(){ dealCase(level); });
   el("again").addEventListener("click", function(){ dealCase(level); });
 
@@ -367,8 +588,10 @@
     var lv = LEVELS.filter(function(l){ return l.id === saved.level; })[0] || LEVELS[0];
     if(saved.seed !== null && saved.seed !== undefined){
       dealCase(lv, saved.seed);
-      crossed = saved.crossed || {};
-      if(saved.accused !== null && saved.accused !== undefined) accuse(saved.accused);
+      marks = saved.marks || {}; struck = saved.struck || {};
+      pickWho = (saved.who === undefined) ? null : saved.who;
+      pickWhat = (saved.what === undefined) ? null : saved.what;
+      if(saved.done){ done = false; accuse(); }
       render();
     } else dealCase(lv);
   } else dealCase(LEVELS[0]);
