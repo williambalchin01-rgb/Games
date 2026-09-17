@@ -236,7 +236,16 @@
   }
 
   /* Where a unit can get to this turn, by movement points over terrain, blocked
-     by anyone standing in the way. */
+     by anyone standing in the way.
+
+     Rough ground slows you down, it does not wall you in. Charging the full
+     cost up front meant a warrior with one point of movement could never set
+     foot in a forest or on a hill at all - half the map - and with the rest
+     often water or an occupied square he was left with two squares to choose
+     between, one of them the village he had just come from. So the rule is: if
+     you have any movement left you may take the step, and rough ground eats
+     whatever it costs. A warrior always gets his one square; a rider crosses
+     two of open country but only one of forest. */
   function reachable(g, u){
     var spec = UNITS[u.kind];
     var best = {}, out = [];
@@ -244,11 +253,11 @@
     var queue = [[u.x, u.y, 0]];
     while(queue.length){
       var cur = queue.shift();
+      if(cur[2] >= spec.move) continue;              // spent, go no further
       nbrs(cur[0], cur[1]).forEach(function(n){
         var land = LAND[g.tiles[idx(n[0], n[1])]];
         if(!land.move) return;                       // water is impassable
         var cost = cur[2] + land.move;
-        if(cost > spec.move) return;
         var occupied = unitAt(g, n[0], n[1]);
         if(occupied) return;
         var k = idx(n[0], n[1]);
@@ -686,10 +695,11 @@
   function fresh(){
     g = newGame((Date.now() ^ (Math.random() * 4294967295)) >>> 0);
     /* Moving first means committing first, and the side that answers can see
-       what it is answering. Measured over a thousand games between two copies
-       of the rival, that was worth about thirteen points of win rate, so the
-       player who goes first starts with a little more in the purse. */
-    g.gold[0] += 3;
+       what it is answering. Measured over twelve hundred games between two
+       copies of the rival, going first loses about fourteen points of win rate
+       unpaid for; two extra coins in the opening purse brings it back to
+       47-49, which is even inside the noise. */
+    g.gold[0] += 2;
     sel = null; buying = null; busy = false;
     el("over").hidden = true;
     say("Tap a soldier, then where to send him.");
