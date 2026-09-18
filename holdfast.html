@@ -351,27 +351,39 @@
 
   /* Anywhere free within two steps of a town you hold. Looking only at the town
      and its doorstep meant a crowded front left you unable to spend at all. */
-  function canBuild(g, side, kind){
-    if(g.gold[side] < UNITS[kind].cost) return null;
-    var best = null, bestD = 99;
+  /* Every free square within two steps of a town you hold. It used to hand back
+     the single closest one and nothing else, and the board never showed which
+     square that was - so mustering was a guess that failed almost every time.
+     You now get the whole muster ground and the board lights it. */
+  function buildSpots(g, side){
+    var seen = {}, out = [];
     g.towns.forEach(function(t){
       if(t.owner !== side) return;
       for(var y = t.y - 2; y <= t.y + 2; y++){
         for(var x = t.x - 2; x <= t.x + 2; x++){
           if(!inMap(x, y)) continue;
-          var d = Math.abs(x - t.x) + Math.abs(y - t.y);
-          if(d > 2 || d >= bestD) continue;
-          if(!LAND[g.tiles[idx(x, y)]].move) continue;
+          if(Math.abs(x - t.x) + Math.abs(y - t.y) > 2) continue;
+          if(!LAND[g.tiles[idx(x, y)]].move) continue;   // not into the water
           if(unitAt(g, x, y)) continue;
-          best = { x:x, y:y }; bestD = d;
+          var k = idx(x, y);
+          if(seen[k]) continue;
+          seen[k] = 1; out.push({ x:x, y:y, d: Math.abs(x - t.x) + Math.abs(y - t.y) });
         }
       }
     });
-    return best;
+    // closest to a town first, so the rival - who takes the first one going -
+    // still musters at the gate rather than two fields away
+    out.sort(function(a, b){ return a.d - b.d; });
+    return out;
   }
-  function build(g, side, kind){
-    var spot = canBuild(g, side, kind);
+  function canBuild(g, side, kind){
+    if(g.gold[side] < UNITS[kind].cost) return null;
+    return buildSpots(g, side)[0] || null;
+  }
+  function build(g, side, kind, at){
+    var spot = at || canBuild(g, side, kind);
     if(!spot) return null;
+    if(g.gold[side] < UNITS[kind].cost) return null;
     g.gold[side] -= UNITS[kind].cost;
     return addUnit(g, side, kind, spot.x, spot.y);
   }
@@ -518,6 +530,8 @@
       if(!sel.moved) reachable(g, sel).forEach(function(p){ canGo[idx(p[0], p[1])] = 1; });
       if(!sel.acted) targets(g, sel).forEach(function(v){ canHit[idx(v.x, v.y)] = 1; });
     }
+    // the same blue means the same thing when you are raising a soldier
+    if(buying) buildSpots(g, 0).forEach(function(p){ canGo[idx(p.x, p.y)] = 1; });
     for(var i = 0; i < W * H; i++){
       var x = i % W, y = (i / W) | 0, t = tiles[i];
       t.dataset.land = g.tiles[i];
@@ -571,9 +585,9 @@
     buying = (buying === kind) ? null : kind;
     sel = null;
     if(buying){
-      var spot = canBuild(g, 0, kind);
-      say(spot ? "Tap to raise a " + UNITS[kind].name.toLowerCase() + " near a town you hold."
-               : "Nowhere to put one.");
+      var spots = buildSpots(g, 0).length;
+      say(spots ? "Tap any lit square to raise a " + UNITS[kind].name.toLowerCase() + "."
+                : "Nowhere near your towns to put one.");
     } else say("");
     render();
   }
@@ -581,15 +595,15 @@
   function tap(x, y){
     if(busy || g.over !== null) return;
     if(buying){
-      var spot = canBuild(g, 0, buying);
-      // only the offered spot; a free choice would need a rule about how far
-      if(spot && spot.x === x && spot.y === y){
-        build(g, 0, buying);
+      var here = buildSpots(g, 0).some(function(p){ return p.x === x && p.y === y; });
+      if(here){
+        build(g, 0, buying, { x:x, y:y });
         say(UNITS[buying].name + " raised.");
         buying = null;
+        claimTowns(g);
         save(); render();
-      } else if(spot){
-        say("He can only muster at the marked square.");
+      } else {
+        say("Only within two steps of a town you hold.");
       }
       return;
     }
