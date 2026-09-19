@@ -155,6 +155,11 @@
   /* ================= logic (no DOM until marked) ================= */
 
   var FIELD_W = 30;        // yards across; narrower than a real field, like the games this apes
+  /* Grass drawn beyond the touchline on both sides. With the pitch filling the
+     canvas edge to edge there was nothing to tell you where the boundary was -
+     the ball simply stopped - so the sideline, the paint and the benches now
+     have room to be seen. */
+  var SIDE_MARGIN = 4.2;
   var FIELD_L = 100;        // the goal line
   // The end zone is ten yards of catchable ground BEHIND the goal line. It was
   // drawn but not playable: routes stopped at the goal line and a throw could
@@ -283,22 +288,34 @@
     { id:"even",  label:"2 min", secs:120 },
     { id:"long",  label:"3 min", secs:180 }
   ];
-  /* A play costs the clock far more than the seconds it is live - the huddle
-     and the play clock between snaps are most of it. Burning live seconds one
-     for one fitted twenty-odd of your plays into a two-minute quarter and the
-     scores ran away with themselves; at this rate a quarter holds about four
-     of your drives and the rival's answers. */
-  var CLOCK_RATE = 2.6;
+  /* The clock runs while the ball is live and then keeps running between plays
+     until the next snap - which is where most of a game's time actually goes.
+     Charging it as a flat multiplier on live seconds hid that: the clock moved
+     while you watched the play and stopped the moment it ended, whatever had
+     happened. So live seconds count one for one, and a play that ends with the
+     clock still running costs this much more before the next snap.
+
+     A downed runner does not stop it. An incompletion does, and so does going
+     out of bounds - which is what makes throwing to the sideline late in a
+     quarter worth something. */
+  /* The carrier is held inside 0.8 of the touchline by the same clamp that
+     stops him leaving the pitch, so anything at or inside that is a man on the
+     paint - which is what out of bounds means here. */
+  var SIDELINE = 0.82;
+  var RUNOFF = 7;          // seconds off between plays when the clock is live
+  var PUNT_RUNOFF = 6;     // a punt is a play too
+
+  // the whistles that stop the clock dead
+  function clockStops(kind){
+    return kind === "incomplete" || kind === "outOfBounds" || kind === "touchdown" ||
+           kind === "interception" || kind === "safety";
+  }
   /* What a simulated rival possession costs off the clock, as a share of a
-     quarter, so it reads the same at every quarter length. These are large on
-     purpose: the rival's scoring rate was set when a game was eight fixed
-     drives, four each, and cheap possessions handed him ten or more instead -
-     enough to put eighty points on you. At this cost a game holds about five
-     apiece, which is what the rate was tuned against. */
-  var RIVAL_TIME = { td:0.46, fg:0.38, out:0.22 };
-  // a punt is a play too, and without a cost it is a way of ending a drive for
-  // nothing - which turns "punt at once, every time" into free clock
-  var PUNT_TIME = 0.06;
+     quarter. You do not play these, you are told about them, so they have to
+     cost what a drive costs: a march that ends in a touchdown takes half a
+     quarter with it, and a rival who goes three and out has still had the ball
+     for a while. Cheap possessions handed him ten a game and eighty points. */
+  var RIVAL_TIME = { td:0.50, fg:0.42, out:0.24 };
 
   // Routes are polylines relative to where the receiver lines up. Positive dy is
   // downfield. Each is mirrored for receivers lined up on the left.
@@ -579,8 +596,12 @@
       c.svy = (c.svy === undefined ? c.vy : c.svy * 0.86 + c.vy * 0.14);
 
       if(c.y >= FIELD_L){ endPlay(st, play, "touchdown", FIELD_L); return; }
-      if(c.x <= 0.8 || c.x >= FIELD_W - 0.8){
-        // pushed out of bounds by the sideline
+      /* The sideline is a wall the play dies against. It was drawn but not
+         enforced - the carrier simply slid along it - so there was no way to
+         stop the clock by taking the ball out, which is half of what the last
+         minute of a game is about. */
+      if(c.x <= SIDELINE || c.x >= FIELD_W - SIDELINE){
+        endPlay(st, play, "outOfBounds", c.y); return;
       }
       var n = nearestDefender(play, c.x, c.y);
       if(n.d <= TACKLE_R){ endPlay(st, play, "tackle", c.y); return; }
@@ -730,6 +751,13 @@
         st.down++;
         st.lastMsg = "Incomplete";
         break;
+      case "outOfBounds":
+        gained = Math.round(r.at - st.ballOn);
+        st.ballOn = clamp(r.at, 1, FIELD_L - 1);
+        st.down++;
+        st.lastMsg = (gained >= 0 ? "+" : "") + gained +
+                     (Math.abs(gained) === 1 ? " yard" : " yards") + " \u00b7 out of bounds";
+        break;
       case "sack":
         gained = Math.round(r.at - st.ballOn) - 5;
         st.ballOn = clamp(st.ballOn + gained, 1, FIELD_L - 1);
@@ -757,7 +785,7 @@
 
   function punt(st){
     st.lastMsg = "Punt";
-    burnClock(st, st.qlen * PUNT_TIME);
+    burnClock(st, PUNT_RUNOFF);
     endDrive(st);
   }
 
@@ -1015,6 +1043,7 @@
   function yourKit(){ return PAIRS[st.kitYou]; }
   function theirKit(){ return PAIRS[st.kitOpp]; }
 
+  var runoffLeft = 0;      // clock still to come off before the next snap
   var canvas = el("field"), ctx = canvas.getContext("2d");
   var scale = 12, viewYards = 40, camY = 0;
 
@@ -1056,7 +1085,7 @@
   function resize(){
     var w = canvas.clientWidth;
     if(!w) return;
-    scale = w / FIELD_W;
+    scale = w / (FIELD_W + SIDE_MARGIN * 2);
     // As much field as actually fits. Measure the room left inside the wrap:
     // reading the document's scroll height cannot work, because the body carries
     // min-height:100vh and so never reports less than a full screen, which left
@@ -1102,16 +1131,61 @@
     return clamp(y, half - 6, BACK_LINE + 4 - half);
   }
 
-  function sx(x){ return x * scale; }
+  function sx(x){ return (x + SIDE_MARGIN) * scale; }
   function sy(y){ return (viewYards/2 - (y - camY)) * scale; }
 
+  /* The touchline, the team colours painted outside it, and the benches. The
+     benches scroll with the pitch so they read as things standing beside it
+     rather than furniture stuck to the screen - and which side is whose is the
+     quickest way to tell at a glance which way you are going. */
+  function drawTouchlines(L, R, h){
+    var mine = yourKit(), theirs = theirKit();
+    var band = Math.max(4, SIDE_MARGIN * scale * 0.38);
+    var paint = 3, gap = 3;
+
+    // team colours painted on the apron, set back off the line so the white
+    // has dark ground on one side and colour on the other and cannot be missed
+    [[L - paint - gap - band, mine], [R + paint + gap, theirs]].forEach(function(pair){
+      ctx.fillStyle = tint(pair[1].a, 0.34);
+      ctx.fillRect(pair[0], 0, band, h);
+      ctx.fillStyle = tint(pair[1].b, 0.26);
+      ctx.fillRect(pair[0], 0, band * 0.42, h);
+    });
+
+    // the touchline itself: the whitest thing on the screen
+    ctx.fillStyle = "rgba(255,255,255,.85)";
+    ctx.fillRect(L - paint, 0, paint, h);
+    ctx.fillRect(R, 0, paint, h);
+
+    // benches: a run of seats down each touchline between the twenties
+    var seatW = Math.max(3, band * 0.46);
+    [[L - paint - gap - band - seatW - 3, mine], [R + paint + gap + band + 3, theirs]].forEach(function(pair){
+      var x = pair[0], kit = pair[1];
+      for(var y = 18; y <= 82; y += 4){
+        var py = sy(y);
+        if(py < -12 || py > h + 12) continue;
+        ctx.fillStyle = tint(kit.a, 0.55);
+        ctx.fillRect(x, py - 6, seatW, 9);
+        ctx.fillStyle = tint(kit.b, 0.4);
+        ctx.fillRect(x, py - 6, seatW, 3);
+      }
+    });
+  }
+
   function draw(){
-    var w = FIELD_W * scale, h = viewYards * scale;
+    var w = (FIELD_W + SIDE_MARGIN * 2) * scale, h = viewYards * scale;
     camY += (clampCam(focusY()) - camY) * 0.15;
 
+    var L = sx(0), R = sx(FIELD_W), fw = R - L;
+
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = "#16211B";
+    // the ground beyond the paint: darker, so the pitch reads as a shape
+    ctx.fillStyle = "#0B120E";
     ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = "#16211B";
+    ctx.fillRect(L, 0, fw, h);
+
+    drawTouchlines(L, R, h);
 
     // yard lines every five yards, numbers every ten
     ctx.font = "600 10px -apple-system,system-ui,sans-serif";
@@ -1122,11 +1196,19 @@
       var major = y % 10 === 0;
       ctx.strokeStyle = major ? "rgba(255,255,255,.20)" : "rgba(255,255,255,.09)";
       ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(w, py); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(L, py); ctx.lineTo(R, py); ctx.stroke();
       if(major && y > 0 && y < FIELD_L){
         ctx.fillStyle = "rgba(255,255,255,.22)";
         var label = y <= 50 ? y : (100 - y);
-        ctx.fillText(String(label), 4, py - 3);
+        ctx.fillText(String(label), L + 4, py - 3);
+      }
+      // hash marks in from each touchline, the way a real pitch is marked
+      if(!major && y > 0 && y < FIELD_L){
+        ctx.strokeStyle = "rgba(255,255,255,.14)";
+        ctx.beginPath();
+        ctx.moveTo(sx(FIELD_W * 0.36), py); ctx.lineTo(sx(FIELD_W * 0.39), py);
+        ctx.moveTo(sx(FIELD_W * 0.61), py); ctx.lineTo(sx(FIELD_W * 0.64), py);
+        ctx.stroke();
       }
     }
 
@@ -1134,15 +1216,15 @@
     [0, FIELD_L].forEach(function(y){
       var top = sy(y + (y === 0 ? 0 : 10)), bot = sy(y - (y === 0 ? 10 : 0));
       ctx.fillStyle = y === FIELD_L ? "rgba(74,134,209,.15)" : "rgba(224,87,74,.13)";
-      ctx.fillRect(0, top, w, bot - top);
+      ctx.fillRect(L, top, fw, bot - top);
     });
 
     // line of scrimmage and the line to gain
     var los = play ? play.los : st.ballOn;
     ctx.strokeStyle = "rgba(255,255,255,.55)"; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(0, sy(los)); ctx.lineTo(w, sy(los)); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(L, sy(los)); ctx.lineTo(R, sy(los)); ctx.stroke();
     ctx.strokeStyle = "#E0A458"; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(0, sy(st.firstDownAt)); ctx.lineTo(w, sy(st.firstDownAt)); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(L, sy(st.firstDownAt)); ctx.lineTo(R, sy(st.firstDownAt)); ctx.stroke();
 
     if(!play){ drawDot(FIELD_W/2, st.ballOn, 0.55, "#E6EBEF"); return; }
 
@@ -1334,7 +1416,11 @@
       ? play.formation
       : st.lastMsg;
 
-    var running = play && play.phase !== "done" && play.phase !== "presnap";
+    /* The pause after a play counts as running: the clock is still spinning
+       down to the next snap, and letting you snap into it would hand back the
+       seconds the run-off is there to take. */
+    var running = (play && play.phase !== "done" && play.phase !== "presnap") ||
+                  resultHold > 0 || runoffLeft > 0;
     var yourBall = st.driveIsYours && !st.over;
     el("snap").disabled = !yourBall || running;
     el("snap").textContent = st.over ? "Full time" : (yourBall ? "Snap" : "Rivals' ball");
@@ -1390,7 +1476,7 @@
     var rect = canvas.getBoundingClientRect();
     return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
   }
-  function fieldX(px){ return clamp(px / scale, 0, FIELD_W); }
+  function fieldX(px){ return clamp(px / scale - SIDE_MARGIN, 0, FIELD_W); }
 
   // Where the ball would land for the pull currently being held, or null if the
   // finger has not moved far enough to count.
@@ -1567,17 +1653,29 @@
       acc += dt;
       // the clock runs from the snap to the whistle and nowhere else, so the
       // time between plays is yours to take
-      if(play.phase !== "presnap" && st.driveIsYours && !st.over) burnClock(st, dt * CLOCK_RATE);
+      if(play.phase !== "presnap" && st.driveIsYours && !st.over) burnClock(st, dt);
       while(acc >= STEP){ stepPlay(st, play, STEP * TIME_SCALE, rng); acc -= STEP; }
       if(play.phase === "done"){
         acc = 0;
+        var kind = play.result ? play.result.kind : "";
         applyResult(st, play);
+        /* The clock keeps running to the next snap unless the whistle stopped
+           it. It is spun down over the pause rather than deducted in one jump,
+           because a number that changes while you watch is the difference
+           between understanding the rule and thinking the clock is broken. */
+        runoffLeft = (st.driveIsYours && !st.over && !clockStops(kind)) ? RUNOFF : 0;
         resultHold = 1.1;
         syncChrome();
       }
     }else if(resultHold > 0){
       resultHold -= dt;
+      if(runoffLeft > 0){
+        var take = Math.min(runoffLeft, dt * (RUNOFF / 0.95));
+        burnClock(st, take);
+        runoffLeft -= take;
+      }
       if(resultHold <= 0){
+        if(runoffLeft > 0){ burnClock(st, runoffLeft); runoffLeft = 0; }
         var wasYours = st.driveIsYours;
         play = null;
         // a play that starts before the quarter runs out is allowed to finish
