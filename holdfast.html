@@ -742,12 +742,8 @@
     if(g.over === null && g.side === 1) runRival();
   } else fresh();
 
-  if("serviceWorker" in navigator){
-    window.addEventListener("load", function(){
-      navigator.serviceWorker.register("./sw.js").catch(function(){});
-    });
-  }
 })();
 </script>
+<script src="./sw-boot.js"></script>
 </body>
 </html>

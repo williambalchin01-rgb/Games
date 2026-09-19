@@ -323,36 +323,8 @@
       moves ? label + " · " + moves + (moves === 1 ? " move in" : " moves in") : label;
   }
 
-  if("serviceWorker" in navigator){
-    // If this page came out of a stale cache, the worker that replaces it
-    // takes over mid-view and the menu would keep showing the old set of
-    // games until the next launch. Reload once when that happens, but not
-    // on the very first registration, when there was nothing stale to fix.
-    if(navigator.serviceWorker.controller){
-      var reloaded = false;
-      navigator.serviceWorker.addEventListener("controllerchange", function(){
-        if(reloaded) return;
-        reloaded = true;
-        location.reload();
-      });
-    }
-    window.addEventListener("load", function(){
-      navigator.serviceWorker.register("./sw.js").then(function(reg){
-        // A home-screen app can sit warm for days without a fresh navigation,
-        // which is the browser's only automatic prompt to look for a new
-        // worker. Ask on every launch, and again whenever the app is brought
-        // back to the foreground, so a new game shows up without a reinstall.
-        reg.update().catch(function(){});
-        document.addEventListener("visibilitychange", function(){
-          if(!document.hidden) reg.update().catch(function(){});
-        });
-      }).catch(function(){});
-    });
-  }
-  if(navigator.storage && navigator.storage.persist){
-    navigator.storage.persist().catch(function(){});
-  }
 })();
 </script>
+<script src="./sw-boot.js"></script>
 </body>
 </html>

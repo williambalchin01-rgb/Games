@@ -634,12 +634,8 @@
   restore();
   renderAll();
 
-  if("serviceWorker" in navigator){
-    window.addEventListener("load", function(){
-      navigator.serviceWorker.register("./sw.js").catch(function(){});
-    });
-  }
 })();
 </script>
+<script src="./sw-boot.js"></script>
 </body>
 </html>

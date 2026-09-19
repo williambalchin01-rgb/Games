@@ -792,12 +792,8 @@
   if(saved && saved.puzzle && saved.solution && saved.cells) resume(saved);
   else deal(LEVELS[0]);
 
-  if("serviceWorker" in navigator){
-    window.addEventListener("load", function(){
-      navigator.serviceWorker.register("./sw.js").catch(function(){});
-    });
-  }
 })();
 </script>
+<script src="./sw-boot.js"></script>
 </body>
 </html>

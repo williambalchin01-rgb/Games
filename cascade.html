@@ -1223,12 +1223,8 @@
   window.addEventListener("pagehide", function(){ if(!busy) save(); });
   document.addEventListener("visibilitychange", function(){ if(document.hidden && !busy) save(); });
 
-  if("serviceWorker" in navigator){
-    window.addEventListener("load", function(){
-      navigator.serviceWorker.register("./sw.js").catch(function(){});
-    });
-  }
 })();
 </script>
+<script src="./sw-boot.js"></script>
 </body>
 </html>

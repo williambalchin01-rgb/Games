@@ -1,7 +1,7 @@
-var CACHE = "arcade-v37";
+var CACHE = "arcade-v38";
 /* No "./" entry: the fetch handler folds it into "./index.html" so the two
    entry points can never drift apart. */
-var FILES = ["./index.html","./decant.html","./blocks.html","./towers.html","./gridiron.html","./hatchery.html","./cascade.html","./sudoku.html","./glider.html","./holdfast.html","./verdict.html","./app.css",
+var FILES = ["./index.html","./decant.html","./blocks.html","./towers.html","./gridiron.html","./hatchery.html","./cascade.html","./sudoku.html","./glider.html","./holdfast.html","./verdict.html","./app.css","./sw-boot.js",
              "./manifest.json","./apple-touch-icon.png","./icon-192.png","./icon-512.png"];
 
 /* addAll() is all-or-nothing: one file that has not finished deploying yet
@@ -60,9 +60,16 @@ self.addEventListener("fetch", function(e){
     return;
   }
 
+  /* Straight to the origin, not to whatever the HTTP cache is holding. Pages
+     here are served with ten minutes of max-age, so a network-first worker
+     could still hand back the build you were trying to replace for ten
+     minutes after it shipped - which looks exactly like a fix that did not
+     work. */
   var key = cacheKey(e.request);
   e.respondWith(
-    fetch(e.request).then(function(res){
+    fetch(new Request(e.request, { cache: "no-store" })).catch(function(){
+      return fetch(e.request);              // older engines that refuse the option
+    }).then(function(res){
       if(res && res.ok){
         var copy = res.clone();
         caches.open(CACHE).then(function(c){ c.put(key, copy); });
