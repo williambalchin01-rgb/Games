@@ -940,6 +940,8 @@
       kitOpp: opts.kitOpp === undefined ? 1 : opts.kitOpp,
       grade: opts.grade === undefined ? 1 : opts.grade,
       oppAway: !!opts.oppAway,
+      // "Semi-final" or "Final" in the post-season, nothing in the regular one
+      round: opts.round || null,
       week: opts.week || 0,
       seed: seed || 1
     };
@@ -1388,20 +1390,31 @@
     showGame();
   }
 
+  /* Whether you have another game to play, whichever part of the season you
+     are in. The panel and the button both used the regular-season week for
+     this, which is pinned at nine once the post-season starts - so a playoff
+     game was captioned "week 10 of 9" and the button read "Season over" with
+     a final still to come. */
+  function moreToPlay(sn){
+    if(!sn) return false;
+    return sn.stage === "regular" ? sn.week < SEASON_LEN : !!yourPostGame(sn);
+  }
+
   function startFixture(){
     var sn = profile.season;
     if(!sn) return;
-    var opp, grade;
+    var opp, grade, round = null;
     if(sn.stage === "regular"){
       if(sn.week >= SEASON_LEN) return;
       opp = sn.fix[sn.week].k; grade = sn.fix[sn.week].g;
     } else {
       var pg = yourPostGame(sn);
       if(!pg) return;
-      opp = pg.opp; grade = gradeFor(sn.rate[opp]);
+      opp = pg.opp; grade = gradeFor(sn.rate[opp]); round = pg.round;
     }
     st = newGameState(Date.now() >>> 0,
       { mode:"season", kitYou: sn.kit, kitOpp: opp, grade: grade, week: sn.week, qlen: profile.qlen,
+        round: round,
         // a divisional rival may wear your colours; he changes for the day
         oppAway: clashes(PAIRS[opp], PAIRS[sn.kit]) });
     st.wins = sn.w; st.losses = sn.l; st.ties = sn.t;
@@ -1857,10 +1870,10 @@
       if(st.mode === "season"){
         var sn = profile.season;
         var rec = sn ? sn.w + "–" + sn.l + (sn.t ? "–" + sn.t : "") : "";
-        var last = sn && sn.week >= SEASON_LEN;
-        el("over-text").textContent = st.you + "–" + st.opp +
-          " · week " + (st.week + 1) + " of " + SEASON_LEN + " · season " + rec;
-        el("snap").textContent = last ? "Season over" : "Next fixture";
+        var more = moreToPlay(sn);
+        var when = st.round || ("week " + (st.week + 1) + " of " + SEASON_LEN);
+        el("over-text").textContent = st.you + "–" + st.opp + " · " + when + " · season " + rec;
+        el("snap").textContent = more ? "Next fixture" : "Season over";
       } else {
         el("over-text").textContent =
           st.you + "–" + st.opp + " · exhibitions " + st.wins + "–" + st.losses +
@@ -2004,7 +2017,7 @@
     if(st.over){
       // the result was banked the moment the whistle went; this just moves on
       if(st.mode === "season"){
-        if(profile.season && profile.season.week < SEASON_LEN) startFixture();
+        if(moreToPlay(profile.season)) startFixture();
         else showLobby();
       } else {
         startExhibition();

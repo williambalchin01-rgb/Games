@@ -30,6 +30,15 @@ header{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;
 .back{
   display:inline-flex;align-items:center;gap:6px;text-decoration:none;color:var(--muted);
   font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+  position:relative;
+}
+/* The text is eleven pixels tall and the link was fifteen - the control you
+   reach for most often was the hardest on the page to hit. The tap area is
+   grown to a thumb's worth without moving the label a pixel, because making
+   the link itself taller would push the header about on every game. */
+.back::after{
+  content:"";position:absolute;left:-10px;right:-10px;top:50%;
+  transform:translateY(-50%);height:44px;
 }
 .back:hover{color:var(--ink)}
 

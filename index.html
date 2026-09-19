@@ -242,7 +242,10 @@
     else if(hf.over === 1) hb.push("Lost");
     else if(hf.over === -1) hb.push("Drawn");
     else hb.push("Turn " + hf.turn);
-    if(hf.towns) hb.push(hf.towns.filter(function(t){ return t.owner === 0; }).length + " towns");
+    if(hf.towns){
+      var mine = hf.towns.filter(function(t){ return t.owner === 0; }).length;
+      hb.push(mine + (mine === 1 ? " town" : " towns"));
+    }
     document.getElementById("holdfast-meta").textContent = hb.join("  \u00B7  ");
   }
 
@@ -257,7 +260,9 @@
   var gl = read("arcade.glider.v1");
   if(gl){
     var gb = [];
-    var far = gl.best && (gl.best.daily || gl.best.endless);
+    // the furthest you have thrown it, in either mode - taking the daily one
+    // first hid a better endless flight behind a worse daily one
+    var far = gl.best && Math.max(gl.best.daily || 0, gl.best.endless || 0);
     if(far) gb.push("Best " + far + "m");
     if(gl.daily && gl.daily.date) gb.push("Today " + gl.daily.flown + "m");
     document.getElementById("glider-meta").textContent = gb.join("  \u00B7  ");
@@ -290,7 +295,7 @@
     var hb = [];
     if(hx.dragons.length) hb.push(hx.dragons.length + " dragon" + (hx.dragons.length === 1 ? "" : "s"));
     var kinds = hx.found ? Object.keys(hx.found).length : 0;
-    if(kinds) hb.push(kinds + " kinds found");
+    if(kinds) hb.push(kinds + (kinds === 1 ? " kind" : " kinds") + " found");
     document.getElementById("hatchery-meta").textContent = hb.join("  \u00B7  ");
   }
 
@@ -311,7 +316,10 @@
   if(t){
     var tb = [];
     if(t.best) tb.push("Best wave " + t.best);
-    if(!t.over && t.wave > 1) tb.push("On wave " + t.wave);
+    /* The same test the game itself uses on its map cards: a tower on the
+       board is a game in progress, even on the first wave. The menu wanted
+       wave two, so it sat silent while the game said "In progress". */
+    if(!t.over && (t.wave > 1 || (t.towers || []).length)) tb.push("On wave " + t.wave);
     document.getElementById("towers-meta").textContent = tb.join("  \u00B7  ");
   }
 
