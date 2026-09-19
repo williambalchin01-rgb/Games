@@ -77,6 +77,20 @@
   .fx[data-state="done"]{opacity:.55}
   .fx[data-state="now"]{border-color:var(--accent)}
   .locked{margin:6px 2px 0;font-size:11.5px;color:var(--sel);line-height:1.4}
+  .divname{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:10px 2px 4px}
+  .tr{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:7px;font-size:12.5px}
+  .tr[data-you="true"]{background:rgba(79,168,139,.13)}
+  .tr[data-top="true"] .rec{color:var(--accent)}
+  .tr .badge{width:18px;height:18px}
+  .tr .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tr .rec{font-variant-numeric:tabular-nums;color:var(--muted)}
+  .tr .pd{width:42px;text-align:right;font-variant-numeric:tabular-nums;color:var(--muted);font-size:11px}
+  .tie{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);
+       border-radius:var(--radius);margin-bottom:6px;font-size:12.5px}
+  .tie .badge{width:20px;height:20px}
+  .tie .vs{color:var(--muted);font-size:11px}
+  .tie .sc{margin-left:auto;font-variant-numeric:tabular-nums}
+  .champ{margin:10px 2px 0;font-size:13px;color:var(--accent)}
   .kit[disabled]{opacity:.32}
   .fx .score{margin-left:auto;font-variant-numeric:tabular-nums;font-size:12px}
 </style>
@@ -108,7 +122,10 @@
 
   <div id="season-panel" hidden>
     <div class="section" id="season-head">Season</div>
+    <div class="chiprow" id="season-views" style="border-bottom:none;padding-bottom:6px"></div>
     <div class="fixtures" id="fixtures"></div>
+    <div id="tables" hidden></div>
+    <div id="bracket" hidden></div>
     <div class="controls" style="padding-top:10px">
       <button class="ctrl" data-primary="true" id="resume-season">Play week 1</button>
     </div>
@@ -232,29 +249,217 @@
     { name:"Strong", strength:0.73 }
   ];
 
-  function makeSeason(kitIdx, rng){
-    var you = PAIRS[kitIdx];
-    var pool = [];
-    PAIRS.forEach(function(k, i){ if(!clashes(k, you)) pool.push(i); });
-    for(var i = pool.length - 1; i > 0; i--){
-      var j = Math.floor(rng() * (i + 1)), t = pool[i];
-      pool[i] = pool[j]; pool[j] = t;
+  /* Sixteen clubs in four divisions, and a schedule where everybody plays every
+     week: home and away against your three divisional rivals, then three games
+     against one other division. Nine weeks, the same nine for all sixteen, so
+     the table underneath your season is a real one rather than a decoration.
+
+     A club sits where it sits, give or take the one awkward fit every division
+     in the American game has. Manchester plays in the East because it is the
+     easternmost of the two north-west clubs. */
+  var DIVISIONS = [
+    { name:"North", clubs:[3, 2, 5, 0] },     // Glasgow, Edinburgh, Dundee, Liverpool
+    { name:"East",  clubs:[4, 13, 19, 8] },   // London, Norwich, Nottingham, Manchester
+    { name:"West",  clubs:[22, 9, 25, 15] },  // Dublin, Cork, Galway, Belfast
+    { name:"South", clubs:[1, 11, 6, 17] }    // Cardiff, Bristol, Portsmouth, Plymouth
+  ];
+  var LEAGUE = DIVISIONS.reduce(function(a, d){ return a.concat(d.clubs); }, []);
+  function divisionOf(club){
+    for(var i = 0; i < DIVISIONS.length; i++)
+      if(DIVISIONS[i].clubs.indexOf(club) >= 0) return i;
+    return -1;
+  }
+
+  /* A divisional rival may well share your colours - the fixtures are fixed now,
+     so the old trick of only drawing rivals who clashed with nobody is gone.
+     When it happens he changes into a neutral away kit, as he would. It is
+     greys that belong to none of the sixteen, so it can never clash with you. */
+  var AWAY_KIT = { i:-1, j:-2, a:"#8A97A3", b:"#D5DBE1", colours:"Away greys" };
+
+  // which divisions face which, redrawn every season
+  var CROSS = [[[0,1],[2,3]], [[0,2],[1,3]], [[0,3],[1,2]]];
+
+  function buildSchedule(rng){
+    var RR = [[[0,1],[2,3]], [[0,2],[1,3]], [[0,3],[1,2]]];
+    var weeks = [], r;
+    function divRound(round, back){
+      var wk = [];
+      DIVISIONS.forEach(function(d){
+        RR[round].forEach(function(pr){
+          wk.push({ h: d.clubs[pr[back ? 1 : 0]], a: d.clubs[pr[back ? 0 : 1]] });
+        });
+      });
+      return wk;
     }
+    for(r = 0; r < 3; r++) weeks.push(divRound(r, false));
+    var pairing = CROSS[Math.floor(rng() * CROSS.length)];
+    for(r = 0; r < 3; r++){
+      var wk = [];
+      pairing.forEach(function(pr){
+        var X = DIVISIONS[pr[0]].clubs, Y = DIVISIONS[pr[1]].clubs;
+        for(var i = 0; i < 4; i++){
+          var h = X[i], a = Y[(i + r) % 4];
+          if(r % 2){ var sw = h; h = a; a = sw; }
+          wk.push({ h:h, a:a });
+        }
+      });
+      weeks.push(wk);
+    }
+    for(r = 0; r < 3; r++) weeks.push(divRound(r, true));
+    return weeks;
+  }
+
+  // what a club is worth this season, fixed when the schedule is drawn
+  function buildRatings(rng){
+    var rate = {};
+    LEAGUE.forEach(function(c){ rate[c] = 0.34 + rng() * 0.40; });
+    return rate;
+  }
+  function gradeFor(rating){ return rating < 0.47 ? 0 : (rating < 0.62 ? 1 : 2); }
+
+  /* Games you are not in still have to be played, or the table is a fiction.
+     Same shape as the drives you watch: five possessions a side, and how often
+     one ends in seven depends on who is the better club. */
+  function simScore(rA, rB, rng){
+    var edge = clamp(0.5 + (rA - rB) * 0.95, 0.14, 0.86), pts = 0;
+    for(var d = 0; d < 5; d++){
+      var roll = rng();
+      if(roll < edge * 0.64) pts += 7;
+      else if(roll < edge * 0.64 + 0.26) pts += 3;
+    }
+    return pts;
+  }
+
+  /* Level after sixty minutes, so they play on. Almost always somebody wins
+     it: leaving six and a half per cent of the league's games drawn made every
+     table look like a rugby season. */
+  function overtime(r, rH, rA, rng){
+    if(r.hs !== r.as) return;
+    if(rng() < 0.12) return;
+    if(rng() < 0.5 + (rH - rA) * 0.5) r.hs += 3; else r.as += 3;
+  }
+
+  function simWeek(sn, w, rng){
+    if(sn.res[w]) return;
+    var row = [];
+    sn.sched[w].forEach(function(g){
+      if(g.h === sn.kit || g.a === sn.kit){ row.push(null); return; }   // yours to play
+      var r = { hs: simScore(sn.rate[g.h], sn.rate[g.a], rng),
+                as: simScore(sn.rate[g.a], sn.rate[g.h], rng) };
+      overtime(r, sn.rate[g.h], sn.rate[g.a], rng);
+      row.push(r);
+    });
+    sn.res[w] = row;
+  }
+
+  function standings(sn){
+    var tbl = {};
+    LEAGUE.forEach(function(c){ tbl[c] = { w:0, l:0, t:0, pf:0, pa:0 }; });
+    for(var w = 0; w < sn.sched.length; w++){
+      if(!sn.res[w]) continue;
+      for(var i = 0; i < sn.sched[w].length; i++){
+        var g = sn.sched[w][i], r = sn.res[w][i];
+        if(!r) continue;
+        var H = tbl[g.h], A = tbl[g.a];
+        if(!H || !A) continue;
+        H.pf += r.hs; H.pa += r.as; A.pf += r.as; A.pa += r.hs;
+        if(r.hs > r.as){ H.w++; A.l++; }
+        else if(r.hs < r.as){ A.w++; H.l++; }
+        else { H.t++; A.t++; }
+      }
+    }
+    return tbl;
+  }
+
+  // better record first, then points scored against points let in
+  function rankClubs(list, tbl){
+    return list.slice().sort(function(x, y){
+      var X = tbl[x], Y = tbl[y];
+      var d = (Y.w - Y.l) - (X.w - X.l);
+      if(d) return d;
+      return (Y.pf - Y.pa) - (X.pf - X.pa);
+    });
+  }
+
+  function divisionWinners(sn){
+    var tbl = standings(sn);
+    return DIVISIONS.map(function(d){ return rankClubs(d.clubs, tbl)[0]; });
+  }
+
+  function makeSeason(kitIdx, rng){
+    var sched = buildSchedule(rng), rate = buildRatings(rng);
     var fix = [];
     for(var w = 0; w < SEASON_LEN; w++){
-      /* The schedule hardens as it goes without being a straight ramp: the
-         chance of a soft week falls away and the chance of a hard one climbs,
-         so an early upset and a late gimme are both still possible. The last
-         week is always the toughest, because a season wants a final. */
-      var lean = w / (SEASON_LEN - 1);
-      var pWeak = 0.55 - lean * 0.50;
-      var pStrong = 0.08 + lean * 0.52;
-      var roll = rng(), g;
-      if(w === SEASON_LEN - 1) g = 2;
-      else g = roll < pWeak ? 0 : (roll > 1 - pStrong ? 2 : 1);
-      fix.push({ k: pool[w % pool.length], g: g, you:null, opp:null });
+      var mine = null;
+      sched[w].forEach(function(g){
+        if(g.h === kitIdx) mine = { k:g.a, home:true };
+        else if(g.a === kitIdx) mine = { k:g.h, home:false };
+      });
+      fix.push({ k: mine.k, home: mine.home, g: gradeFor(rate[mine.k]), you:null, opp:null });
     }
-    return { kit: kitIdx, week: 0, fix: fix, w:0, l:0, t:0 };
+    return { kit: kitIdx, week: 0, stage:"regular", fix: fix, w:0, l:0, t:0,
+             sched: sched, rate: rate, res: [], post: null };
+  }
+
+  /* Four division winners, seeded on record: the best plays the worst and the
+     other two meet, then a final. Yours are played; the rest are simulated,
+     and if you did not win your division you watch all of it. */
+  function makePlayoffs(sn, rng){
+    var seeds = rankClubs(divisionWinners(sn), standings(sn));
+    sn.post = {
+      seeds: seeds,
+      semis: [ { h:seeds[0], a:seeds[3], hs:null, as:null, won:null },
+               { h:seeds[1], a:seeds[2], hs:null, as:null, won:null } ],
+      final: { h:null, a:null, hs:null, as:null, won:null },
+      champ: null
+    };
+    sn.stage = seeds.indexOf(sn.kit) >= 0 ? "semi" : "watching";
+  }
+
+  // somebody has to go through, so a drawn knockout is settled on the night
+  function tieBreak(g, rate, rng){
+    var guard = 0;
+    while(g.hs === g.as && guard++ < 40){
+      if(rng() < 0.5 + (rate[g.h] - rate[g.a]) * 0.5) g.hs += 3; else g.as += 3;
+    }
+    return g.hs > g.as ? g.h : g.a;
+  }
+
+  function playSim(g, sn, rng){
+    g.hs = simScore(sn.rate[g.h], sn.rate[g.a], rng);
+    g.as = simScore(sn.rate[g.a], sn.rate[g.h], rng);
+    g.won = tieBreak(g, sn.rate, rng);
+    return g.won;
+  }
+
+  // carry the bracket as far as it can go without you
+  function advancePost(sn, rng){
+    var p = sn.post, i;
+    if(!p) return;
+    for(i = 0; i < 2; i++){
+      var sm = p.semis[i];
+      if(sm.hs === null && sm.h !== sn.kit && sm.a !== sn.kit) playSim(sm, sn, rng);
+    }
+    if(p.semis[0].hs === null || p.semis[1].hs === null) return;
+    if(p.final.h === null){ p.final.h = p.semis[0].won; p.final.a = p.semis[1].won; }
+    if(p.final.hs === null && p.final.h !== sn.kit && p.final.a !== sn.kit)
+      p.champ = playSim(p.final, sn, rng);
+    if(p.champ !== null && p.champ !== undefined) sn.stage = "done";
+  }
+
+  function yourPostGame(sn){
+    var p = sn.post, i;
+    if(!p) return null;
+    if(sn.stage === "semi"){
+      for(i = 0; i < 2; i++){
+        var sm = p.semis[i];
+        if(sm.hs === null && (sm.h === sn.kit || sm.a === sn.kit))
+          return { game: sm, opp: sm.h === sn.kit ? sm.a : sm.h, round:"Semi-final" };
+      }
+    }
+    if(sn.stage === "final" && p.final.hs === null && (p.final.h === sn.kit || p.final.a === sn.kit))
+      return { game: p.final, opp: p.final.h === sn.kit ? p.final.a : p.final.h, round:"Final" };
+    return null;
   }
 
   var CATCH_R = 2.0;       // yards; generous enough to be playable with a fingertip
@@ -725,6 +930,7 @@
       kitYou: opts.kitYou === undefined ? 0 : opts.kitYou,
       kitOpp: opts.kitOpp === undefined ? 1 : opts.kitOpp,
       grade: opts.grade === undefined ? 1 : opts.grade,
+      oppAway: !!opts.oppAway,
       week: opts.week || 0,
       seed: seed || 1
     };
@@ -955,6 +1161,110 @@
     return !!(sn && sn.week < SEASON_LEN);
   }
 
+  var seasonView = "fixtures";   // fixtures | table | bracket
+
+  function clubRow(club, rec, sn, top){
+    var row = document.createElement("div");
+    row.className = "tr";
+    row.dataset.you = club === sn.kit;
+    row.dataset.top = !!top;
+    var badge = document.createElement("span");
+    badge.className = "badge"; swatch(badge, PAIRS[club]);
+    var nm = document.createElement("span");
+    nm.className = "nm"; nm.textContent = PAIRS[club].team;
+    var r = document.createElement("span");
+    r.className = "rec";
+    r.textContent = rec.w + "\u2013" + rec.l + (rec.t ? "\u2013" + rec.t : "");
+    var pd = document.createElement("span");
+    pd.className = "pd";
+    var diff = rec.pf - rec.pa;
+    pd.textContent = (diff > 0 ? "+" : "") + diff;
+    row.appendChild(badge); row.appendChild(nm); row.appendChild(r); row.appendChild(pd);
+    return row;
+  }
+
+  function paintTables(sn){
+    var host = el("tables");
+    host.innerHTML = "";
+    var tbl = standings(sn);
+    DIVISIONS.forEach(function(d){
+      var head = document.createElement("div");
+      head.className = "divname"; head.textContent = d.name;
+      host.appendChild(head);
+      rankClubs(d.clubs, tbl).forEach(function(c, i){
+        host.appendChild(clubRow(c, tbl[c], sn, i === 0));
+      });
+    });
+  }
+
+  function tieRow(g, sn, label){
+    var row = document.createElement("div");
+    row.className = "tie";
+    var wk = document.createElement("span");
+    wk.className = "vs"; wk.textContent = label;
+    row.appendChild(wk);
+    [g.h, g.a].forEach(function(c, i){
+      if(c === null || c === undefined){
+        var q = document.createElement("span");
+        q.className = "nm"; q.textContent = i ? "\u2014" : "to be decided";
+        row.appendChild(q);
+        return;
+      }
+      var badge = document.createElement("span");
+      badge.className = "badge"; swatch(badge, PAIRS[c]);
+      var nm = document.createElement("span");
+      nm.className = "nm";
+      nm.textContent = PAIRS[c].nick + (c === sn.kit ? " (you)" : "");
+      row.appendChild(badge); row.appendChild(nm);
+      if(!i){
+        var v = document.createElement("span");
+        v.className = "vs"; v.textContent = "v";
+        row.appendChild(v);
+      }
+    });
+    var sc = document.createElement("span");
+    sc.className = "sc";
+    sc.textContent = g.hs === null || g.hs === undefined ? "" : g.hs + "\u2013" + g.as;
+    row.appendChild(sc);
+    return row;
+  }
+
+  function paintBracket(sn){
+    var host = el("bracket");
+    host.innerHTML = "";
+    if(!sn.post) return;
+    host.appendChild(tieRow(sn.post.semis[0], sn, "SF"));
+    host.appendChild(tieRow(sn.post.semis[1], sn, "SF"));
+    host.appendChild(tieRow(sn.post.final, sn, "F"));
+    if(sn.post.champ !== null && sn.post.champ !== undefined){
+      var line = document.createElement("p");
+      line.className = "champ";
+      line.textContent = sn.post.champ === sn.kit
+        ? "You win it. " + PAIRS[sn.kit].team + " are champions."
+        : PAIRS[sn.post.champ].team + " are champions.";
+      host.appendChild(line);
+    }
+  }
+
+  function paintSeasonView(sn){
+    var views = [{ id:"fixtures", label:"Fixtures" }, { id:"table", label:"Table" }];
+    if(sn && sn.post) views.push({ id:"bracket", label:"Post-season" });
+    if(sn && sn.post && seasonView === "fixtures") seasonView = "bracket";
+    if(!views.some(function(v){ return v.id === seasonView; })) seasonView = "fixtures";
+    var row = el("season-views");
+    row.innerHTML = "";
+    views.forEach(function(v){
+      var b = document.createElement("button");
+      b.className = "chip"; b.type = "button"; b.textContent = v.label;
+      b.setAttribute("aria-pressed", v.id === seasonView);
+      b.addEventListener("click", function(){ seasonView = v.id; paintLobby(); });
+      row.appendChild(b);
+    });
+    el("fixtures").hidden = seasonView !== "fixtures";
+    el("tables").hidden = seasonView !== "table";
+    el("bracket").hidden = seasonView !== "bracket";
+  }
+
   function paintLobby(){
     var grid = el("kits");
     if(!grid.children.length){
@@ -1001,10 +1311,12 @@
     el("season-panel").hidden = !sn;
     if(sn){
       var done = sn.week >= SEASON_LEN;
-      el("season-head").textContent = done
-        ? "Season finished \u00b7 " + sn.w + "\u2013" + sn.l + (sn.t ? "\u2013" + sn.t : "")
-        : "Season \u00b7 week " + (sn.week + 1) + " of " + SEASON_LEN +
-          " \u00b7 " + sn.w + "\u2013" + sn.l + (sn.t ? "\u2013" + sn.t : "");
+      var rec = sn.w + "\u2013" + sn.l + (sn.t ? "\u2013" + sn.t : "");
+      el("season-head").textContent =
+        sn.stage === "done" ? "Season finished \u00b7 " + rec
+        : sn.stage === "watching" ? "Your season is over \u00b7 " + rec
+        : sn.stage !== "regular" ? "Post-season \u00b7 " + rec
+        : "Season \u00b7 week " + (sn.week + 1) + " of " + SEASON_LEN + " \u00b7 " + rec;
       var list = el("fixtures");
       list.innerHTML = "";
       sn.fix.forEach(function(f, w){
@@ -1029,8 +1341,17 @@
         row.appendChild(tail);
         list.appendChild(row);
       });
-      el("resume-season").textContent = done ? "Season over" : "Play week " + (sn.week + 1);
-      el("resume-season").disabled = done;
+      paintTables(sn);
+      paintBracket(sn);
+      paintSeasonView(sn);
+
+      var pg = yourPostGame(sn);
+      var btn = el("resume-season");
+      if(sn.stage === "regular"){ btn.textContent = "Play week " + (sn.week + 1); btn.disabled = false; }
+      else if(pg){ btn.textContent = "Play the " + pg.round.toLowerCase(); btn.disabled = false; }
+      else if(sn.stage === "done" || sn.stage === "watching"){
+        btn.textContent = "Season over"; btn.disabled = true;
+      }
     }
     el("note").hidden = storageOK;
   }
@@ -1049,10 +1370,20 @@
 
   function startFixture(){
     var sn = profile.season;
-    if(!sn || sn.week >= SEASON_LEN) return;
-    var f = sn.fix[sn.week];
+    if(!sn) return;
+    var opp, grade;
+    if(sn.stage === "regular"){
+      if(sn.week >= SEASON_LEN) return;
+      opp = sn.fix[sn.week].k; grade = sn.fix[sn.week].g;
+    } else {
+      var pg = yourPostGame(sn);
+      if(!pg) return;
+      opp = pg.opp; grade = gradeFor(sn.rate[opp]);
+    }
     st = newGameState(Date.now() >>> 0,
-      { mode:"season", kitYou: sn.kit, kitOpp: f.k, grade: f.g, week: sn.week, qlen: profile.qlen });
+      { mode:"season", kitYou: sn.kit, kitOpp: opp, grade: grade, week: sn.week, qlen: profile.qlen,
+        // a divisional rival may wear your colours; he changes for the day
+        oppAway: clashes(PAIRS[opp], PAIRS[sn.kit]) });
     st.wins = sn.w; st.losses = sn.l; st.ties = sn.t;
     st.playedEver = profile.playedEver;
     rng = makeRng(st.seed);
@@ -1064,11 +1395,37 @@
   function recordResult(){
     if(st.mode === "season"){
       var sn = profile.season;
-      if(!sn || sn.week >= SEASON_LEN) return;
-      var f = sn.fix[sn.week];
-      f.you = st.you; f.opp = st.opp;
-      if(st.you > st.opp) sn.w++; else if(st.you < st.opp) sn.l++; else sn.t++;
-      sn.week++;
+      if(!sn) return;
+      var srng = makeRng((st.seed ^ 0x9E3779B9) >>> 0);
+      if(sn.stage === "regular"){
+        if(sn.week >= SEASON_LEN) return;
+        var f = sn.fix[sn.week];
+        f.you = st.you; f.opp = st.opp;
+        if(st.you > st.opp) sn.w++; else if(st.you < st.opp) sn.l++; else sn.t++;
+        /* Your result goes into the table, and the rest of the round is played
+           out with it - the standings have to move while you are in them. */
+        simWeek(sn, sn.week, srng);
+        for(var i = 0; i < sn.sched[sn.week].length; i++){
+          var g = sn.sched[sn.week][i];
+          if(g.h === sn.kit) sn.res[sn.week][i] = { hs: st.you, as: st.opp };
+          else if(g.a === sn.kit) sn.res[sn.week][i] = { hs: st.opp, as: st.you };
+        }
+        sn.week++;
+        if(sn.week >= SEASON_LEN){ makePlayoffs(sn, srng); advancePost(sn, srng); }
+      } else {
+        var pg = yourPostGame(sn);
+        if(pg){
+          var mineHome = pg.game.h === sn.kit;
+          pg.game.hs = mineHome ? st.you : st.opp;
+          pg.game.as = mineHome ? st.opp : st.you;
+          var won = tieBreak(pg.game, sn.rate, srng);
+          pg.game.won = won;
+          if(st.you > st.opp) sn.w++; else if(st.you < st.opp) sn.l++; else sn.t++;
+          if(pg.round === "Final"){ sn.post.champ = won; sn.stage = "done"; }
+          else sn.stage = (won === sn.kit) ? "final" : "watching";
+        }
+        advancePost(sn, srng);
+      }
     } else {
       profile.ex.wins = st.wins; profile.ex.losses = st.losses;
       profile.ex.ties = st.ties; profile.ex.best = st.best;
@@ -1086,7 +1443,7 @@
   // commonest form of colour blindness cannot separate at all.
   var KIT = { ball: "#E8CF5C" };   // the ring on whoever has it, whatever kit he wears
   function yourKit(){ return PAIRS[st.kitYou]; }
-  function theirKit(){ return PAIRS[st.kitOpp]; }
+  function theirKit(){ return st.oppAway ? AWAY_KIT : PAIRS[st.kitOpp]; }
 
   var runoffLeft = 0;      // clock still to come off before the next snap
   var canvas = el("field"), ctx = canvas.getContext("2d");
