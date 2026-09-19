@@ -76,6 +76,8 @@
   .fx .grade{margin-left:auto;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
   .fx[data-state="done"]{opacity:.55}
   .fx[data-state="now"]{border-color:var(--accent)}
+  .locked{margin:6px 2px 0;font-size:11.5px;color:var(--sel);line-height:1.4}
+  .kit[disabled]{opacity:.32}
   .fx .score{margin-left:auto;font-variant-numeric:tabular-nums;font-size:12px}
 </style>
 </head>
@@ -88,9 +90,10 @@
 
 <div id="lobby">
   <div>
-    <div class="section">Your kit</div>
+    <div class="section">Your club</div>
     <div class="kits" id="kits"></div>
     <div class="yourteam"><span class="badge" id="you-badge"></span><span id="you-name"></span></div>
+    <p class="locked" id="kit-locked" hidden>You are under contract. Restart your career to coach elsewhere.</p>
   </div>
 
   <div>
@@ -111,7 +114,7 @@
     </div>
   </div>
 
-  <p class="note">An exhibition is a one-off. A season is nine fixtures against rivals of set difficulty, and the record follows you through it.</p>
+  <p class="note">An exhibition is a one-off. A season is nine fixtures against rivals of set difficulty, and once it is under way you are that club's coach until you see it out or restart your career.</p>
 </div>
 
 <div id="gameview" hidden>
@@ -180,11 +183,39 @@
   var PAINT = ["#4A86D1","#E0574A","#4FA88B","#E8CF5C","#8FCB52","#A470D0","#E8894A","#E6EBEF"];
   var PAINT_NAME = ["Navy","Red","Teal","Gold","Green","Plum","Amber","Bone"];
 
+  /* One club per colour pairing, named the way the American game names its
+     teams - a city and a plural that means something there. The trades are the
+     real ones: Liverpool's dockers, Glasgow's riveters on the Clyde, Cardiff's
+     coal, Hull's trawlermen, Dundee's whalers. Cork is the Rebel County and
+     Galway the City of the Tribes, so those name themselves. In the same order
+     the pairs are generated, so a club and its colours never come apart. */
+  var CLUBS = [
+    "Liverpool Dockers",    "Cardiff Colliers",     "Edinburgh Royals",
+    "Glasgow Riveters",     "London Sentinels",     "Dundee Whalers",
+    "Portsmouth Admirals",  "Sheffield Cutlers",    "Manchester Bees",
+    "Cork Rebels",          "Birmingham Forgers",   "Bristol Privateers",
+    "Newcastle Keelmen",    "Norwich Yeomen",       "Limerick Shannons",
+    "Belfast Shipwrights",  "Swansea Smelters",     "Plymouth Pilgrims",
+    "Derry Oaks",           "Nottingham Outlaws",   "Hull Trawlermen",
+    "Aberdeen Roughnecks",  "Dublin Vikings",       "Waterford Glassmen",
+    "Leeds Weavers",        "Galway Tribesmen",     "Brighton Regents",
+    "Coventry Motormen"
+  ];
+
   var PAIRS = (function(){
     var out = [];
     for(var i = 0; i < PAINT.length; i++)
-      for(var j = i + 1; j < PAINT.length; j++)
-        out.push({ i:i, j:j, a:PAINT[i], b:PAINT[j], name:PAINT_NAME[i] + " & " + PAINT_NAME[j] });
+      for(var j = i + 1; j < PAINT.length; j++){
+        var team = CLUBS[out.length] || (PAINT_NAME[i] + " & " + PAINT_NAME[j]);
+        out.push({
+          i:i, j:j, a:PAINT[i], b:PAINT[j],
+          team: team,
+          // the bit a scoreline has room for
+          nick: team.slice(team.indexOf(" ") + 1),
+          colours: PAINT_NAME[i] + " & " + PAINT_NAME[j],
+          name: team
+        });
+      }
     return out;
   })();
 
@@ -915,6 +946,15 @@
     host.appendChild(a); host.appendChild(b);
   }
 
+  /* You sign for a club, not for a game. While a season is running the kit
+     grid is closed: the fixtures were drawn against that club, the record is
+     that club's record, and swapping shirts halfway through makes nonsense of
+     both. Seeing the season out - or restarting - is what frees you. */
+  function careerLocked(){
+    var sn = profile.season;
+    return !!(sn && sn.week < SEASON_LEN);
+  }
+
   function paintLobby(){
     var grid = el("kits");
     if(!grid.children.length){
@@ -923,22 +963,27 @@
         btn.className = "kit";
         btn.type = "button";
         btn.dataset.idx = idx;
-        btn.setAttribute("aria-label", PAIRS[idx].name);
+        btn.setAttribute("aria-label", PAIRS[idx].team + ", " + PAIRS[idx].colours);
         swatch(btn, PAIRS[idx]);
         btn.addEventListener("click", function(){
+          // a club you are mid-season with is a club you are stuck with
+          if(careerLocked()) return;
           profile.kit = idx;
-          // a season already under way keeps the kit it was drawn against
           save(); paintLobby();
         });
         grid.appendChild(btn);
       });
     }
+    var locked = careerLocked();
     for(var i = 0; i < grid.children.length; i++){
       var b = grid.children[i];
       b.setAttribute("aria-pressed", +b.dataset.idx === profile.kit ? "true" : "false");
+      b.disabled = locked;
     }
+    el("kit-locked").hidden = !locked;
     swatch(el("you-badge"), PAIRS[profile.kit]);
-    el("you-name").textContent = PAIRS[profile.kit].name;
+    el("you-name").textContent = PAIRS[profile.kit].team;
+    el("start-season").textContent = locked ? "Restart career" : "New season";
 
     var qrow = el("qlens");
     if(!qrow.children.length){
@@ -971,7 +1016,7 @@
         var badge = document.createElement("span");
         badge.className = "badge"; swatch(badge, PAIRS[f.k]);
         var name = document.createElement("span");
-        name.textContent = PAIRS[f.k].name;
+        name.textContent = PAIRS[f.k].team;
         row.appendChild(wk); row.appendChild(badge); row.appendChild(name);
         var tail = document.createElement("span");
         if(w < sn.week && f.you !== null){
@@ -1404,8 +1449,9 @@
     el("opp-score").textContent = st.opp;
     el("you-side").dataset.lead = st.you > st.opp;
     el("opp-side").dataset.lead = st.opp > st.you;
-    el("you-side").firstChild.nodeValue = "You";
-    el("opp-side").firstChild.nodeValue = PAIRS[st.kitOpp].name;
+    // the scoreline has room for the nickname, not the whole club
+    el("you-side").firstChild.nodeValue = PAIRS[st.kitYou].nick;
+    el("opp-side").firstChild.nodeValue = PAIRS[st.kitOpp].nick;
     paintClock();
 
     var toGoal = FIELD_L - st.ballOn;
@@ -1609,9 +1655,15 @@
   el("resume-season").addEventListener("click", startFixture);
   el("start-season").addEventListener("click", function(){
     var sn = profile.season;
-    // a season in progress is not thrown away by a stray tap
-    if(sn && sn.week > 0 && sn.week < SEASON_LEN &&
-       !confirm("Abandon the season at week " + (sn.week + 1) + "?")) return;
+    if(careerLocked()){
+      // restarting tears up the contract; it does not draw a new season on the
+      // spot, because the whole point is to let you pick somebody else first
+      if(!confirm("Leave " + PAIRS[profile.kit].team + " at week " + (sn.week + 1) +
+                  " and restart your career?")) return;
+      profile.season = null;
+      save(); paintLobby();
+      return;
+    }
     profile.season = makeSeason(profile.kit, makeRng(Date.now() >>> 0));
     save();
     paintLobby();
