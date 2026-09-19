@@ -93,6 +93,11 @@
     <div class="yourteam"><span class="badge" id="you-badge"></span><span id="you-name"></span></div>
   </div>
 
+  <div>
+    <div class="section">Quarter length</div>
+    <div class="chiprow" id="qlens" style="border-bottom:none;padding-bottom:0"></div>
+  </div>
+
   <div class="controls">
     <button class="ctrl" id="start-season">New season</button>
     <button class="ctrl" id="start-ex">Exhibition</button>
@@ -113,7 +118,7 @@
 
 <div class="scoreline">
   <span class="side" id="you-side">You<b id="you-score">0</b></span>
-  <span class="mid">Drive <b id="drive-n">1 of 8</b></span>
+  <span class="mid"><b id="clock-q">Q1</b> <b id="clock-t">2:00</b></span>
   <span class="side" id="opp-side">Rivals<b id="opp-score">0</b></span>
 </div>
 
@@ -243,6 +248,13 @@
   // heading instead, which is how anyone actually runs someone down.
   var PURSUIT_LEAD = 0.45; // seconds ahead of the carrier they aim
 
+  /* How long each man takes to realise the ball is running. Without it every
+     defender turns and converges on the same frame, and a scramble is a yard
+     lost every time however it is steered - there is no lane to find because
+     nobody is ever out of position. The linebackers in the middle react first;
+     the corners are still running with their men; the safety is last. */
+  var REACT = [0.45, 0.55, 0.62];
+
   /* A ball carrier used to steer sideways at 8.4 yards a second while still
      running forward at 6, so sliding across the field moved him at 10.3 - faster
      than the 8.6 anyone chasing him can manage. No pursuit logic can catch a man
@@ -261,7 +273,32 @@
   var SIDE_COST = 0.35;
   var ZONE_REACH = 9;      // how far a zone defender will stray from his patch
   var HIST = 40;
-  var DRIVES = 8;          // four each, alternating
+  /* Four quarters on a clock that only runs while the ball is live, the way the
+     game this copies does it: eight fixed drives meant a game could not be
+     closed out or played for time, and the last one always felt the same
+     length as the first. Possession changes at the end of every quarter. */
+  var QUARTERS = 4;
+  var QLENS = [
+    { id:"short", label:"1 min", secs:60 },
+    { id:"even",  label:"2 min", secs:120 },
+    { id:"long",  label:"3 min", secs:180 }
+  ];
+  /* A play costs the clock far more than the seconds it is live - the huddle
+     and the play clock between snaps are most of it. Burning live seconds one
+     for one fitted twenty-odd of your plays into a two-minute quarter and the
+     scores ran away with themselves; at this rate a quarter holds about four
+     of your drives and the rival's answers. */
+  var CLOCK_RATE = 2.6;
+  /* What a simulated rival possession costs off the clock, as a share of a
+     quarter, so it reads the same at every quarter length. These are large on
+     purpose: the rival's scoring rate was set when a game was eight fixed
+     drives, four each, and cheap possessions handed him ten or more instead -
+     enough to put eighty points on you. At this cost a game holds about five
+     apiece, which is what the rate was tuned against. */
+  var RIVAL_TIME = { td:0.46, fg:0.38, out:0.22 };
+  // a punt is a play too, and without a cost it is a way of ending a drive for
+  // nothing - which turns "punt at once, every time" into free clock
+  var PUNT_TIME = 0.06;
 
   // Routes are polylines relative to where the receiver lines up. Positive dy is
   // downfield. Each is mirrored for receivers lined up on the left.
@@ -352,16 +389,16 @@
     // a corner over each receiver, pressed up on the wide men and softer inside
     var defs = recs.map(function(r, i){
       var wide = r.x < 6 || r.x > FIELD_W - 6;
-      return { id: i, mark: i, lag: LAG_COVER + (i % 3) * 3,
+      return { id: i, mark: i, lag: LAG_COVER + (i % 3) * 3, react: REACT[i % REACT.length],
                x: r.x + (r.x < FIELD_W/2 ? 0.6 : -0.6),
                y: los + (wide ? 7 : 5.5) };
     });
     // a free safety patrolling deep, drawn to whoever gets furthest downfield
-    defs.push({ id: 3, mark: -1, lag: LAG_SAFETY, x: FIELD_W/2, y: los + 13 });
+    defs.push({ id: 3, mark: -1, lag: LAG_SAFETY, react: 0.72, x: FIELD_W/2, y: los + 13 });
     // two linebackers holding short zones rather than marking anyone. Without
     // bodies in the middle every catch turned into a footrace to the end zone.
-    defs.push({ id: 4, mark: -2, lag: LAG_COVER, zx: 11.5, zy: 5, x: 11.5, y: los + 5 });
-    defs.push({ id: 5, mark: -2, lag: LAG_COVER, zx: 18.5, zy: 5.5, x: 18.5, y: los + 5.5 });
+    defs.push({ id: 4, mark: -2, lag: LAG_COVER, react: 0.22, zx: 11.5, zy: 5, x: 11.5, y: los + 5 });
+    defs.push({ id: 5, mark: -2, lag: LAG_COVER, react: 0.30, zx: 18.5, zy: 5.5, x: 18.5, y: los + 5.5 });
 
     return {
       phase: "presnap",       // presnap | live | air | carry | done
@@ -422,10 +459,20 @@
     // defenders chase their mark; the safety chases whoever is deepest
     play.defs.forEach(function(d){
       var man, lag = d.lag;
-      if(play.phase === "carry" && play.carrier){
+      if(play.phase === "carry" && play.carrier &&
+         play.t - (play.carryT || 0) >= (d.react || 0)){
         var c = play.carrier;
-        var aimX = clamp(c.x + (c.svx || 0) * PURSUIT_LEAD, 0, FIELD_W);
-        var aimY = c.y + (c.svy === undefined ? RUN_SPEED : c.svy) * PURSUIT_LEAD;
+        /* Lead him by no more than the time it will take to get there. A fixed
+           lead is an offset he can never close: chasing a point 2.9 yards in
+           front of a runner going the same speed, the defender settles exactly
+           that far ahead and escorts him in. Four hundred straight scrambles
+           from the 25 were four hundred touchdowns. With the lead capped by
+           time-to-intercept it collapses onto the carrier as he is run down,
+           which is what makes the tackle. */
+        var gap = dist(d.x, d.y, c.x, c.y);
+        var lead = Math.min(PURSUIT_LEAD, gap / SPD.pursue);
+        var aimX = clamp(c.x + (c.svx || 0) * lead, 0, FIELD_W);
+        var aimY = c.y + (c.svy === undefined ? RUN_SPEED : c.svy) * lead;
         var pd = dist(d.x, d.y, aimX, aimY);
         if(pd > 0.01){
           var ps = SPD.pursue * dt;
@@ -565,6 +612,7 @@
   function scramble(st, play){
     if(play.phase !== "live") return false;
     play.phase = "carry";
+    play.carryT = play.t;
     play.carrier = play.qb;
     return true;
   }
@@ -590,6 +638,7 @@
 
     if(b.ty >= FIELD_L){ endPlay(st, play, "touchdown", FIELD_L); return; }
     play.phase = "carry";
+    play.carryT = play.t;
     rec.x = b.tx; rec.y = b.ty;
     play.carrier = rec;
   }
@@ -612,7 +661,11 @@
     opts = opts || {};
     var st = {
       you: 0, opp: 0,
-      drive: 1, driveIsYours: true,
+      driveIsYours: true,
+      qtr: 1,
+      qlen: (QLENS[opts.qlen === undefined ? 1 : opts.qlen] || QLENS[1]).secs,
+      qlenIdx: opts.qlen === undefined ? 1 : opts.qlen,
+      clock: 0,
       ballOn: 25, down: 1, toGo: 10, firstDownAt: 35,
       over: false, lastMsg: "Your ball", playedEver: false,
       wins: 0, losses: 0, ties: 0, best: 0, streak: 0,
@@ -623,12 +676,28 @@
       week: opts.week || 0,
       seed: seed || 1
     };
+    st.clock = st.qlen;
     newDriveState(st, 25);
     return st;
   }
 
   // Deterministic per-play randomness would make every game identical, so this
   // is a small seeded generator that the tests can pin and the game can vary.
+  /* The clock moves between the events that redraw everything else, so it gets
+     its own repaint every frame - otherwise it sits still until the whistle. */
+  function paintClock(){
+    var q = el("clock-q"), t = el("clock-t");
+    if(!q || !t) return;
+    var text = clockText(st.clock);
+    if(q.textContent !== "Q" + Math.min(st.qtr, QUARTERS)) q.textContent = "Q" + Math.min(st.qtr, QUARTERS);
+    if(t.textContent !== text) t.textContent = text;
+  }
+
+  function clockText(secs){
+    var t = Math.max(0, Math.ceil(secs));
+    return Math.floor(t / 60) + ":" + (t % 60 < 10 ? "0" : "") + (t % 60);
+  }
+
   function makeRng(seed){
     var s = seed >>> 0 || 1;
     return function(){
@@ -688,6 +757,7 @@
 
   function punt(st){
     st.lastMsg = "Punt";
+    burnClock(st, st.qlen * PUNT_TIME);
     endDrive(st);
   }
 
@@ -699,16 +769,44 @@
     // The number comes from the fixture now, not from your record: a schedule you
     // can read ahead of time is worth more than one that quietly tracks your form.
     var strength = GRADES[st.grade].strength;
-    if(roll < strength){ st.opp += 7; return "Rivals score a touchdown"; }
-    if(roll < strength + 0.26){ st.opp += 3; return "Rivals kick a field goal"; }
+    if(roll < strength){
+      st.opp += 7; burnClock(st, st.qlen * RIVAL_TIME.td);
+      return "Rivals score a touchdown";
+    }
+    if(roll < strength + 0.26){
+      st.opp += 3; burnClock(st, st.qlen * RIVAL_TIME.fg);
+      return "Rivals kick a field goal";
+    }
+    burnClock(st, st.qlen * RIVAL_TIME.out);
     return "Rivals go three and out";
   }
 
   function endDrive(st){
-    st.drive++;
-    if(st.drive > DRIVES){ finishGame(st); return; }
+    if(st.over) return;
     st.driveIsYours = !st.driveIsYours;
     if(st.driveIsYours) newDriveState(st, 25);
+  }
+
+  /* Time only leaves the clock while the ball is live, so the pause between
+     plays is yours to take. Running it out is the point: with the lead you can
+     grind the last minute away, and behind it you have to hurry. */
+  function burnClock(st, secs){
+    if(st.over) return false;
+    st.clock -= secs;
+    if(st.clock > 0) return false;
+    st.clock = 0;
+    return true;
+  }
+
+  function endQuarter(st){
+    if(st.over) return;
+    if(st.qtr >= QUARTERS){ finishGame(st); return; }
+    st.qtr++;
+    st.clock = st.qlen;
+    // possession turns over at the break, as it does in the game this copies
+    st.driveIsYours = !st.driveIsYours;
+    if(st.driveIsYours) newDriveState(st, 25);
+    st.lastMsg = "End of quarter " + (st.qtr - 1);
   }
 
   function finishGame(st){
@@ -724,7 +822,7 @@
 
   var storageOK = true, memory = null;
   var st, play = null, rng;
-  var profile = { kit: 0, season: null, ex: { wins:0, losses:0, ties:0, best:0 }, playedEver: false };
+  var profile = { kit: 0, qlen: 1, season: null, ex: { wins:0, losses:0, ties:0, best:0 }, playedEver: false };
 
   function load(){
     try{ var raw = localStorage.getItem(KEY); return raw ? JSON.parse(raw) : null; }
@@ -742,10 +840,12 @@
       if(typeof saved.kit === "number" && PAIRS[saved.kit]) profile.kit = saved.kit;
       if(saved.season && saved.season.fix && saved.season.fix.length === SEASON_LEN) profile.season = saved.season;
       if(saved.ex) profile.ex = saved.ex;
+      if(typeof saved.qlen === "number" && QLENS[saved.qlen]) profile.qlen = saved.qlen;
       profile.playedEver = !!saved.playedEver;
     }
     // a game is only built once a mode is chosen; until then the lobby is the page
-    st = newGameState(Date.now() >>> 0, { kitYou: profile.kit, kitOpp: rivalFor(profile.kit, Math.random) });
+    st = newGameState(Date.now() >>> 0,
+      { kitYou: profile.kit, kitOpp: rivalFor(profile.kit, Math.random), qlen: profile.qlen });
     st.playedEver = profile.playedEver;
     rng = makeRng(st.seed);
   }
@@ -812,6 +912,18 @@
     swatch(el("you-badge"), PAIRS[profile.kit]);
     el("you-name").textContent = PAIRS[profile.kit].name;
 
+    var qrow = el("qlens");
+    if(!qrow.children.length){
+      QLENS.forEach(function(q, i){
+        var b = document.createElement("button");
+        b.className = "chip"; b.type = "button"; b.dataset.q = i; b.textContent = q.label;
+        b.addEventListener("click", function(){ profile.qlen = i; save(); paintLobby(); });
+        qrow.appendChild(b);
+      });
+    }
+    for(var q = 0; q < qrow.children.length; q++)
+      qrow.children[q].setAttribute("aria-pressed", q === profile.qlen ? "true" : "false");
+
     var sn = profile.season;
     el("season-panel").hidden = !sn;
     if(sn){
@@ -852,7 +964,8 @@
 
   function startExhibition(){
     st = newGameState(Date.now() >>> 0,
-      { mode:"ex", kitYou: profile.kit, kitOpp: rivalFor(profile.kit, Math.random), grade: 1 });
+      { mode:"ex", kitYou: profile.kit, kitOpp: rivalFor(profile.kit, Math.random), grade: 1,
+        qlen: profile.qlen });
     st.wins = profile.ex.wins; st.losses = profile.ex.losses; st.ties = profile.ex.ties;
     st.best = profile.ex.best || 0;
     st.playedEver = profile.playedEver;
@@ -866,7 +979,7 @@
     if(!sn || sn.week >= SEASON_LEN) return;
     var f = sn.fix[sn.week];
     st = newGameState(Date.now() >>> 0,
-      { mode:"season", kitYou: sn.kit, kitOpp: f.k, grade: f.g, week: sn.week });
+      { mode:"season", kitYou: sn.kit, kitOpp: f.k, grade: f.g, week: sn.week, qlen: profile.qlen });
     st.wins = sn.w; st.losses = sn.l; st.ties = sn.t;
     st.playedEver = profile.playedEver;
     rng = makeRng(st.seed);
@@ -1211,7 +1324,7 @@
     el("opp-side").dataset.lead = st.opp > st.you;
     el("you-side").firstChild.nodeValue = "You";
     el("opp-side").firstChild.nodeValue = PAIRS[st.kitOpp].name;
-    el("drive-n").textContent = Math.min(st.drive, DRIVES) + " of " + DRIVES;
+    paintClock();
 
     var toGoal = FIELD_L - st.ballOn;
     el("down-text").textContent = st.driveIsYours && !st.over
@@ -1422,9 +1535,11 @@
   // After any change of possession, run the rivals' drives until it is your ball
   // again (or the game is done), reporting each one.
   function afterDrive(){
-    while(!st.over && !st.driveIsYours){
+    var guard = 0;
+    while(!st.over && !st.driveIsYours && guard++ < 40){
       st.lastMsg = simOpponentDrive(st, rng);
-      endDrive(st);
+      // his possession may have taken the rest of the quarter with it
+      if(st.clock <= 0) endQuarter(st); else endDrive(st);
     }
     ensurePlay();
     bankIfOver();
@@ -1450,6 +1565,9 @@
 
     if(play && play.phase !== "done"){
       acc += dt;
+      // the clock runs from the snap to the whistle and nowhere else, so the
+      // time between plays is yours to take
+      if(play.phase !== "presnap" && st.driveIsYours && !st.over) burnClock(st, dt * CLOCK_RATE);
       while(acc >= STEP){ stepPlay(st, play, STEP * TIME_SCALE, rng); acc -= STEP; }
       if(play.phase === "done"){
         acc = 0;
@@ -1462,13 +1580,20 @@
       if(resultHold <= 0){
         var wasYours = st.driveIsYours;
         play = null;
-        if(!wasYours || !st.driveIsYours) afterDrive();
+        // a play that starts before the quarter runs out is allowed to finish
+        if(st.clock <= 0 && !st.over) endQuarter(st);
+        else if(!wasYours || !st.driveIsYours) afterDrive();
+        if(!st.over && !st.driveIsYours) afterDrive();
         ensurePlay();
-        save();
+        // the whistle is now the usual way a game ends, and it goes through
+        // here rather than through the rival's turn - so the record is banked
+        // here too, or a game that runs out of clock counts for nothing
+        bankIfOver();
         syncChrome();
       }
     }
 
+    paintClock();
     draw();
     requestAnimationFrame(frame);
   }
