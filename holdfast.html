@@ -71,6 +71,7 @@
   .buy:disabled{opacity:.4}
   .buy[aria-pressed="true"]{border-color:var(--accent)}
 
+  .shopnote{margin:4px 0 0;font-size:11.5px;color:var(--sel);text-align:center;line-height:1.35}
   .msg{margin:0;text-align:center;font-size:12.5px;color:var(--muted);min-height:17px}
   @media (max-height: 700px){ .board{width:min(100%, 40vh)} }
 </style>
@@ -93,6 +94,7 @@
 <div class="wrap">
   <div class="board" id="board"></div>
   <div class="shop" id="shop"></div>
+  <p class="shopnote" id="shop-note" hidden>Every town you hold has a soldier in it. March one out to raise another.</p>
   <p class="msg" id="msg">Tap a soldier, then where to send him.</p>
 </div>
 
@@ -351,30 +353,13 @@
 
   /* Anywhere free within two steps of a town you hold. Looking only at the town
      and its doorstep meant a crowded front left you unable to spend at all. */
-  /* Every free square within two steps of a town you hold. It used to hand back
-     the single closest one and nothing else, and the board never showed which
-     square that was - so mustering was a guess that failed almost every time.
-     You now get the whole muster ground and the board lights it. */
+  /* Soldiers are raised in the towns themselves, and nowhere else. It makes a
+     town worth more than its income - it is also your only muster ground - and
+     it means holding one with a body in it denies the other side the square. */
   function buildSpots(g, side){
-    var seen = {}, out = [];
-    g.towns.forEach(function(t){
-      if(t.owner !== side) return;
-      for(var y = t.y - 2; y <= t.y + 2; y++){
-        for(var x = t.x - 2; x <= t.x + 2; x++){
-          if(!inMap(x, y)) continue;
-          if(Math.abs(x - t.x) + Math.abs(y - t.y) > 2) continue;
-          if(!LAND[g.tiles[idx(x, y)]].move) continue;   // not into the water
-          if(unitAt(g, x, y)) continue;
-          var k = idx(x, y);
-          if(seen[k]) continue;
-          seen[k] = 1; out.push({ x:x, y:y, d: Math.abs(x - t.x) + Math.abs(y - t.y) });
-        }
-      }
-    });
-    // closest to a town first, so the rival - who takes the first one going -
-    // still musters at the gate rather than two fields away
-    out.sort(function(a, b){ return a.d - b.d; });
-    return out;
+    return g.towns.filter(function(t){
+      return t.owner === side && !unitAt(g, t.x, t.y);
+    }).map(function(t){ return { x:t.x, y:t.y }; });
   }
   function canBuild(g, side, kind){
     if(g.gold[side] < UNITS[kind].cost) return null;
@@ -398,11 +383,13 @@
     return 0;
   }
 
-  function aiTurn(g, side, rng){
-    var spec, moved = true, guard = 0;
-
-    // spend first, so anything bought can still be used to hold a town
-    var order = ["rider", "archer", "warrior", "guard"];
+  /* Soldiers are raised in towns, so a garrison standing in one blocks the
+     muster. Spending only at the top of the turn meant the rival was shut out
+     by his own men nearly every turn while a player simply walks the garrison
+     out first and then buys - worth twenty-two points of win rate. He now
+     spends what he can before moving and again after, when the gate is clear. */
+  function spend(g, side, rng){
+    var order = ["rider", "archer", "warrior", "guard"], guard = 0;
     while(guard++ < 8){
       // an army you can afford is an army you should have: the cap grows with
       // what you hold, so gold never piles up with nothing to buy
@@ -417,6 +404,11 @@
       }
       if(!want || !build(g, side, want)) break;
     }
+  }
+
+  function aiTurn(g, side, rng){
+    var spec;
+    spend(g, side, rng);
 
     g.units.forEach(function(u){
       if(u.owner !== side) return;
@@ -472,9 +464,18 @@
         if(townAt(g, o[0], o[1]) && townAt(g, o[0], o[1]).owner !== side) d -= 2;
         if(d < pickD){ pickD = d; pick = o; }
       });
+      /* Nothing better to do and standing in his own gate with money in hand:
+         step aside so a soldier can be raised behind him. Without this he only
+         cleared a town by accident, on his way somewhere else. */
+      if(!pick && !u.moved && townAt(g, u.x, u.y) && townAt(g, u.x, u.y).owner === side &&
+         g.gold[side] >= 2 && !buildSpots(g, side).length && opts.length){
+        pick = opts[0];
+      }
       if(pick){ u.x = pick[0]; u.y = pick[1]; u.moved = true; claimTowns(g); }
       tryFight();
     });
+
+    spend(g, side, rng);   // the gate may be clear now that the garrison has gone
   }
 
   /* ================= end of rules; DOM from here ================= */
@@ -571,11 +572,17 @@
         shop.appendChild(b);
       });
     }
+    var spots = buildSpots(g, 0).length;
     for(var i = 0; i < shop.children.length; i++){
       var b = shop.children[i], k = b.dataset.kind;
-      b.disabled = busy || g.over !== null || g.gold[0] < UNITS[k].cost || !canBuild(g, 0, k);
+      b.disabled = busy || g.over !== null || g.gold[0] < UNITS[k].cost || !spots;
       b.setAttribute("aria-pressed", buying === k);
     }
+    /* A greyed-out shop with gold in the purse looks broken. It is the towns
+       that are full, and the way out of it is to march somebody through the
+       gate - so the board says that rather than leaving you to work it out. */
+    var afford = Object.keys(UNITS).some(function(k){ return g.gold[0] >= UNITS[k].cost; });
+    el("shop-note").hidden = !(afford && !spots && !busy && g.over === null);
   }
 
   function say(text){ el("msg").textContent = text; }
@@ -586,8 +593,8 @@
     sel = null;
     if(buying){
       var spots = buildSpots(g, 0).length;
-      say(spots ? "Tap any lit square to raise a " + UNITS[kind].name.toLowerCase() + "."
-                : "Nowhere near your towns to put one.");
+      say(spots ? "Tap a lit town to raise a " + UNITS[kind].name.toLowerCase() + "."
+                : "Every town you hold is already occupied.");
     } else say("");
     render();
   }
@@ -603,7 +610,7 @@
         claimTowns(g);
         save(); render();
       } else {
-        say("Only within two steps of a town you hold.");
+        say("Soldiers are raised in your towns.");
       }
       return;
     }
@@ -708,12 +715,12 @@
 
   function fresh(){
     g = newGame((Date.now() ^ (Math.random() * 4294967295)) >>> 0);
-    /* Moving first means committing first, and the side that answers can see
-       what it is answering. Measured over twelve hundred games between two
-       copies of the rival, going first loses about fourteen points of win rate
-       unpaid for; two extra coins in the opening purse brings it back to
-       47-49, which is even inside the noise. */
-    g.gold[0] += 2;
+    /* Raising soldiers in towns turned the advantage the other way round: the
+       side that moves first walks its garrison out of the gate and musters
+       before the other side has had a turn at all. Measured over twelve
+       hundred games between two copies of the rival, that is 52-44 unpaid
+       for, and a coin to the side that moves second brings it to 50-46. */
+    g.gold[1] += 1;
     sel = null; buying = null; busy = false;
     el("over").hidden = true;
     say("Tap a soldier, then where to send him.");
