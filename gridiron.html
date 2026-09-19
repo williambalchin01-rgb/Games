@@ -557,10 +557,17 @@
   // downfield. Each is mirrored for receivers lined up on the left.
   // A short tree on purpose. Deep routes everywhere meant every completion was a
   // 40-yard gain and a drive lasted two plays; most of these break off inside ten.
+  /* Written for a man on the left and mirrored for one on the right, so a
+     positive break is always toward the middle of the field. The post was
+     written negative - breaking toward the touchline rather than the posts -
+     which sent a split end three and a half yards off the pitch on a third of
+     all plays. What was called an "out" also broke inward, so it is called
+     what it is: a dig. From a split end at x=3 on a thirty-yard field there is
+     no room for a true out route anyway. */
   var ROUTES = {
     go:    [[0,12],[0,26]],
-    post:  [[0,9],[-7,18]],
-    out:   [[0,6],[7,7]],
+    post:  [[0,9],[7,18]],
+    dig:   [[0,6],[7,7]],
     slant: [[0,3],[8,9]],
     curl:  [[0,11],[-1,9]],
     drag:  [[0,2],[13,4]]
@@ -573,7 +580,9 @@
   function waypoints(x0, y0, route, flip){
     var r = flip ? mirror(route) : route;
     return r.map(function(p){
-      return { x: x0 + p[0], y: Math.min(y0 + p[1], BACK_LINE - 1) };
+      // no route may send a man over the touchline, whatever it is asked for
+      return { x: clamp(x0 + p[0], 1.2, FIELD_W - 1.2),
+               y: Math.min(y0 + p[1], BACK_LINE - 1) };
     });
   }
 
@@ -1063,15 +1072,26 @@
     return true;
   }
 
+  /* Only half time changes hands. The first and third quarters are a change of
+     ends and nothing else: whoever has the ball keeps it, on the same down and
+     the same yard line. Turning it over at every break handed the rival a free
+     possession four times a game, which he mostly scored from.
+
+     At half time the side that did not start the game with the ball receives,
+     and you always start with it, so the second half opens with the rival. */
   function endQuarter(st){
     if(st.over) return;
     if(st.qtr >= QUARTERS){ finishGame(st); return; }
+    var halfTime = st.qtr === 2;
     st.qtr++;
     st.clock = st.qlen;
-    // possession turns over at the break, as it does in the game this copies
-    st.driveIsYours = !st.driveIsYours;
-    if(st.driveIsYours) newDriveState(st, 25);
-    st.lastMsg = "End of quarter " + (st.qtr - 1);
+    if(halfTime){
+      st.driveIsYours = false;
+      newDriveState(st, 25);
+      st.lastMsg = "Half time";
+    } else {
+      st.lastMsg = "End of quarter " + (st.qtr - 1);
+    }
   }
 
   function finishGame(st){
