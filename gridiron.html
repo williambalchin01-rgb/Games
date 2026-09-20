@@ -576,8 +576,27 @@
   /* What a simulated rival possession costs off the clock, in seconds. You do
      not play these, you are told about them, so they have to cost what a drive
      costs. Written as a share of a period they quietly changed meaning the
-     moment the period did - which is how the timings went wrong before. */
-  var RIVAL_TIME = { td:60, fg:50, out:29 };
+     moment the period did - which is how the timings went wrong before.
+
+     A range rather than a number, because a fixed cost made every game the same
+     shape: you always knew how many possessions were left. The midpoints are the
+     old fixed costs, so the budget is unchanged - it is the spread that is new,
+     and it is what decides whether you get one more drive or not. */
+  var RIVAL_TIME = { td:[36,84], fg:[32,68], out:[18,40] };
+  /* Two rolls averaged, so a drive is usually near the middle and the extremes
+     stay rare. A uniform roll made the 84-second grind as common as the typical
+     one, which reads as noise rather than as a long drive. */
+  function rivalTime(kind, rng){
+    var span = RIVAL_TIME[kind];
+    return Math.round(span[0] + (rng() + rng()) / 2 * (span[1] - span[0]));
+  }
+  /* Where in its range a drive landed, so the message can say so: the clock
+     jumping by a different amount each time only reads as a long drive if you
+     are told it was one. */
+  function rivalPace(kind, secs){
+    var span = RIVAL_TIME[kind], at = (secs - span[0]) / (span[1] - span[0]);
+    return at < 0.3 ? "quick" : at > 0.7 ? "slow" : "even";
+  }
 
   // Routes are polylines relative to where the receiver lines up. Positive dy is
   // downfield. Each is mirrored for receivers lined up on the left.
@@ -1228,15 +1247,24 @@
     // can read ahead of time is worth more than one that quietly tracks your form.
     var strength = GRADES[st.grade].strength;
     if(roll < strength){
-      st.opp += 7; burnClock(st, RIVAL_TIME.td);
-      return "Rivals score a touchdown";
+      var td = rivalTime("td", rng);
+      st.opp += 7; burnClock(st, td);
+      var tp = rivalPace("td", td);
+      return tp === "quick" ? "Rivals strike deep for a touchdown"
+           : tp === "slow"  ? "Rivals grind out a long touchdown drive"
+           : "Rivals score a touchdown";
     }
     if(roll < strength + 0.26){
-      st.opp += 3; burnClock(st, RIVAL_TIME.fg);
-      return "Rivals kick a field goal";
+      var fg = rivalTime("fg", rng);
+      st.opp += 3; burnClock(st, fg);
+      var fp = rivalPace("fg", fg);
+      return fp === "slow" ? "Rivals march downfield and settle for a field goal"
+                           : "Rivals kick a field goal";
     }
-    burnClock(st, RIVAL_TIME.out);
-    return "Rivals go three and out";
+    var pt = rivalTime("out", rng);
+    burnClock(st, pt);
+    return rivalPace("out", pt) === "slow" ? "Rivals move the chains once, then punt"
+                                           : "Rivals go three and out";
   }
 
   function endDrive(st){
