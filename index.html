@@ -166,6 +166,22 @@
     </div>
   </a>
 
+  <a class="game" href="./stopover.html">
+    <svg class="art" viewBox="0 0 52 52" aria-hidden="true">
+      <circle cx="26" cy="26" r="19" fill="none" stroke="#2C3945" stroke-width="1.6"/>
+      <path d="M7 26 H45 M26 7 C33 14 33 38 26 45 C19 38 19 14 26 7" fill="none" stroke="#2C3945" stroke-width="1.2"/>
+      <circle cx="16" cy="19" r="3.2" fill="#4FA88B"/>
+      <circle cx="36" cy="33" r="3.2" fill="#4FA88B"/>
+      <path d="M16 19 L36 33" stroke="#4FA88B" stroke-width="1.2" stroke-dasharray="3 3"/>
+      <path d="M31 27.5 L25.6 30 L27 26.8 L25.6 23.6 Z" fill="#E0A458" transform="rotate(33 28 27)"/>
+    </svg>
+    <div>
+      <h2>Stopover</h2>
+      <p>Run an airline from three grass strips to the long haul. Load what is waiting, fly it, buy the next aeroplane.</p>
+      <div class="meta" id="stopover-meta"></div>
+    </div>
+  </a>
+
   <a class="game" href="./towers.html">
     <svg class="art" viewBox="0 0 52 52" aria-hidden="true">
       <path d="M3 12 H34 a5 5 0 0 1 5 5 v18 a5 5 0 0 1-5 5 H12" fill="none" stroke="#2C3945" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
@@ -297,6 +313,19 @@
     var kinds = hx.found ? Object.keys(hx.found).length : 0;
     if(kinds) hb.push(kinds + (kinds === 1 ? " kind" : " kinds") + " found");
     document.getElementById("hatchery-meta").textContent = hb.join("  \u00B7  ");
+  }
+
+
+  var so = read("arcade.stopover.v1");
+  if(so){
+    var sb = [];
+    if(typeof so.cash === "number"){
+      sb.push(so.cash >= 1000000 ? "\u00A3" + (so.cash / 1000000).toFixed(1) + "m"
+                                 : "\u00A3" + String(Math.round(so.cash)).replace(/\B(?=(\d{3})+(?!\d))/g, ","));
+    }
+    if(so.ports) sb.push(so.ports.length + (so.ports.length === 1 ? " airport" : " airports"));
+    if(so.delivered) sb.push(so.delivered + " delivered");
+    document.getElementById("stopover-meta").textContent = sb.join("  \u00B7  ");
   }
 
   var g = read("arcade.gridiron.v2");

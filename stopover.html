@@ -1,0 +1,1401 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#151C24">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Arcade">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<link rel="icon" href="./icon-192.png">
+<title>Stopover</title>
+<link rel="stylesheet" href="./app.css">
+<style>
+  /* The map wants every pixel the panels are not using, so the column is a
+     flex stack and the map is the one thing in it that grows. */
+  #gameview{flex:1;display:flex;flex-direction:column;min-height:0;gap:8px}
+  .maprow{flex:1;min-height:0;position:relative}
+  canvas{display:block;width:100%;height:100%;border-radius:8px;touch-action:manipulation;background:#121820}
+
+  .actions{display:flex;gap:8px}
+  .actions button{
+    flex:1;text-align:center;border:1px solid var(--line);border-radius:var(--radius);
+    background:var(--surface);padding:12px 6px;font-size:13px;
+  }
+  .actions button[data-primary="true"]{border-color:var(--accent);color:var(--accent)}
+  .actions button:disabled{color:var(--line);border-color:var(--line)}
+
+  /* A sheet stands in FOR the map rather than beside it: on a phone there is
+     no room for both, and a panel that squeezes the map is a map you cannot
+     read. Marked data-aside so the map never budgets height for it. */
+  .sheet{
+    flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;
+    display:flex;flex-direction:column;gap:8px;
+  }
+  .sheethead{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+  .sheethead h2{margin:0;font-size:19px;font-weight:300;letter-spacing:-.01em}
+  .sheethead .sub{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+
+  .row{
+    display:flex;align-items:center;gap:10px;width:100%;text-align:left;
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    padding:11px 12px;
+  }
+  .row[aria-pressed="true"]{border-color:var(--accent)}
+  .row:disabled{opacity:.42}
+  .row .nm{flex:1;min-width:0;font-size:14px}
+  .row .nm small{display:block;font-size:11.5px;color:var(--muted);margin-top:2px}
+  .row .amt{font-size:14px;font-variant-numeric:tabular-nums;flex:none;text-align:right}
+  .row .amt small{display:block;font-size:11px;color:var(--muted);letter-spacing:.06em}
+  .row .amt[data-loss="true"]{color:#E0574A}
+  .row .amt[data-gain="true"]{color:var(--accent)}
+
+  /* A job is a destination, a size and a fee - the three things you weigh. */
+  .pip{flex:none;width:9px;height:9px;border-radius:50%;background:var(--muted)}
+  .pip[data-kind="cargo"]{border-radius:2px}
+  .pip[data-here="true"]{background:var(--accent)}
+
+  .seats{display:flex;gap:4px;flex-wrap:wrap;padding:2px 0 4px}
+  .seat{width:13px;height:13px;border-radius:3px;border:1px solid var(--line)}
+  .seat[data-full="true"]{background:var(--accent);border-color:var(--accent)}
+
+  .grouphead{
+    font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);
+    padding:6px 2px 0;
+  }
+  .empty{color:var(--muted);font-size:13px;text-align:center;padding:18px 10px}
+
+  .goal{display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid var(--line)}
+  .goal:last-child{border-bottom:none}
+  .goal .tick{flex:none;width:18px;height:18px;border-radius:50%;border:1px solid var(--line)}
+  .goal[data-done="true"] .tick{background:var(--accent);border-color:var(--accent)}
+  .goal .nm{flex:1;font-size:13.5px}
+  .goal .nm small{display:block;font-size:11.5px;color:var(--muted);margin-top:1px}
+  .goal .amt{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+
+<header>
+  <a class="back" id="back" href="./index.html">&larr; Arcade</a>
+  <button class="chip" id="restart">Start again</button>
+</header>
+
+<div id="gameview">
+
+  <div class="statline">
+    <span class="big" id="cash">&pound;0<span class="lbl">Bank</span></span>
+    <span class="mid" id="when">Day 1</span>
+    <span class="big" id="fleetn">0<span class="lbl">Fleet</span></span>
+  </div>
+
+  <div class="maprow" id="maprow"><canvas id="map"></canvas></div>
+
+  <div class="sheet" id="sheet" data-aside hidden>
+    <div class="sheethead"><h2 id="sheet-title"></h2><span class="sub" id="sheet-sub"></span></div>
+    <div id="sheet-body"></div>
+  </div>
+
+  <p class="msg" id="msg"></p>
+
+  <div class="actions" id="actions">
+    <button id="advance" data-primary="true">Advance</button>
+    <button id="fleet">Fleet</button>
+    <button id="market">Market</button>
+    <button id="goals">Goals</button>
+  </div>
+
+  <p class="howto" id="howto">Tap an airport to see who wants to fly.</p>
+</div>
+
+<script src="./sw-boot.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  /* ---------------------------------------------------------------------
+     THE MAP
+
+     Real coordinates, because a made-up map would still have to be learnt
+     and a real one is already known. Class is what size of aircraft the
+     airport handles and how much traffic it generates: a class 1 strip is
+     a few seats a day, a class 3 hub is a queue.
+     --------------------------------------------------------------------- */
+  var CITIES = [
+    // Britain and Ireland - where you start, and small enough to cross in a prop
+    { id:"LHR", name:"London",      lat:51.47, lon:-0.45, cls:3 },
+    { id:"MAN", name:"Manchester",  lat:53.36, lon:-2.27, cls:2 },
+    { id:"EDI", name:"Edinburgh",   lat:55.95, lon:-3.37, cls:2 },
+    { id:"GLA", name:"Glasgow",     lat:55.87, lon:-4.43, cls:2 },
+    { id:"DUB", name:"Dublin",      lat:53.43, lon:-6.25, cls:3 },
+    { id:"BFS", name:"Belfast",     lat:54.66, lon:-6.22, cls:1 },
+    { id:"BHX", name:"Birmingham",  lat:52.45, lon:-1.75, cls:2 },
+    { id:"BRS", name:"Bristol",     lat:51.38, lon:-2.71, cls:1 },
+    { id:"CWL", name:"Cardiff",     lat:51.40, lon:-3.34, cls:1 },
+    { id:"NCL", name:"Newcastle",   lat:55.04, lon:-1.69, cls:1 },
+    { id:"LBA", name:"Leeds",       lat:53.87, lon:-1.66, cls:1 },
+    { id:"LPL", name:"Liverpool",   lat:53.33, lon:-2.85, cls:1 },
+    { id:"ABZ", name:"Aberdeen",    lat:57.20, lon:-2.20, cls:1 },
+    { id:"INV", name:"Inverness",   lat:57.54, lon:-4.05, cls:1 },
+    { id:"ORK", name:"Cork",        lat:51.84, lon:-8.49, cls:1 },
+    { id:"SNN", name:"Shannon",     lat:52.70, lon:-8.92, cls:1 },
+    { id:"EXT", name:"Exeter",      lat:50.73, lon:-3.41, cls:1 },
+    { id:"NWI", name:"Norwich",     lat:52.68, lon: 1.28, cls:1 },
+    { id:"SOU", name:"Southampton", lat:50.95, lon:-1.36, cls:1 },
+    { id:"JER", name:"Jersey",      lat:49.21, lon:-2.20, cls:1 },
+    { id:"IOM", name:"Isle of Man", lat:54.08, lon:-4.62, cls:1 },
+    { id:"SYY", name:"Stornoway",   lat:58.21, lon:-6.33, cls:1 },
+    { id:"KOI", name:"Kirkwall",    lat:58.96, lon:-2.90, cls:1 },
+
+    // Europe - reachable once you have something with legs
+    { id:"CDG", name:"Paris",       lat:49.01, lon: 2.55, cls:3 },
+    { id:"AMS", name:"Amsterdam",   lat:52.31, lon: 4.76, cls:3 },
+    { id:"BRU", name:"Brussels",    lat:50.90, lon: 4.48, cls:2 },
+    { id:"FRA", name:"Frankfurt",   lat:50.04, lon: 8.56, cls:3 },
+    { id:"BER", name:"Berlin",      lat:52.37, lon:13.51, cls:2 },
+    { id:"MUC", name:"Munich",      lat:48.35, lon:11.79, cls:2 },
+    { id:"ZRH", name:"Zurich",      lat:47.46, lon: 8.55, cls:2 },
+    { id:"GVA", name:"Geneva",      lat:46.24, lon: 6.11, cls:1 },
+    { id:"VIE", name:"Vienna",      lat:48.11, lon:16.57, cls:2 },
+    { id:"PRG", name:"Prague",      lat:50.10, lon:14.26, cls:2 },
+    { id:"WAW", name:"Warsaw",      lat:52.17, lon:20.97, cls:2 },
+    { id:"KRK", name:"Krakow",      lat:50.08, lon:19.80, cls:1 },
+    { id:"CPH", name:"Copenhagen",  lat:55.62, lon:12.65, cls:2 },
+    { id:"OSL", name:"Oslo",        lat:60.19, lon:11.10, cls:2 },
+    { id:"ARN", name:"Stockholm",   lat:59.65, lon:17.92, cls:2 },
+    { id:"HEL", name:"Helsinki",    lat:60.32, lon:24.96, cls:2 },
+    { id:"RIX", name:"Riga",        lat:56.92, lon:23.97, cls:1 },
+    { id:"KEF", name:"Reykjavik",   lat:63.99, lon:-22.62, cls:1 },
+    { id:"HAM", name:"Hamburg",     lat:53.63, lon: 9.99, cls:1 },
+    { id:"LIS", name:"Lisbon",      lat:38.77, lon:-9.13, cls:2 },
+    { id:"FAO", name:"Faro",        lat:37.01, lon:-7.97, cls:1 },
+    { id:"MAD", name:"Madrid",      lat:40.47, lon:-3.56, cls:3 },
+    { id:"BCN", name:"Barcelona",   lat:41.30, lon: 2.08, cls:2 },
+    { id:"PMI", name:"Palma",       lat:39.55, lon: 2.73, cls:1 },
+    { id:"NCE", name:"Nice",        lat:43.66, lon: 7.21, cls:1 },
+    { id:"FCO", name:"Rome",        lat:41.80, lon:12.25, cls:3 },
+    { id:"MXP", name:"Milan",       lat:45.63, lon: 8.72, cls:2 },
+    { id:"MLA", name:"Malta",       lat:35.85, lon:14.48, cls:1 },
+    { id:"DBV", name:"Dubrovnik",   lat:42.56, lon:18.27, cls:1 },
+    { id:"ATH", name:"Athens",      lat:37.94, lon:23.94, cls:2 },
+    { id:"OTP", name:"Bucharest",   lat:44.57, lon:26.10, cls:2 },
+    { id:"IST", name:"Istanbul",    lat:41.26, lon:28.74, cls:3 },
+
+    // The long haul - a class 3 aircraft and a class 3 airport at each end
+    { id:"JFK", name:"New York",    lat:40.64, lon:-73.78, cls:3 },
+    { id:"BOS", name:"Boston",      lat:42.36, lon:-71.01, cls:2 },
+    { id:"YYZ", name:"Toronto",     lat:43.68, lon:-79.63, cls:2 },
+    { id:"YVR", name:"Vancouver",   lat:49.19, lon:-123.18, cls:2 },
+    { id:"ORD", name:"Chicago",     lat:41.98, lon:-87.90, cls:3 },
+    { id:"ATL", name:"Atlanta",     lat:33.64, lon:-84.43, cls:3 },
+    { id:"MIA", name:"Miami",       lat:25.79, lon:-80.29, cls:2 },
+    { id:"LAX", name:"Los Angeles", lat:33.94, lon:-118.41, cls:3 },
+    { id:"SFO", name:"San Francisco",lat:37.62,lon:-122.38, cls:2 },
+    { id:"SEA", name:"Seattle",     lat:47.45, lon:-122.31, cls:2 },
+    { id:"MEX", name:"Mexico City", lat:19.44, lon:-99.07, cls:2 },
+    { id:"BOG", name:"Bogota",      lat: 4.70, lon:-74.15, cls:1 },
+    { id:"LIM", name:"Lima",        lat:-12.02,lon:-77.11, cls:1 },
+    { id:"GRU", name:"Sao Paulo",   lat:-23.43,lon:-46.48, cls:2 },
+    { id:"GIG", name:"Rio",         lat:-22.81,lon:-43.25, cls:1 },
+    { id:"EZE", name:"Buenos Aires",lat:-34.82,lon:-58.54, cls:2 },
+    { id:"SCL", name:"Santiago",    lat:-33.39,lon:-70.79, cls:1 },
+    { id:"CMN", name:"Casablanca",  lat:33.37, lon:-7.59, cls:1 },
+    { id:"LOS", name:"Lagos",       lat: 6.58, lon: 3.32, cls:1 },
+    { id:"ACC", name:"Accra",       lat: 5.61, lon:-0.17, cls:1 },
+    { id:"NBO", name:"Nairobi",     lat:-1.32, lon:36.93, cls:1 },
+    { id:"ADD", name:"Addis Ababa", lat: 8.98, lon:38.80, cls:1 },
+    { id:"JNB", name:"Johannesburg",lat:-26.13,lon:28.24, cls:2 },
+    { id:"CPT", name:"Cape Town",   lat:-33.97,lon:18.60, cls:1 },
+    { id:"CAI", name:"Cairo",       lat:30.11, lon:31.41, cls:2 },
+    { id:"DXB", name:"Dubai",       lat:25.25, lon:55.36, cls:3 },
+    { id:"DOH", name:"Doha",        lat:25.27, lon:51.61, cls:2 },
+    { id:"DEL", name:"Delhi",       lat:28.56, lon:77.10, cls:3 },
+    { id:"BOM", name:"Mumbai",      lat:19.09, lon:72.87, cls:2 },
+    { id:"BKK", name:"Bangkok",     lat:13.69, lon:100.75, cls:3 },
+    { id:"SIN", name:"Singapore",   lat: 1.36, lon:103.99, cls:3 },
+    { id:"CGK", name:"Jakarta",     lat:-6.13, lon:106.66, cls:1 },
+    { id:"MNL", name:"Manila",      lat:14.51, lon:121.02, cls:1 },
+    { id:"HKG", name:"Hong Kong",   lat:22.31, lon:113.91, cls:3 },
+    { id:"PVG", name:"Shanghai",    lat:31.14, lon:121.81, cls:3 },
+    { id:"PEK", name:"Beijing",     lat:40.08, lon:116.58, cls:3 },
+    { id:"ICN", name:"Seoul",       lat:37.46, lon:126.44, cls:2 },
+    { id:"HND", name:"Tokyo",       lat:35.55, lon:139.78, cls:3 },
+    { id:"SYD", name:"Sydney",      lat:-33.94,lon:151.18, cls:3 },
+    { id:"MEL", name:"Melbourne",   lat:-37.67,lon:144.84, cls:2 },
+    { id:"PER", name:"Perth",       lat:-31.94,lon:115.97, cls:1 },
+    { id:"AKL", name:"Auckland",    lat:-37.01,lon:174.79, cls:2 },
+    { id:"HNL", name:"Honolulu",    lat:21.32, lon:-157.92, cls:1 },
+    { id:"ANC", name:"Anchorage",   lat:61.17, lon:-149.99, cls:1 }
+  ];
+  var CITY = {};
+  CITIES.forEach(function(c){ CITY[c.id] = c; });
+
+  /* Meridians and parallels as pairs of invisible points. They live in the
+     same lookup the projector reads, so the grid cannot drift away from the
+     dots the way a separately computed one would. */
+  var GRID = (function(){
+    var segs = [], n = 0;
+    function put(lat, lon){
+      var id = "_g" + (n++);
+      CITY[id] = { id: id, name: "", lat: lat, lon: lon, cls: 0, grid: true };
+      return id;
+    }
+    for(var lon = -180; lon <= 180; lon += 10) segs.push([put(-80, lon), put(80, lon)]);
+    for(var lat = -80; lat <= 80; lat += 10) segs.push([put(lat, -180), put(lat, 180)]);
+    return segs;
+  })();
+
+  /* What an airport costs to open. A hub is worth many strips, so it is
+     priced like many strips - otherwise the only sensible move would be to
+     buy every class 1 field on the map and never build a network at all. */
+  var PORT_PRICE = { 1: 14000, 2: 70000, 3: 260000 };
+
+  /* ---------------------------------------------------------------------
+     THE FLEET
+
+     Seats are the only capacity that matters, so passengers and freight
+     both take them. Class is what airports will have you: a Skyliner
+     cannot put down on a Highland strip, which is what keeps the small
+     aircraft useful long after you can afford better.
+     --------------------------------------------------------------------- */
+  var MODELS = [
+    { id:"pup",   name:"Puddlejumper", cls:1, seats:3,  range:900,   speed:360, burn:0.42, price:16000 },
+    { id:"turbo", name:"Turboprop",    cls:1, seats:6,  range:1900,  speed:500, burn:0.78, price:58000 },
+    { id:"shut",  name:"Shuttle",      cls:2, seats:12, range:3400,  speed:760, burn:1.50, price:210000 },
+    { id:"main",  name:"Mainliner",    cls:2, seats:22, range:6200,  speed:830, burn:2.55, price:640000 },
+    { id:"sky",   name:"Skyliner",     cls:3, seats:38, range:11500, speed:890, burn:4.10, price:1900000 },
+    { id:"hauler",name:"Heavylift",    cls:3, seats:64, range:10200, speed:820, burn:5.90, price:2900000 }
+  ];
+  var MODEL = {};
+  MODELS.forEach(function(m){ MODEL[m.id] = m; });
+
+  /* ---------------------------------------------------------------------
+     THE ECONOMY
+
+     One rule holds the whole game up: a fare is paid per seat per mile, and
+     fuel is burnt per mile whether the seat is full or not. So distance on
+     its own is neither good nor bad - load factor is everything, and a
+     half-empty aeroplane is the mistake the game is about not making.
+
+     The landing fee is the thumb on the scale against tiny hops: it is paid
+     once per flight regardless, so a 200km shuttle has to be full to be
+     worth the trouble while a long leg can carry a couple of empty seats.
+     --------------------------------------------------------------------- */
+  var FARE = 0.62;            // per seat, per km
+  /* Small enough that it never eats a flight on its own. At four hundred a
+     hub landing was more than a full propeller load was worth over a short
+     hop, so aircraft sat on the ground with paying work in front of them
+     rather than fly at a loss - the fee has to tilt the choice, not make it. */
+  var LANDING = { 1: 45, 2: 130, 3: 380 };
+  var CARGO_PREMIUM = 1.18;   // freight pays more and never complains
+  var FILL_BONUS = 0.25;      // every job sharing the aeroplane's destination
+  /* What an aircraft costs to have, per day, whether it flies or not: a flat
+     part for the crew and the stand, and a part that scales with what it is
+     worth. The flat part is the important one. Priced purely on value, forty
+     Puddlejumpers were always better business than one airliner - they cost
+     less per seat and the game turned into a cloud of little aeroplanes
+     chasing more work than existed. A stand and a crew cost the same
+     whatever is parked on them, and that is what makes size worth buying. */
+  var UPKEEP_FLAT = 200;
+  var UPKEEP_RATE = 0.0018;
+  var START_CASH = 24000;
+  /* Three grass-and-tarmac strips, deliberately. A class 2 airport in the
+     opening network offered parties of eight to an aeroplane with three
+     seats, so half the first board was unflyable and the first hour was
+     spent wondering what you had done wrong. Manchester is the first thing
+     worth saving for instead. */
+  var START_PORTS = ["BFS","BRS","NCL"];
+
+  function toRad(d){ return d * Math.PI / 180; }
+  /* Great circle, because the map is a globe and the long legs are where
+     a flat measure would be most wrong. */
+  function dist(a, b){
+    var A = CITY[a], B = CITY[b];
+    if(!A || !B) return Infinity;
+    var dLat = toRad(B.lat - A.lat), dLon = toRad(B.lon - A.lon);
+    var s = Math.sin(dLat/2)*Math.sin(dLat/2) +
+            Math.cos(toRad(A.lat))*Math.cos(toRad(B.lat))*Math.sin(dLon/2)*Math.sin(dLon/2);
+    return Math.round(6371 * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1-s)));
+  }
+
+  function flightHours(model, km){
+    // An hour at each end for turning the aeroplane round, which is what
+    // makes a chain of tiny hops cost real time rather than none.
+    return Math.max(1, Math.round(km / model.speed + 1));
+  }
+  function fuelCost(model, km){ return Math.round(km * model.burn); }
+  function landingFee(cityId){ return LANDING[CITY[cityId].cls]; }
+
+  function jobFee(job, km){
+    var f = km * FARE * job.seats * (job.kind === "cargo" ? CARGO_PREMIUM : 1);
+    return Math.round(f * job.rate);
+  }
+
+  /* ---------------------------------------------------------------------
+     STATE
+     --------------------------------------------------------------------- */
+  function newGame(){
+    return {
+      cash: START_CASH,
+      hour: 8,                  // the first morning, not midnight
+      ports: START_PORTS.slice(),
+      fleet: [ newPlane("pup", "BFS", 1) ],
+      jobs: {},                 // cityId -> [job]
+      nextId: 2,
+      delivered: 0,
+      earned: 0,
+      flown: 0,                 // km
+      done: {},                 // goal id -> true
+      best: 0                   // best net worth reached
+    };
+  }
+  function newPlane(modelId, at, id){
+    return { id:id, model:modelId, at:at, hold:[], leg:null, auto:false };
+  }
+
+  function day(st){ return Math.floor(st.hour / 24) + 1; }
+  function clockOf(st){
+    var h = st.hour % 24;
+    return (h < 10 ? "0" : "") + h + ":00";
+  }
+  function owns(st, id){ return st.ports.indexOf(id) >= 0; }
+  function seatsUsed(plane){
+    return plane.hold.reduce(function(n, j){ return n + j.seats; }, 0);
+  }
+  function seatsFree(plane){ return MODEL[plane.model].seats - seatsUsed(plane); }
+
+  function netWorth(st){
+    var n = st.cash;
+    st.fleet.forEach(function(p){ n += Math.round(MODEL[p.model].price * 0.7); });
+    st.ports.forEach(function(id){ n += Math.round(PORT_PRICE[CITY[id].cls] * 0.7); });
+    return n;
+  }
+
+  /* ---------------------------------------------------------------------
+     JOBS
+
+     An airport holds a fixed number of slots, filled over time. The cap is
+     the whole reason advancing the clock is safe to do freely: you cannot
+     sit still and farm a queue, because the queue stops growing. Without it
+     the best play would be to park the fleet and press Advance.
+     --------------------------------------------------------------------- */
+  function jobSlots(city){ return 3 + city.cls * 2; }
+  /* Nobody waits indefinitely. Without this a strip whose queue filled with
+     work no aircraft of yours could take stayed blocked for good, and the
+     airport quietly stopped being worth owning. */
+  function patience(rng){ return 18 + Math.round(rng() * 30); }
+  /* How big a party or a consignment is, and it is the whole reason to buy a
+     bigger aeroplane. A strip in the Highlands offers you two or three
+     people; a hub offers you eighteen at a time, and no propeller aircraft
+     is going to take them. Sized flat across the classes, forty
+     Puddlejumpers beat any airliner ever built - they cost less per seat and
+     nothing on the board ever needed a bigger one. */
+  var JOB_TOP = { 1: 3, 2: 8, 3: 18 };
+  function jobSize(city, cargo, rng){
+    var n = 1 + Math.floor(rng() * JOB_TOP[city.cls]);
+    return cargo ? Math.max(1, Math.round(n * 1.15)) : n;   // freight travels in lumps
+  }
+  function jobsAt(st, id){ return st.jobs[id] || (st.jobs[id] = []); }
+
+  /* Where a passenger at this airport wants to go. Mostly somewhere you
+     fly, because a board full of places you cannot serve is just noise -
+     but not always, because the occasional unservable name is how you
+     notice a city worth opening. */
+  function pickDestination(st, fromId, rng){
+    var mine = st.ports.filter(function(id){ return id !== fromId; });
+    if(!mine.length) return null;
+    var wild = rng() < 0.15;
+    if(wild){
+      var reach = CITIES.filter(function(c){
+        return !owns(st, c.id) && dist(fromId, c.id) < 4000;
+      });
+      if(reach.length) return reach[Math.floor(rng() * reach.length)].id;
+    }
+    // A hub pulls more traffic than a strip, which is what makes one worth
+    // the price of twenty of the other.
+    var pool = [];
+    mine.forEach(function(id){
+      var n = CITY[id].cls;
+      for(var i = 0; i < n; i++) pool.push(id);
+    });
+    return pool[Math.floor(rng() * pool.length)];
+  }
+
+  function makeJob(st, fromId, rng){
+    var to = pickDestination(st, fromId, rng);
+    if(!to) return null;
+    var cargo = rng() < 0.3;
+    var job = {
+      id: st.nextId++,
+      from: fromId, to: to,
+      kind: cargo ? "cargo" : "pax",
+      seats: jobSize(CITY[fromId], cargo, rng),
+      until: st.hour + patience(rng),
+      // A little spread so two identical-looking jobs are not identical,
+      // and so a good board is something you can actually spot.
+      rate: 0.85 + rng() * 0.4
+    };
+    job.fee = jobFee(job, dist(fromId, to));
+    return job;
+  }
+
+  /* One hour of the world happening: aeroplanes land, queues fill. */
+  function tick(st, rng, log){
+    st.hour++;
+    st.ports.forEach(function(id){
+      var list = jobsAt(st, id);
+      for(var i = list.length - 1; i >= 0; i--){
+        if(list[i].until <= st.hour) list.splice(i, 1);
+      }
+      if(list.length >= jobSlots(CITY[id])) return;
+      if(rng() > 0.18 + 0.10 * CITY[id].cls) return;
+      var job = makeJob(st, id, rng);
+      if(job) list.push(job);
+    });
+    st.fleet.forEach(function(p){
+      if(p.leg && st.hour >= p.leg.arrive) land(st, p, log);
+    });
+    st.fleet.forEach(function(p){ if(!p.leg && p.auto) runAuto(st, p, log); });
+    if(st.hour % 24 === 0) chargeUpkeep(st, log);
+  }
+
+  function chargeUpkeep(st, log){
+    var bill = 0;
+    st.fleet.forEach(function(p){
+      bill += UPKEEP_FLAT + Math.round(MODEL[p.model].price * UPKEEP_RATE);
+    });
+    if(!bill) return;
+    st.cash -= bill;
+    if(log) log("Upkeep " + money(bill));
+  }
+
+  /* ---------------------------------------------------------------------
+     FLYING
+     --------------------------------------------------------------------- */
+  function canLand(model, cityId){ return MODEL[model].cls <= CITY[cityId].cls * 1; }
+  function legalDest(st, plane, toId){
+    if(!owns(st, toId) || toId === plane.at) return false;
+    var m = MODEL[plane.model];
+    if(m.cls > CITY[toId].cls) return false;
+    return dist(plane.at, toId) <= m.range;
+  }
+
+  function departCost(st, plane, toId){
+    var m = MODEL[plane.model];
+    return fuelCost(m, dist(plane.at, toId)) + landingFee(toId);
+  }
+  /* What this flight pays if you send it now: every job aboard that is
+     going where the aeroplane is going, plus the quarter-bonus each of
+     them earns for travelling in company. Jobs going elsewhere pay
+     nothing yet - they are riding as far as the next stop. */
+  function departRevenue(plane, toId){
+    var going = plane.hold.filter(function(j){ return j.to === toId; });
+    var gross = going.reduce(function(n, j){ return n + j.fee; }, 0);
+    var full = going.length === plane.hold.length && plane.hold.length > 0;
+    return full ? Math.round(gross * (1 + FILL_BONUS)) : gross;
+  }
+
+  function depart(st, plane, toId, log){
+    if(plane.leg || !legalDest(st, plane, toId)) return false;
+    var km = dist(plane.at, toId);
+    var cost = departCost(st, plane, toId);
+    if(cost > st.cash) return false;
+    st.cash -= cost;
+    st.flown += km;
+    plane.leg = {
+      from: plane.at, to: toId, km: km,
+      left: st.hour, arrive: st.hour + flightHours(MODEL[plane.model], km)
+    };
+    plane.at = null;
+    if(log) log(CITY[plane.leg.from].name + " to " + CITY[toId].name + ", " + money(cost) + " in fuel");
+    return true;
+  }
+
+  function land(st, plane, log){
+    var to = plane.leg.to;
+    var going = plane.hold.filter(function(j){ return j.to === to; });
+    var full = going.length === plane.hold.length && plane.hold.length > 0;
+    var paid = 0;
+    going.forEach(function(j){ paid += j.fee; });
+    if(full) paid = Math.round(paid * (1 + FILL_BONUS));
+    var cut = plane.auto ? Math.round(paid * AUTO_CUT) : 0;
+    paid -= cut;
+    st.cash += paid;
+    st.earned += paid;
+    st.delivered += going.length;
+    plane.hold = plane.hold.filter(function(j){ return j.to !== to; });
+    plane.at = to;
+    plane.leg = null;
+    if(log && going.length){
+      log(CITY[to].name + ": " + going.length + (going.length === 1 ? " job" : " jobs") +
+          " delivered, " + money(paid) + (full ? " with the full-load bonus" : "") +
+          (cut ? " after the crew's " + money(cut) : ""));
+    } else if(log){
+      log(CITY[to].name + ": nothing to drop off");
+    }
+    return paid;
+  }
+
+  /* An aeroplane you have handed to a duty crew works the board on its own:
+     when it is on the ground it takes the best load in front of it and goes.
+
+     It was a fixed leg at first, back and forth between two cities, and that
+     was useless - one leg only ever catches a fraction of what an airport is
+     offering, so the fleet stood about waiting for traffic to its far end.
+
+     The crew take a cut of the fare, and that is the whole trade: you are
+     paying somebody else to make the decision you would otherwise make
+     better yourself. Early on your attention is worth more than the cut.
+     Later, with twenty aeroplanes, it very much is not. */
+  var AUTO_CUT = 0.12;
+
+  function autoChoice(st, plane){
+    var best = null, bestRate = 0;
+    boardGroups(st, plane).forEach(function(gr){
+      if(!gr.take.length || !legalDest(st, plane, gr.to)) return;
+      var km = dist(plane.at, gr.to);
+      var hrs = flightHours(MODEL[plane.model], km);
+      // what it would be paid, less the crew's cut, less what the leg costs
+      var take = Math.round(gr.fee * (1 + FILL_BONUS) * (1 - AUTO_CUT));
+      var rate = (take - fuelCost(MODEL[plane.model], km) - landingFee(gr.to)) / hrs;
+      if(rate > bestRate){ bestRate = rate; best = gr; }
+    });
+    return best;
+  }
+  /* A crewed aeroplane already carrying something takes it on rather than
+     sitting on it: anything aboard is going somewhere it can reach. */
+  function autoOnward(st, plane){
+    var best = null, bestNet = 0;
+    st.ports.forEach(function(id){
+      if(!legalDest(st, plane, id)) return;
+      var net = departRevenue(plane, id) * (1 - AUTO_CUT) - departCost(st, plane, id);
+      if(net > bestNet){ bestNet = net; best = id; }
+    });
+    return best;
+  }
+  function runAuto(st, plane, log){
+    var gr = autoChoice(st, plane);
+    if(gr){
+      loadGroup(st, plane, gr);
+      return depart(st, plane, gr.to, log);
+    }
+    var on = plane.hold.length ? autoOnward(st, plane) : null;
+    return on ? depart(st, plane, on, log) : false;
+  }
+
+  function loadJob(st, plane, job){
+    if(plane.leg || job.from !== plane.at) return false;
+    if(job.seats > seatsFree(plane)) return false;
+    /* You may carry it to a city this aeroplane cannot reach in one go -
+       that is what a stopover is for - but not to one you do not serve at
+       all, or it rides in those seats for the rest of its life. */
+    if(!owns(st, job.to)) return false;
+    var list = jobsAt(st, plane.at);
+    var i = list.indexOf(job);
+    if(i < 0) return false;
+    list.splice(i, 1);
+    plane.hold.push(job);
+    return true;
+  }
+  /* The board grouped by where it is going, because that is how you load an
+     aeroplane: the bonus is paid for a hold that shares a destination, so
+     picking jobs one at a time was both slower and worse advice. */
+  function boardGroups(st, plane){
+    var by = {};
+    jobsAt(st, plane.at).forEach(function(j){
+      if(!owns(st, j.to)) return;
+      (by[j.to] = by[j.to] || []).push(j);
+    });
+    return Object.keys(by).map(function(to){
+      var list = by[to].slice().sort(function(a, b){
+        // best paid per seat first, so a part load is the best part load
+        return (b.fee / b.seats) - (a.fee / a.seats);
+      });
+      var free = seatsFree(plane), take = [], fee = 0;
+      list.forEach(function(j){
+        if(j.seats > free) return;
+        free -= j.seats; take.push(j); fee += j.fee;
+      });
+      return { to: to, waiting: list, take: take, fee: fee,
+               seats: take.reduce(function(n, j){ return n + j.seats; }, 0) };
+    }).sort(function(a, b){ return b.fee - a.fee; });
+  }
+  function loadGroup(st, plane, group){
+    var n = 0;
+    group.take.forEach(function(j){ if(loadJob(st, plane, j)) n++; });
+    return n;
+  }
+
+  function unloadJob(st, plane, job){
+    if(plane.leg) return false;
+    var i = plane.hold.indexOf(job);
+    if(i < 0) return false;
+    plane.hold.splice(i, 1);
+    // It goes back on the board where it is standing, not where it started:
+    // you carried it here, and it is somebody else's problem now.
+    job.from = plane.at;
+    job.fee = jobFee(job, dist(plane.at, job.to));
+    job.until = st.hour + 24;     // it has been patient enough already
+    jobsAt(st, plane.at).push(job);
+    return true;
+  }
+
+  /* ---------------------------------------------------------------------
+     SPENDING
+     --------------------------------------------------------------------- */
+  /* Each one costs more to set up than the last. At a flat price the whole
+     map was bought out inside a season and the game ran out of anywhere to
+     go - the escalation is what keeps a new airport a decision rather than
+     a formality you get round to. */
+  function portPrice(st, id){
+    var owned = Math.max(0, st.ports.length - START_PORTS.length);
+    return Math.round(PORT_PRICE[CITY[id].cls] * (1 + 0.18 * owned));
+  }
+  /* You may only open what you could actually fly to. An airline is a
+     network, not a collection - and it stops the map from offering you
+     Auckland on day one. */
+  function portOffered(st, id){
+    if(owns(st, id)) return false;
+    var reach = 0;
+    st.fleet.forEach(function(p){ reach = Math.max(reach, MODEL[p.model].range); });
+    return st.ports.some(function(mine){ return dist(mine, id) <= reach; });
+  }
+  function buyPort(st, id){
+    if(!portOffered(st, id) || st.cash < portPrice(st, id)) return false;
+    st.cash -= portPrice(st, id);
+    st.ports.push(id);
+    return true;
+  }
+  function buyPlane(st, modelId, atId){
+    var m = MODEL[modelId];
+    if(!m || st.cash < m.price) return false;
+    if(!owns(st, atId) || m.cls > CITY[atId].cls) return false;
+    st.cash -= m.price;
+    st.fleet.push(newPlane(modelId, atId, st.nextId++));
+    return true;
+  }
+  function sellPlane(st, plane){
+    if(plane.leg || st.fleet.length <= 1) return false;
+    var i = st.fleet.indexOf(plane);
+    if(i < 0) return false;
+    // Whatever is aboard goes back on the board rather than into the sea.
+    plane.hold.slice().forEach(function(j){ unloadJob(st, plane, j); });
+    st.fleet.splice(i, 1);
+    st.cash += Math.round(MODEL[plane.model].price * 0.6);
+    return true;
+  }
+
+  /* ---------------------------------------------------------------------
+     GOALS
+
+     The game does not end, so it needs somewhere else to put the sense of
+     getting somewhere. These are the milestones, and the money is real:
+     each one is a lump that buys the next size of aeroplane sooner.
+     --------------------------------------------------------------------- */
+  var GOALS = [
+    { id:"g5",    text:"Fly to five cities",        sub:"Open five airports",        pays:8000,   met:function(st){ return st.ports.length >= 5; } },
+    { id:"jobs50",text:"Fifty jobs delivered",      sub:"However you like",          pays:12000,  met:function(st){ return st.delivered >= 50; } },
+    { id:"two",   text:"A second aeroplane",        sub:"Two in the fleet",          pays:6000,   met:function(st){ return st.fleet.length >= 2; } },
+    { id:"euro",  text:"Leave the islands",         sub:"Open an airport in Europe", pays:30000,  met:function(st){ return st.ports.some(isEurope); } },
+    { id:"hub",   text:"Buy a hub",                 sub:"Open a class 3 airport",    pays:60000,  met:function(st){ return st.ports.some(function(id){ return CITY[id].cls === 3; }); } },
+    { id:"jet",   text:"Put a jet on the line",     sub:"Own a Shuttle or better",   pays:40000,  met:function(st){ return st.fleet.some(function(p){ return MODEL[p.model].cls >= 2; }); } },
+    { id:"jobs250",text:"Two hundred and fifty jobs",sub:"Keep the queues down",     pays:70000,  met:function(st){ return st.delivered >= 250; } },
+    { id:"ten",   text:"Ten airports",              sub:"A network, not a route",    pays:90000,  met:function(st){ return st.ports.length >= 10; } },
+    { id:"ocean", text:"Cross an ocean",            sub:"Open an airport abroad",    pays:180000, met:function(st){ return st.ports.some(isLongHaul); } },
+    { id:"mil",   text:"A million in the bank",     sub:"Cash, not aeroplanes",      pays:120000, met:function(st){ return st.cash >= 1000000; } },
+    { id:"jobs1k",text:"A thousand jobs",           sub:"An airline, properly",      pays:250000, met:function(st){ return st.delivered >= 1000; } },
+    { id:"world", text:"Twenty-five airports",      sub:"Everywhere worth going",    pays:400000, met:function(st){ return st.ports.length >= 25; } },
+    { id:"wide",  text:"A widebody of your own",      sub:"Own a Skyliner or Heavylift", pays:300000, met:function(st){ return st.fleet.some(function(p){ return MODEL[p.model].cls >= 3; }); } },
+    { id:"five",  text:"Five million",                sub:"In the bank, on one day",   pays:500000, met:function(st){ return st.cash >= 5000000; } },
+    { id:"every", text:"One of everything",           sub:"All six types in the fleet", pays:900000, met:function(st){
+        return MODELS.every(function(m){ return st.fleet.some(function(p){ return p.model === m.id; }); }); } },
+    { id:"fifty", text:"Fifty airports",              sub:"Half the map",              pays:1500000, met:function(st){ return st.ports.length >= 50; } },
+    { id:"jobs5k",text:"Five thousand jobs",          sub:"Somebody has to fly them",  pays:2000000, met:function(st){ return st.delivered >= 5000; } },
+    { id:"huge",  text:"Fifty million on paper",      sub:"Cash, aircraft and airports", pays:5000000, met:function(st){ return netWorth(st) >= 50000000; } }
+  ];
+  function isEurope(id){
+    var c = CITY[id];
+    return c.lon > -11 && c.lon < 45 && c.lat > 34 && c.lat < 71 &&
+           !(c.lon < 2 && c.lat > 49 && c.lat < 61);   // not the islands you started on
+  }
+  function isLongHaul(id){
+    var c = CITY[id];
+    return !isEurope(id) && !(c.lon < 2 && c.lon > -11 && c.lat > 49 && c.lat < 61);
+  }
+  function claimGoals(st, log){
+    var paid = 0;
+    GOALS.forEach(function(g){
+      if(st.done[g.id] || !g.met(st)) return;
+      st.done[g.id] = true;
+      st.cash += g.pays;
+      paid += g.pays;
+      if(log) log(g.text + " - " + money(g.pays));
+    });
+    return paid;
+  }
+
+  function money(n){
+    var neg = n < 0;
+    n = Math.abs(Math.round(n));
+    var s;
+    if(n >= 10000000) s = (n / 1000000).toFixed(1) + "m";
+    else if(n >= 1000000) s = (n / 1000000).toFixed(2) + "m";
+    else s = String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    return (neg ? "-£" : "£") + s;
+  }
+
+
+  /* =====================================================================
+     Everything above is the airline. Everything below is the screen.
+     ===================================================================== */
+  function el(id){ return document.getElementById(id); }
+
+  var KEY = "arcade.stopover.v1";
+  var st = null;
+  var view = null;            // which sheet is standing in for the map
+  var canvas = el("map"), ctx = canvas.getContext("2d");
+  var hit = [];               // city dots as drawn, for tapping
+  var rng = Math.random;
+
+  function save(){
+    try{
+      st.best = Math.max(st.best || 0, netWorth(st));
+      localStorage.setItem(KEY, JSON.stringify(st));
+    }catch(e){}
+  }
+  function load(){
+    try{
+      var raw = localStorage.getItem(KEY);
+      if(!raw) return null;
+      var o = JSON.parse(raw);
+      if(!o || !o.fleet || !o.ports || !o.ports.length) return null;
+      // A save written before a city was dropped would otherwise leave
+      // aeroplanes parked at an airport that no longer exists.
+      o.ports = o.ports.filter(function(id){ return CITY[id]; });
+      o.fleet = o.fleet.filter(function(p){ return MODEL[p.model]; });
+      if(!o.ports.length || !o.fleet.length) return null;
+      o.jobs = o.jobs || {};
+      o.done = o.done || {};
+      return o;
+    }catch(e){ return null; }
+  }
+
+  function say(text){ el("msg").textContent = text || ""; }
+
+  /* ---------------------------------------------------------------------
+     THE MAP
+
+     Equirectangular with a cosine correction, fitted to what you can
+     actually reach. The view widens as the airline does, which is the only
+     zoom control the game needs - and means the first hour is a map of
+     Britain rather than a map of the world with three dots on it.
+     --------------------------------------------------------------------- */
+  /* The frame is your airline and nothing else. Fitting it to everywhere you
+     could reach meant one long-range aircraft pulled the view out to the
+     Atlantic and squeezed fifteen airports into a smudge in the middle. The
+     padding is generous enough that the next place worth opening is usually
+     already on screen; the market lists the rest. */
+  function shown(){
+    var ids = {};
+    st.ports.forEach(function(id){ ids[id] = true; });
+    st.fleet.forEach(function(p){ if(p.leg){ ids[p.leg.from] = true; ids[p.leg.to] = true; } });
+    return Object.keys(ids);
+  }
+
+  function projector(w, h){
+    var ids = shown();
+    var mid = ids.reduce(function(n, id){ return n + CITY[id].lat; }, 0) / ids.length;
+    var k = Math.cos(toRad(Math.max(-70, Math.min(70, mid))));
+    var xs = ids.map(function(id){ return CITY[id].lon * k; });
+    var ys = ids.map(function(id){ return -CITY[id].lat; });
+    var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+    var y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
+    // A single airport has no extent at all, so give the box a floor.
+    // a third again on each side, so there is somewhere to grow into
+    var spanX = Math.max(x1 - x0, 2) * 1.35, spanY = Math.max(y1 - y0, 2) * 1.35;
+    var pad = 22;
+    var scale = Math.min((w - pad * 2) / spanX, (h - pad * 2) / spanY);
+    var cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    return function(id){
+      var c = CITY[id];
+      return { x: w / 2 + (c.lon * k - cx) * scale, y: h / 2 + (-c.lat - cy) * scale };
+    };
+  }
+
+  /* The projection is only defined for cities, so the graticule borrows it
+     by projecting two stand-in points per line. Cheaper than a second
+     projection that could drift out of step with the first. */
+  function drawGrid(ctx, at, w, h){
+    GRID.forEach(function(seg){
+      var a = at(seg[0]), b = at(seg[1]);
+      if(!isFinite(a.x) || !isFinite(b.x)) return;
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    });
+  }
+
+  function cssSize(){
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    return { w: canvas.width / dpr, h: canvas.height / dpr };
+  }
+
+  function resize(){
+    var box = el("maprow").getBoundingClientRect();
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var w = Math.max(200, Math.round(box.width)), h = Math.max(160, Math.round(box.height));
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw();
+  }
+
+  function draw(){
+    if(!st || el("maprow").hidden) return;
+    var size = cssSize(), w = size.w, h = size.h;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = "#121820";
+    ctx.fillRect(0, 0, w, h);
+
+    var at = projector(w, h);
+    hit = [];
+
+    /* A graticule, because a field of dots on black gives you nothing to
+       judge distance against - and distance is the number every decision on
+       this map turns on. Ten degrees, drawn faintly enough to ignore. */
+    ctx.strokeStyle = "rgba(108,122,135,.09)";
+    ctx.lineWidth = 1;
+    drawGrid(ctx, at, w, h);
+
+    /* The network you have built, under everything: which of your airports
+       can actually reach which. Without it the map is a scatter of dots
+       rather than an airline. */
+    var reach = 0;
+    st.fleet.forEach(function(p){ reach = Math.max(reach, MODEL[p.model].range); });
+    ctx.strokeStyle = "rgba(79,168,139,.16)";
+    ctx.lineWidth = 1;
+    /* Each airport to its three nearest, rather than every pair in range.
+       Every pair is a thousand lines at fifty airports and reads as a wash
+       of green; three apiece draws the shape of the network and stops. */
+    st.ports.forEach(function(from){
+      st.ports.filter(function(to){ return to !== from && dist(from, to) <= reach; })
+        .sort(function(a, b){ return dist(from, a) - dist(from, b); })
+        .slice(0, 3)
+        .forEach(function(to){
+          var pa = at(from), pb = at(to);
+          ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y); ctx.stroke();
+        });
+    });
+
+    // routes in the air, drawn under the dots
+    st.fleet.forEach(function(p){
+      if(!p.leg) return;
+      var a = at(p.leg.from), b = at(p.leg.to);
+      ctx.strokeStyle = "rgba(79,168,139,.28)";
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      ctx.setLineDash([]);
+    });
+
+    // every city inside the frame, so the map reads as a place
+    var labels = [];
+    CITIES.forEach(function(c){
+      var q = at(c.id);
+      if(q.x < -20 || q.x > w + 20 || q.y < -20 || q.y > h + 20) return;
+      var mine = owns(st, c.id), offer = !mine && portOffered(st, c.id);
+      var r = mine ? 3 + c.cls : 2 + c.cls * 0.6;
+      ctx.beginPath();
+      ctx.arc(q.x, q.y, r, 0, Math.PI * 2);
+      if(mine){ ctx.fillStyle = "#4FA88B"; ctx.fill(); }
+      else if(offer){ ctx.strokeStyle = "#54646F"; ctx.lineWidth = 1.2; ctx.stroke(); }
+      else { ctx.fillStyle = "rgba(108,122,135,.30)"; ctx.fill(); }
+      if(mine || offer) hit.push({ id: c.id, x: q.x, y: q.y, r: Math.max(15, r + 9) });
+      if(mine) labels.push({ c: c, x: q.x, y: q.y - r - 5, n: jobsAt(st, c.id).length });
+    });
+
+    /* Names, but only where they will be read. Drawn unconditionally they
+       piled on top of one another the moment the airline had a dozen
+       airports and the map became a smear. Busiest first, and anything that
+       would land on a name already down is left off - the dot is still there
+       and still tappable. */
+    ctx.font = "10px -apple-system,system-ui,sans-serif";
+    ctx.textAlign = "center";
+    var taken = [];
+    labels.sort(function(a, b){ return b.n - a.n; }).forEach(function(L){
+      var text = L.c.name + (L.n ? "  " + L.n : "");
+      var half = ctx.measureText(text).width / 2 + 2;
+      var box = { x0: L.x - half, x1: L.x + half, y0: L.y - 9, y1: L.y + 2 };
+      var clash = taken.some(function(t){
+        return !(box.x1 < t.x0 || box.x0 > t.x1 || box.y1 < t.y0 || box.y0 > t.y1);
+      });
+      if(clash) return;
+      taken.push(box);
+      ctx.fillStyle = L.n ? "#E6EBEF" : "#6C7A87";
+      ctx.fillText(text, L.x, L.y);
+    });
+
+    // aeroplanes last, on top of everything
+    st.fleet.forEach(function(p){
+      if(!p.leg) return;
+      var a = at(p.leg.from), b = at(p.leg.to);
+      var t = (st.hour - p.leg.left) / Math.max(1, p.leg.arrive - p.leg.left);
+      t = Math.max(0, Math.min(1, t));
+      var x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(Math.atan2(b.y - a.y, b.x - a.x));
+      ctx.fillStyle = "#E0A458";
+      ctx.beginPath();
+      ctx.moveTo(6, 0); ctx.lineTo(-4, 3.4); ctx.lineTo(-2, 0); ctx.lineTo(-4, -3.4);
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+    });
+  }
+
+  function tapMap(x, y){
+    var best = null, bestD = Infinity;
+    hit.forEach(function(p){
+      var d = Math.sqrt((p.x - x) * (p.x - x) + (p.y - y) * (p.y - y));
+      if(d < p.r && d < bestD){ best = p; bestD = d; }
+    });
+    if(best) open({ kind: "city", id: best.id });
+  }
+  canvas.addEventListener("click", function(e){
+    var box = canvas.getBoundingClientRect();
+    tapMap(e.clientX - box.left, e.clientY - box.top);
+  });
+
+  /* ---------------------------------------------------------------------
+     SHEETS
+
+     A sheet stands in for the map rather than sitting beside it. There is
+     no room on a phone for both, and a map squeezed into what is left is a
+     map you cannot read.
+     --------------------------------------------------------------------- */
+  function open(v){ view = v; syncChrome(); }
+  function close(){ view = null; syncChrome(); }
+
+  function rowNode(opts){
+    var b = document.createElement("button");
+    b.className = "row";
+    b.type = "button";
+    if(opts.pressed) b.setAttribute("aria-pressed", "true");
+    if(opts.disabled) b.disabled = true;
+    var bits = "";
+    if(opts.pip) bits += '<span class="pip" data-kind="' + opts.pip + '" data-here="' + !!opts.here + '"></span>';
+    bits += '<span class="nm">' + opts.title + (opts.note ? "<small>" + opts.note + "</small>" : "") + "</span>";
+    if(opts.amt) bits += '<span class="amt" data-gain="' + !!opts.gain + '" data-loss="' + !!opts.loss + '">' +
+                         opts.amt + (opts.amtNote ? "<small>" + opts.amtNote + "</small>" : "") + "</span>";
+    b.innerHTML = bits;
+    if(opts.on) b.addEventListener("click", opts.on);
+    return b;
+  }
+  function headNode(text){
+    var d = document.createElement("div");
+    d.className = "grouphead";
+    d.textContent = text;
+    return d;
+  }
+  function emptyNode(text){
+    var d = document.createElement("p");
+    d.className = "empty";
+    d.textContent = text;
+    return d;
+  }
+
+  function paintSheet(){
+    var body = el("sheet-body");
+    body.innerHTML = "";
+    if(!view) return;
+    if(view.kind === "city") paintCity(body, view.id);
+    else if(view.kind === "plane") paintPlane(body, view.pid);
+    else if(view.kind === "dest") paintDest(body, view.pid);
+    else if(view.kind === "fleet") paintFleet(body);
+    else if(view.kind === "market") paintMarket(body);
+    else if(view.kind === "goals") paintGoals(body);
+  }
+
+  function planeById(id){
+    for(var i = 0; i < st.fleet.length; i++) if(st.fleet[i].id === id) return st.fleet[i];
+    return null;
+  }
+  function planeLabel(p){
+    var m = MODEL[p.model];
+    return m.name + " · " + seatsUsed(p) + "/" + m.seats + " seats";
+  }
+  function whereLabel(p){
+    if(!p.leg) return "At " + CITY[p.at].name;
+    var left = p.leg.arrive - st.hour;
+    return CITY[p.leg.from].name + " to " + CITY[p.leg.to].name + ", " +
+           (left <= 0 ? "landing" : left + "h to run");
+  }
+  function seatWord(n){ return n + (n === 1 ? " seat" : " seats"); }
+  /* How long this one will wait. Shown because a queue whose shape you
+     cannot see is a queue you cannot plan around. */
+  function leaves(j){
+    var h = Math.max(0, (j.until || 0) - st.hour);
+    return h <= 1 ? "going cold" : "waits " + h + "h";
+  }
+
+  function paintCity(body, id){
+    var city = CITY[id];
+    el("sheet-title").textContent = city.name;
+    el("sheet-sub").textContent = owns(st, id) ? "Class " + city.cls : "Not yours";
+
+    if(!owns(st, id)){
+      var price = portPrice(st, id);
+      body.appendChild(rowNode({
+        title: "Open " + city.name,
+        note: "Class " + city.cls + ", takes " +
+              (city.cls === 1 ? "props" : city.cls === 2 ? "props and jets" : "anything"),
+        amt: money(price),
+        disabled: st.cash < price || !portOffered(st, id),
+        on: function(){
+          if(buyPort(st, id)){ say("Opened " + city.name); after(); }
+        }
+      }));
+      if(!portOffered(st, id)) body.appendChild(emptyNode("Nothing you own can reach it yet."));
+      return;
+    }
+
+    var here = st.fleet.filter(function(p){ return p.at === id; });
+    body.appendChild(headNode(here.length ? "On the ground" : "No aircraft here"));
+    here.forEach(function(p){
+      body.appendChild(rowNode({
+        title: planeLabel(p),
+        note: p.hold.length ? p.hold.length + " aboard" : "Empty",
+        amt: "Load",
+        on: function(){ open({ kind: "plane", pid: p.id }); }
+      }));
+    });
+
+    var list = jobsAt(st, id);
+    body.appendChild(headNode("Waiting  ·  " + list.length + " of " + jobSlots(city)));
+    if(!list.length){ body.appendChild(emptyNode("Nobody waiting. Come back later.")); return; }
+    list.slice().sort(function(a, b){ return b.fee - a.fee; }).forEach(function(j){
+      var served = owns(st, j.to);
+      body.appendChild(rowNode({
+        pip: j.kind,
+        title: CITY[j.to].name,
+        note: (j.kind === "cargo" ? "Freight" : "Passengers") + " · " + seatWord(j.seats) +
+              " · " + dist(id, j.to) + "km · " + leaves(j) +
+              (served ? "" : " · you do not fly there"),
+        amt: money(j.fee),
+        disabled: !served
+      }));
+    });
+  }
+
+  function paintPlane(body, pid){
+    var p = planeById(pid);
+    if(!p){ close(); return; }
+    var m = MODEL[p.model];
+    el("sheet-title").textContent = m.name;
+    el("sheet-sub").textContent = whereLabel(p);
+
+    var seats = document.createElement("div");
+    seats.className = "seats";
+    var used = seatsUsed(p);
+    for(var i = 0; i < m.seats; i++){
+      var s = document.createElement("span");
+      s.className = "seat";
+      if(i < used) s.setAttribute("data-full", "true");
+      seats.appendChild(s);
+    }
+    body.appendChild(seats);
+
+    if(p.leg){
+      body.appendChild(emptyNode("In the air. Advance the clock and it will land."));
+      return;
+    }
+
+    body.appendChild(rowNode({
+      title: "Choose where to fly",
+      note: p.hold.length ? "Carrying " + p.hold.length : "Nothing aboard - it would fly empty",
+      amt: "Go",
+      on: function(){ open({ kind: "dest", pid: pid }); }
+    }));
+
+    body.appendChild(rowNode({
+      title: p.auto ? "Flown by a duty crew" : "Hand it to a duty crew",
+      note: p.auto ? "It takes the best load in front of it for " + Math.round(AUTO_CUT * 100) + "% of the fare"
+                   : "It flies itself for " + Math.round(AUTO_CUT * 100) + "% of the fare",
+      amt: p.auto ? "Take back" : "Hand over",
+      pressed: p.auto,
+      on: function(){
+        p.auto = !p.auto;
+        say(p.auto ? "The crew have it" : "You have it back");
+        after();
+      }
+    }));
+
+    if(p.hold.length){
+      body.appendChild(headNode("Aboard - tap to put off"));
+      p.hold.slice().forEach(function(j){
+        body.appendChild(rowNode({
+          pip: j.kind, here: true, pressed: true,
+          title: CITY[j.to].name,
+          note: seatWord(j.seats),
+          amt: money(j.fee),
+          on: function(){ unloadJob(st, p, j); after(); }
+        }));
+      });
+    }
+
+    var list = jobsAt(st, p.at);
+    body.appendChild(headNode("Waiting at " + CITY[p.at].name));
+    if(!list.length){ body.appendChild(emptyNode("Nothing waiting here.")); return; }
+
+    /* Grouped by destination rather than listed one by one: loading by hand
+       was four taps an aeroplane before it had moved, and a hold that shares
+       a destination is what the bonus pays for anyway. */
+    boardGroups(st, p).forEach(function(gr){
+      var direct = legalDest(st, p, gr.to);
+      var more = gr.waiting.length - gr.take.length;
+      body.appendChild(rowNode({
+        title: "Load for " + CITY[gr.to].name,
+        note: gr.take.length
+          ? gr.take.length + (gr.take.length === 1 ? " job" : " jobs") + " · " + seatWord(gr.seats) +
+            (more ? " · " + more + " will not fit" : "") +
+            (direct ? "" : " · needs a stopover")
+          : gr.waiting.length + " waiting, none of it fits",
+        amt: money(gr.fee),
+        gain: gr.take.length > 0,
+        disabled: !gr.take.length,
+        on: function(){ loadGroup(st, p, gr); after(); }
+      }));
+    });
+
+    var idle = list.filter(function(j){ return !owns(st, j.to); });
+    if(idle.length){
+      body.appendChild(headNode("Nobody can take these"));
+      idle.forEach(function(j){
+        body.appendChild(rowNode({
+          pip: j.kind,
+          title: CITY[j.to].name,
+          note: seatWord(j.seats) + " · " + dist(p.at, j.to) + "km · " + leaves(j) +
+                " · you do not fly there",
+          amt: money(j.fee),
+          disabled: true
+        }));
+      });
+    }
+  }
+
+  /* Where can this aeroplane go, and what does each choice pay? The number
+     on the right is the whole decision: fares for what is aboard and going
+     there, less the fuel and the landing fee. */
+  function paintDest(body, pid){
+    var p = planeById(pid);
+    if(!p || p.leg){ close(); return; }
+    el("sheet-title").textContent = "Fly to";
+    el("sheet-sub").textContent = seatsUsed(p) + "/" + MODEL[p.model].seats + " seats";
+
+    var opts = st.ports.filter(function(id){ return legalDest(st, p, id); });
+    if(!opts.length){
+      body.appendChild(emptyNode("Nowhere in range. Open somewhere closer, or buy an aircraft with legs."));
+      return;
+    }
+    opts.map(function(id){
+      return { id: id, km: dist(p.at, id), net: departRevenue(p, id) - departCost(st, p, id) };
+    }).sort(function(a, b){ return b.net - a.net; }).forEach(function(o){
+      var carried = p.hold.filter(function(j){ return j.to === o.id; }).length;
+      body.appendChild(rowNode({
+        title: CITY[o.id].name,
+        note: o.km + "km · " + flightHours(MODEL[p.model], o.km) + "h · " +
+              (carried ? carried + " aboard for there" : "nothing aboard for there"),
+        amt: (o.net >= 0 ? "+" : "") + money(o.net),
+        amtNote: "net",
+        gain: o.net > 0, loss: o.net < 0,
+        disabled: departCost(st, p, o.id) > st.cash,
+        on: function(){ if(depart(st, p, o.id, say)){ after(); close(); } }
+      }));
+    });
+  }
+
+  function paintFleet(body){
+    el("sheet-title").textContent = "Fleet";
+    el("sheet-sub").textContent = st.fleet.length + " aircraft";
+    st.fleet.slice().sort(function(a, b){ return (a.leg ? 1 : 0) - (b.leg ? 1 : 0); }).forEach(function(p){
+      body.appendChild(rowNode({
+        title: planeLabel(p) + (p.auto ? " \u00b7 crewed" : ""),
+        note: whereLabel(p),
+        amt: p.leg ? "Flying" : "Load",
+        gain: !p.leg,
+        on: function(){ open({ kind: "plane", pid: p.id }); }
+      }));
+    });
+  }
+
+  /* Where a new aircraft turns up. You can fly it anywhere the moment you
+     have it, so choosing the airfield was a question with no wrong answer
+     asked once per purchase - it goes where the work is instead. */
+  function bestBase(st, model){
+    var able = st.ports.filter(function(id){ return CITY[id].cls >= model.cls; });
+    if(!able.length) return null;
+    return able.sort(function(a, b){
+      return (jobsAt(st, b).length - jobsAt(st, a).length) || (CITY[b].cls - CITY[a].cls);
+    })[0];
+  }
+
+  function paintMarket(body){
+    el("sheet-title").textContent = "Market";
+    el("sheet-sub").textContent = money(st.cash);
+
+    body.appendChild(headNode("Aircraft"));
+    MODELS.forEach(function(m){
+      var base = bestBase(st, m);
+      var poor = st.cash < m.price;
+      body.appendChild(rowNode({
+        title: m.name,
+        note: m.seats + " seats \u00b7 " + m.range + "km \u00b7 " + m.speed + "km/h \u00b7 " +
+              money(UPKEEP_FLAT + Math.round(m.price * UPKEEP_RATE)) + " a day" +
+              (base ? " \u00b7 to " + CITY[base].name : " \u00b7 needs a class " + m.cls + " airport"),
+        amt: money(m.price),
+        disabled: !base || poor,
+        on: function(){
+          if(buyPlane(st, m.id, base)){ say("A " + m.name + " joins the fleet at " + CITY[base].name); after(); }
+        }
+      }));
+    });
+
+    var idle = st.fleet.filter(function(p){ return !p.leg; });
+    if(st.fleet.length > 1 && idle.length){
+      body.appendChild(headNode("Sell \u00b7 sixty pence in the pound"));
+      idle.forEach(function(p){
+        body.appendChild(rowNode({
+          title: MODEL[p.model].name,
+          note: "At " + CITY[p.at].name + (p.hold.length ? " \u00b7 " + p.hold.length + " aboard would be put off" : ""),
+          amt: money(Math.round(MODEL[p.model].price * 0.6)),
+          on: function(){ if(sellPlane(st, p)){ say("Sold"); after(); } }
+        }));
+      });
+    }
+
+    body.appendChild(headNode("Airports within reach"));
+    var offers = CITIES.filter(function(c){ return portOffered(st, c.id); });
+    if(!offers.length){ body.appendChild(emptyNode("Nothing in range. Longer legs would help.")); return; }
+    var near = {};
+    offers.forEach(function(c){
+      near[c.id] = Math.min.apply(null, st.ports.map(function(m){ return dist(m, c.id); }));
+    });
+    offers.sort(function(a, b){ return near[a.id] - near[b.id]; }).slice(0, 20).forEach(function(c){
+      body.appendChild(rowNode({
+        title: c.name,
+        note: "Class " + c.cls + " \u00b7 " + near[c.id] + "km from your nearest \u00b7 " +
+              "parties of up to " + JOB_TOP[c.cls],
+        amt: money(portPrice(st, c.id)),
+        disabled: st.cash < portPrice(st, c.id),
+        on: function(){ if(buyPort(st, c.id)){ say("Opened " + c.name); after(); } }
+      }));
+    });
+  }
+
+  function paintGoals(body){
+    el("sheet-title").textContent = "Goals";
+    var done = GOALS.filter(function(g){ return st.done[g.id]; }).length;
+    el("sheet-sub").textContent = done + " of " + GOALS.length;
+    GOALS.forEach(function(g){
+      var d = document.createElement("div");
+      d.className = "goal";
+      if(st.done[g.id]) d.setAttribute("data-done", "true");
+      d.innerHTML = '<span class="tick"></span><span class="nm">' + g.text +
+                    "<small>" + g.sub + "</small></span>" +
+                    '<span class="amt">' + money(g.pays) + "</span>";
+      body.appendChild(d);
+    });
+    var sum = document.createElement("p");
+    sum.className = "note";
+    sum.textContent = st.delivered + " delivered · " + Math.round(st.flown) + "km flown · " +
+                      money(st.earned) + " in fares · " + money(netWorth(st)) + " on paper";
+    body.appendChild(sum);
+  }
+
+  /* ---------------------------------------------------------------------
+     CHROME
+     --------------------------------------------------------------------- */
+  function syncChrome(){
+    el("cash").innerHTML = money(st.cash) + '<span class="lbl">Bank</span>';
+    el("when").textContent = "Day " + day(st) + " · " + clockOf(st);
+    el("fleetn").innerHTML = st.fleet.length + '<span class="lbl">Fleet</span>';
+
+    var sheeting = !!view;
+    el("sheet").hidden = !sheeting;
+    el("maprow").hidden = sheeting;
+    el("howto").hidden = sheeting;
+    el("advance").textContent = sheeting ? "Back to the map" : nextLabel();
+    el("fleet").hidden = sheeting;
+    el("market").hidden = sheeting;
+    el("goals").hidden = sheeting;
+    if(sheeting) paintSheet();
+    else resize();
+  }
+
+  function nextArrival(){
+    var soon = null;
+    st.fleet.forEach(function(p){
+      if(p.leg && (soon === null || p.leg.arrive < soon)) soon = p.leg.arrive;
+    });
+    return soon;
+  }
+  function nextLabel(){
+    var soon = nextArrival();
+    if(soon === null) return "Wait 3h";
+    return "Skip " + Math.max(1, soon - st.hour) + "h";
+  }
+
+  function after(){
+    claimGoals(st, say);
+    save();
+    syncChrome();
+  }
+
+  function advance(){
+    var soon = nextArrival();
+    var target = soon === null ? st.hour + 3 : Math.max(st.hour + 1, soon);
+    var lines = [];
+    while(st.hour < target) tick(st, rng, function(t){ lines.push(t); });
+    say(lines.length ? lines[lines.length - 1] : "Quiet.");
+    after();
+  }
+
+  el("advance").addEventListener("click", function(){
+    if(view){ close(); return; }
+    advance();
+  });
+  el("fleet").addEventListener("click", function(){ open({ kind: "fleet" }); });
+  el("market").addEventListener("click", function(){ open({ kind: "market" }); });
+  el("goals").addEventListener("click", function(){ open({ kind: "goals" }); });
+  el("restart").addEventListener("click", function(){
+    if(!window.confirm("Sell up and start a new airline?")) return;
+    st = newGame();
+    view = null;
+    say("A Puddlejumper, three airfields and " + money(st.cash) + ".");
+    after();
+  });
+
+  window.addEventListener("resize", function(){ if(!view) resize(); });
+  window.addEventListener("orientationchange", function(){
+    setTimeout(function(){ if(!view) resize(); }, 120);
+  });
+
+  st = load() || newGame();
+  say(st.delivered ? "Day " + day(st) + ". " + st.delivered + " delivered so far."
+                   : "A Puddlejumper, three airfields and " + money(st.cash) + ".");
+  after();
+  setTimeout(resize, 60);
+
+  /* The tests drive the same code the phone runs rather than a copy of it,
+     so they need a handle on the live state. */
+  window.__stopover = {
+    state: function(){ return st; },
+    CITIES: CITIES, MODELS: MODELS, GOALS: GOALS, CITY: CITY, MODEL: MODEL,
+    dist: dist, tick: tick, depart: depart, advance: advance, tapMap: tapMap,
+    open: open, close: close, loadJob: loadJob, legalDest: legalDest, owns: owns,
+    boardGroups: boardGroups, netWorth: netWorth
+  };
+})();
+</script>
+</body>
+</html>
