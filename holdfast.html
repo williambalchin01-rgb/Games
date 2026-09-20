@@ -13,10 +13,6 @@
 <title>Holdfast</title>
 <link rel="stylesheet" href="./app.css">
 <style>
-  .statline{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:6px 2px 8px;font-size:12px}
-  .turnno{font-size:15px;font-weight:300;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
-  .turnno span:first-of-type{font-size:21px;font-weight:200;margin:0 4px}
-  .turnno span{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-left:6px}
   .tally{display:flex;gap:12px;align-items:baseline}
   .tally b{font-weight:500;font-variant-numeric:tabular-nums}
   .you b{color:#6FB3F2} .them b{color:#E0574A}
@@ -72,7 +68,6 @@
   .buy[aria-pressed="true"]{border-color:var(--accent)}
 
   .shopnote{margin:4px 0 0;font-size:11.5px;color:var(--sel);text-align:center;line-height:1.35}
-  .msg{margin:0;text-align:center;font-size:12.5px;color:var(--muted);min-height:17px}
   @media (max-height: 700px){ .board{width:min(100%, 40vh)} }
 </style>
 </head>
@@ -84,7 +79,7 @@
 </header>
 
 <div class="statline">
-  <span class="turnno">Turn <span id="turn-n">1</span><span id="turn-of">of 20</span></span>
+  <span class="big"><span id="turn-n">1</span><span class="lbl" id="turn-of">of 20</span></span>
   <span class="tally">
     <span class="you">You <b id="you-towns">1</b> towns <b id="you-gold">8</b>g</span>
     <span class="them">Rival <b id="them-towns">1</b></span>
@@ -552,7 +547,7 @@
       t.innerHTML = html;
     }
     el("turn-n").textContent = Math.min(g.turn, MAX_TURNS);
-    el("turn-of").textContent = "of " + MAX_TURNS;
+    el("turn-of").textContent = "of " + MAX_TURNS + " turns";
     el("you-towns").textContent = holdings(g, 0);
     el("them-towns").textContent = holdings(g, 1);
     el("you-gold").textContent = g.gold[0];

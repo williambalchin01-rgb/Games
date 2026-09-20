@@ -54,15 +54,15 @@
 <body>
 
 <header>
-  <div>
-    <a class="back" href="./index.html">&larr; Arcade</a>
-    <div class="eyebrow">Decant</div>
-    <div class="score"><span id="moves-n">0</span><span>moves</span></div>
-  </div>
+  <a class="back" href="./index.html">&larr; Arcade</a>
   <button class="chip" id="new-game">New</button>
 </header>
 
 <div class="chiprow" id="levels"></div>
+
+<div class="statline">
+  <span class="big"><span id="moves-n">0</span><span class="lbl">moves</span></span>
+</div>
 
 <div class="board" id="board"></div>
 
@@ -99,11 +99,14 @@
     "#4FB6C4","#4A86D1","#7B6FD1","#C86FC0","#9C6B4A"
   ];
 
+  /* The same four rungs the rest of the app uses, so a word means one thing
+     wherever you meet it. An unknown id from an older save falls back to the
+     first rung, which is what the loader already did. */
   var LEVELS = [
-    { id:"easy",   label:"Easy",   colours:5,  empties:2 },
-    { id:"medium", label:"Medium", colours:8,  empties:2 },
-    { id:"hard",   label:"Hard",   colours:11, empties:2 },
-    { id:"tricky", label:"Tricky", colours:8,  empties:1 }
+    { id:"gentle",   label:"Gentle",   colours:5,  empties:2 },
+    { id:"steady",   label:"Steady",   colours:8,  empties:2 },
+    { id:"tricky",   label:"Tricky",   colours:11, empties:2 },
+    { id:"fiendish", label:"Fiendish", colours:8,  empties:1 }
   ];
 
   /* ---------- rules ---------- */

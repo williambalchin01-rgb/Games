@@ -15,10 +15,6 @@
 <style>
   body{padding-bottom:calc(env(safe-area-inset-bottom) + 92px)}
 
-  .purse{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:0 2px 10px;border-bottom:1px solid var(--line)}
-  .purse .bit{font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);font-variant-numeric:tabular-nums}
-  .purse .bit b{display:block;font-size:20px;font-weight:300;color:var(--ink);margin-top:2px}
-
   h2.sec{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:400;margin:16px 0 8px}
 
   .eggrow{display:flex;gap:8px;flex-wrap:wrap}
@@ -81,13 +77,13 @@
 
 <header>
   <a class="back" href="./index.html">&larr; Arcade</a>
-  <button class="chip" id="new-game">Reset</button>
+  <button class="chip" id="new-game">New</button>
 </header>
 
-<div class="purse">
-  <span class="bit">Gold<b id="gold">0</b></span>
-  <span class="bit">Dragons<b id="roster">0</b></span>
-  <span class="bit">Kinds found<b id="found">0</b></span>
+<div class="statline">
+  <span class="big"><span id="gold">0</span><span class="lbl">gold</span></span>
+  <span class="mid"><span id="roster">0</span> dragons</span>
+  <span class="eyebrow"><span id="found">0</span> kinds found</span>
 </div>
 
 <div class="flash" id="flash" hidden></div>
@@ -668,7 +664,15 @@
   el("expand").addEventListener("click", function(){
     if(expand(st)){ save(); render(); }
   });
+  /* Every other game's chip throws away one puzzle or one round. This one
+     throws away the whole roost - every dragon bred and every kind found - so
+     now that it is labelled like the harmless ones, it asks first. */
   el("new-game").addEventListener("click", function(){
+    var kinds = Object.keys(st.found || {}).length;
+    if(st.dragons.length > 2 || kinds > 2){
+      if(!confirm("Start a new roost? Your " + st.dragons.length +
+                  " dragons and " + kinds + " kinds found will be gone.")) return;
+    }
     st = newState(rng); picked = []; save(); render();
   });
 
