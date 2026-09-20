@@ -337,10 +337,26 @@
     return Math.round(6371 * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1-s)));
   }
 
-  function flightHours(model, km){
-    // An hour at each end for turning the aeroplane round, which is what
-    // makes a chain of tiny hops cost real time rather than none.
-    return Math.max(1, Math.round(km / model.speed + 1));
+  /* Turning the aeroplane round: pushback, loading, taxi, the queue for the
+     runway. Paid once per leg whatever the distance, which is what makes a
+     chain of tiny hops cost real time rather than none. */
+  var TURN_MIN = 30, TURN_SPREAD = 20;
+
+  /* What a leg should take, for a number you can show someone before they
+     commit to it. Minutes, not hours: at whole hours every leg a
+     Puddlejumper could fly came to exactly two, so two aeroplanes sent out
+     together came back together and the whole airline moved in lockstep. */
+  function flightMins(model, km){
+    return Math.max(12, Math.round(km / model.speed * 60 + TURN_MIN + TURN_SPREAD / 2));
+  }
+  /* What it actually takes. The estimate, give or take the winds and
+     whatever is in front of you - so the same aeroplane on the same route
+     twice does not land at the same minute past, and two of them sent out
+     together arrive apart. */
+  function flightTime(model, km, rng){
+    var air = km / model.speed * 60;
+    var turn = TURN_MIN + rng() * TURN_SPREAD;
+    return Math.max(12, Math.round((air + turn) * (0.94 + rng() * 0.12)));
   }
   function fuelCost(model, km){ return Math.round(km * model.burn); }
   function landingFee(cityId){ return LANDING[CITY[cityId].cls]; }
@@ -361,17 +377,17 @@
      `at` is the wall-clock moment `hour` was true. Everything about time
      since is derived from the difference, which is what lets the airline
      keep flying while the app is shut. */
-  var MS_PER_HOUR = 60000;
+  var MS_PER_MIN = 1000;
   /* However long you have been away, you come back to at most a day of it.
      Uncapped, a night's sleep was twenty game days of crewed flying and the
      whole progression went out of the window; a day is about what a quiet
      day's trading is worth, which is the right size for a bonus. */
-  var OFFLINE_CAP = 24;
+  var OFFLINE_CAP = 24 * 60;
 
   function newGame(){
     return {
       cash: START_CASH,
-      hour: 8,                  // the first morning, not midnight
+      min: 8 * 60,              // the first morning, not midnight
       at: Date.now(),           // when that hour was
 
       ports: START_PORTS.slice(),
@@ -397,21 +413,28 @@
   function owed(st, now, cap){
     var elapsed = now - (st.at || now);
     if(elapsed < 0) return { hours: 0, at: now };
-    var hours = Math.floor(elapsed / MS_PER_HOUR);
-    if(cap && hours > cap) return { hours: cap, at: now };   // the rest is forfeit
-    return { hours: hours, at: (st.at || now) + hours * MS_PER_HOUR };
+    var mins = Math.floor(elapsed / MS_PER_MIN);
+    if(cap && mins > cap) return { mins: cap, at: now };     // the rest is forfeit
+    return { mins: mins, at: (st.at || now) + mins * MS_PER_MIN };
   }
-  /* Where an aeroplane is between one hour and the next, so the marker
-     creeps across the map rather than hopping once a minute. */
-  function partHour(st, now){
-    var f = (now - (st.at || now)) / MS_PER_HOUR;
+  /* Where an aeroplane is between one minute and the next, so the marker
+     creeps rather than stepping. */
+  function partMin(st, now){
+    var f = (now - (st.at || now)) / MS_PER_MIN;
     return Math.max(0, Math.min(1, f - Math.floor(f)));
   }
 
-  function day(st){ return Math.floor(st.hour / 24) + 1; }
+  function day(st){ return Math.floor(st.min / 1440) + 1; }
+  function two(n){ return (n < 10 ? "0" : "") + n; }
   function clockOf(st){
-    var h = st.hour % 24;
-    return (h < 10 ? "0" : "") + h + ":00";
+    var m = st.min % 1440;
+    return two(Math.floor(m / 60)) + ":" + two(m % 60);
+  }
+  /* A span of minutes as something you would say out loud. */
+  function dur(mins){
+    if(mins < 60) return Math.max(0, Math.round(mins)) + "m";
+    var h = Math.floor(mins / 60), m = Math.round(mins % 60);
+    return m ? h + "h " + two(m) + "m" : h + "h";
   }
   function owns(st, id){ return st.ports.indexOf(id) >= 0; }
   function seatsUsed(plane){
@@ -438,7 +461,7 @@
   /* Nobody waits indefinitely. Without this a strip whose queue filled with
      work no aircraft of yours could take stayed blocked for good, and the
      airport quietly stopped being worth owning. */
-  function patience(rng){ return 18 + Math.round(rng() * 30); }
+  function patience(rng){ return Math.round((18 + rng() * 30) * 60); }
   /* How big a party or a consignment is, and it is the whole reason to buy a
      bigger aeroplane. A strip in the Highlands offers you two or three
      people; a hub offers you eighteen at a time, and no propeller aircraft
@@ -485,7 +508,7 @@
       from: fromId, to: to,
       kind: cargo ? "cargo" : "pax",
       seats: jobSize(CITY[fromId], cargo, rng),
-      until: st.hour + patience(rng),
+      until: st.min + patience(rng),
       // A little spread so two identical-looking jobs are not identical,
       // and so a good board is something you can actually spot.
       rate: 0.85 + rng() * 0.4
@@ -494,24 +517,28 @@
     return job;
   }
 
-  /* One hour of the world happening: aeroplanes land, queues fill. */
+  /* One minute of the world happening: aeroplanes land, queues fill. The
+     unit used to be an hour, which meant everything that happened, happened
+     on the hour - aircraft landed in lockstep and the board refilled in
+     batches. A minute costs sixty times the arithmetic and none of it is
+     expensive. */
   function tick(st, rng, log){
-    st.hour++;
+    st.min++;
     st.ports.forEach(function(id){
       var list = jobsAt(st, id);
       for(var i = list.length - 1; i >= 0; i--){
-        if(list[i].until <= st.hour) list.splice(i, 1);
+        if(list[i].until <= st.min) list.splice(i, 1);
       }
       if(list.length >= jobSlots(CITY[id])) return;
-      if(rng() > 0.18 + 0.10 * CITY[id].cls) return;
+      if(rng() > (0.18 + 0.10 * CITY[id].cls) / 60) return;
       var job = makeJob(st, id, rng);
       if(job) list.push(job);
     });
     st.fleet.forEach(function(p){
-      if(p.leg && st.hour >= p.leg.arrive) land(st, p, log);
+      if(p.leg && st.min >= p.leg.arrive) land(st, p, log);
     });
-    st.fleet.forEach(function(p){ if(!p.leg && p.auto) runAuto(st, p, log); });
-    if(st.hour % 24 === 0) chargeUpkeep(st, log);
+    st.fleet.forEach(function(p){ if(!p.leg && p.auto) runAuto(st, p, rng, log); });
+    if(st.min % 1440 === 0) chargeUpkeep(st, log);
   }
 
   function chargeUpkeep(st, log){
@@ -550,7 +577,7 @@
     return full ? Math.round(gross * (1 + FILL_BONUS)) : gross;
   }
 
-  function depart(st, plane, toId, log){
+  function depart(st, plane, toId, rng, log){
     if(plane.leg || !legalDest(st, plane, toId)) return false;
     var km = dist(plane.at, toId);
     var cost = departCost(st, plane, toId);
@@ -559,7 +586,7 @@
     st.flown += km;
     plane.leg = {
       from: plane.at, to: toId, km: km,
-      left: st.hour, arrive: st.hour + flightHours(MODEL[plane.model], km)
+      left: st.min, arrive: st.min + flightTime(MODEL[plane.model], km, rng || Math.random)
     };
     plane.at = null;
     if(log) log(CITY[plane.leg.from].name + " to " + CITY[toId].name + ", " + money(cost) + " in fuel");
@@ -609,7 +636,7 @@
     boardGroups(st, plane).forEach(function(gr){
       if(!gr.take.length || !legalDest(st, plane, gr.to)) return;
       var km = dist(plane.at, gr.to);
-      var hrs = flightHours(MODEL[plane.model], km);
+      var hrs = flightMins(MODEL[plane.model], km);
       // what it would be paid, less the crew's cut, less what the leg costs
       var take = Math.round(gr.fee * (1 + FILL_BONUS) * (1 - AUTO_CUT));
       var rate = (take - fuelCost(MODEL[plane.model], km) - landingFee(gr.to)) / hrs;
@@ -628,14 +655,14 @@
     });
     return best;
   }
-  function runAuto(st, plane, log){
+  function runAuto(st, plane, rng, log){
     var gr = autoChoice(st, plane);
     if(gr){
       loadGroup(st, plane, gr);
-      return depart(st, plane, gr.to, log);
+      return depart(st, plane, gr.to, rng, log);
     }
     var on = plane.hold.length ? autoOnward(st, plane) : null;
-    return on ? depart(st, plane, on, log) : false;
+    return on ? depart(st, plane, on, rng, log) : false;
   }
 
   function loadJob(st, plane, job){
@@ -690,7 +717,7 @@
     // you carried it here, and it is somebody else's problem now.
     job.from = plane.at;
     job.fee = jobFee(job, dist(plane.at, job.to));
-    job.until = st.hour + 24;     // it has been patient enough already
+    job.until = st.min + 24 * 60;   // it has been patient enough already
     jobsAt(st, plane.at).push(job);
     return true;
   }
@@ -835,6 +862,20 @@
       // clock has since gone backwards, starts from now rather than owing
       // or being owed anything
       if(typeof o.at !== "number" || o.at > Date.now()) o.at = Date.now();
+      /* A save from when the clock counted whole hours. Everything that was
+         an hour becomes sixty minutes - the airline carries on from where
+         it was rather than being thrown away for a unit change. */
+      if(typeof o.min !== "number" && typeof o.hour === "number"){
+        o.min = o.hour * 60;
+        delete o.hour;
+        o.fleet.forEach(function(p){
+          if(p.leg){ p.leg.left *= 60; p.leg.arrive *= 60; }
+        });
+        Object.keys(o.jobs).forEach(function(id){
+          o.jobs[id].forEach(function(j){ if(typeof j.until === "number") j.until *= 60; });
+        });
+      }
+      if(typeof o.min !== "number") o.min = 8 * 60;
       return o;
     }catch(e){ return null; }
   }
@@ -1069,7 +1110,7 @@
     st.fleet.forEach(function(p){
       if(!p.leg) return;
       var a = at(p.leg.from), b = at(p.leg.to);
-      var t = (st.hour + partHour(st, Date.now()) - p.leg.left) /
+      var t = (st.min + partMin(st, Date.now()) - p.leg.left) /
               Math.max(1, p.leg.arrive - p.leg.left);
       t = Math.max(0, Math.min(1, t));
       var x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
@@ -1158,16 +1199,16 @@
   }
   function whereLabel(p){
     if(!p.leg) return "At " + CITY[p.at].name;
-    var left = p.leg.arrive - st.hour;
+    var left = p.leg.arrive - st.min;
     return CITY[p.leg.from].name + " to " + CITY[p.leg.to].name + ", " +
-           (left <= 0 ? "landing" : left + "h to run");
+           (left <= 0 ? "landing" : dur(left) + " to run");
   }
   function seatWord(n){ return n + (n === 1 ? " seat" : " seats"); }
   /* How long this one will wait. Shown because a queue whose shape you
      cannot see is a queue you cannot plan around. */
   function leaves(j){
-    var h = Math.max(0, (j.until || 0) - st.hour);
-    return h <= 1 ? "going cold" : "waits " + h + "h";
+    var m = Math.max(0, (j.until || 0) - st.min);
+    return m <= 45 ? "going cold" : "waits " + dur(m);
   }
 
   function paintCity(body, id){
@@ -1335,13 +1376,13 @@
       var carried = p.hold.filter(function(j){ return j.to === o.id; }).length;
       body.appendChild(rowNode({
         title: CITY[o.id].name,
-        note: o.km + "km · " + flightHours(MODEL[p.model], o.km) + "h · " +
+        note: o.km + "km · " + dur(flightMins(MODEL[p.model], o.km)) + " · " +
               (carried ? carried + " aboard for there" : "nothing aboard for there"),
         amt: (o.net >= 0 ? "+" : "") + money(o.net),
         amtNote: "net",
         gain: o.net > 0, loss: o.net < 0,
         disabled: departCost(st, p, o.id) > st.cash,
-        on: function(){ if(depart(st, p, o.id, say)){ after(); close(); } }
+        on: function(){ if(depart(st, p, o.id, rng, say)){ after(); close(); } }
       }));
     });
   }
@@ -1583,7 +1624,7 @@
       var idle = st.fleet.filter(function(p){ return !p.leg; }).length;
       return idle === 1 ? "Nothing in the air" : "Nothing in the air \u00b7 " + idle + " on the ground";
     }
-    var left = (soon - st.hour) * MS_PER_HOUR - (Date.now() - st.at);
+    var left = (soon - st.min) * MS_PER_MIN - (Date.now() - st.at);
     var secs = Math.max(0, Math.round(left / 1000));
     var who = null;
     st.fleet.forEach(function(p){ if(p.leg && p.leg.arrive === soon && !who) who = CITY[p.leg.to].name; });
@@ -1600,14 +1641,14 @@
      of sight, which is the only time the sum can be large. */
   function catchUp(cap){
     var due = owed(st, Date.now(), cap);
-    if(!due.hours){ st.at = Math.min(st.at, Date.now()); return 0; }
+    if(!due.mins){ st.at = Math.min(st.at, Date.now()); return 0; }
     var lines = [];
-    for(var i = 0; i < due.hours; i++) tick(st, rng, function(t){ lines.push(t); });
+    for(var i = 0; i < due.mins; i++) tick(st, rng, function(t){ lines.push(t); });
     st.at = due.at;
     if(lines.length) say(lines[lines.length - 1]);
     claimGoals(st, say);
     save();
-    return due.hours;
+    return due.mins;
   }
 
   /* Once a second: pay the clock, move the aeroplanes, redraw. A second is
@@ -1663,9 +1704,9 @@
      now - so you open it to aeroplanes that have landed and boards that
      have filled rather than to the moment you left. */
   var missed = catchUp(OFFLINE_CAP);
-  if(missed >= 2){
+  if(missed >= 90){
     say(missed >= OFFLINE_CAP ? "A day's flying while you were away."
-                              : missed + " hours went by while you were away.");
+                              : dur(missed) + " went by while you were away.");
   } else if(!st.delivered){
     say("A Puddlejumper, three airfields and " + money(st.cash) + ".");
   }
@@ -1681,9 +1722,10 @@
     dist: dist, tick: tick, depart: depart, tapMap: tapMap,
     /* Tests cannot sit through a real minute per game hour, so they move the
        anchor back and let the same catch-up the phone uses do the work. */
-    warp: function(hours, cap){ st.at -= hours * MS_PER_HOUR; return catchUp(cap || 0); },
-    catchUp: catchUp, MS_PER_HOUR: MS_PER_HOUR, OFFLINE_CAP: OFFLINE_CAP,
+    warp: function(mins, cap){ st.at -= mins * MS_PER_MIN; return catchUp(cap || 0); },
+    catchUp: catchUp, MS_PER_MIN: MS_PER_MIN, OFFLINE_CAP: OFFLINE_CAP,
     open: open, close: close, loadJob: loadJob, legalDest: legalDest, owns: owns,
+    flightMins: flightMins, flightTime: flightTime, dur: dur,
     boardGroups: boardGroups, netWorth: netWorth
   };
 })();
