@@ -71,6 +71,26 @@
   .fx .grade{margin-left:auto;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
   .fx[data-state="done"]{opacity:.55}
   .fx[data-state="now"]{border-color:var(--accent)}
+
+  /* the six cards, two across, each drawing its own routes so the picture and
+     the play can never disagree */
+  .playbook{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}
+  .pcard{
+    display:flex;flex-direction:column;gap:3px;text-align:left;
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    padding:7px 8px;color:inherit;
+  }
+  .pcard[aria-pressed="true"]{border-color:var(--accent)}
+  .pcard .pn{font-size:12.5px;font-weight:500;display:flex;align-items:baseline;gap:6px}
+  .pcard .pk{font-size:9.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted)}
+  .pcard svg{width:100%;height:34px;display:block}
+  .pcard .pd{
+    font-size:10px;color:var(--muted);line-height:1.3;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+  }
+  .callbar{display:flex;align-items:baseline;gap:8px;padding:2px 2px 0;font-size:12px}
+  .callbar b{font-weight:500}
+  .callbar span{font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted)}
   .locked{margin:6px 2px 0;font-size:11.5px;color:var(--sel);line-height:1.4}
   .divname{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:10px 2px 4px}
   .tr{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:7px;font-size:12.5px}
@@ -140,18 +160,22 @@
 <div class="wrap">
   <canvas id="field"></canvas>
 
-  <div class="downbar">
+  <div class="downbar" id="downbar">
     <span class="dd" id="down-text">1st &amp; 10</span>
     <span class="msg" id="msg">Your ball</span>
   </div>
 
+  <div class="callbar" id="callbar"><span>Play</span><b id="call-name">&mdash;</b></div>
+
+  <div class="playbook" id="playbook" hidden></div>
+
   <div class="actions">
-    <button class="act" data-primary="true" id="snap">Pass</button>
-    <button class="act" id="run">Run</button>
+    <button class="act" data-primary="true" id="snap">Snap</button>
+    <button class="act" id="run">Change play</button>
     <button class="act" id="punt">Punt</button>
   </div>
 
-  <p class="howto" id="howto" hidden>Dashed lines show the routes. Pass, then pull back and release to throw &mdash; the ball flies the opposite way, and further the harder you pull. Or hand it to the back and run it.</p>
+  <p class="howto" id="howto" hidden>A play is called for you each down; change it for any of six. On a pass, pull back and release to throw &mdash; the ball flies the opposite way, and further the harder you pull. On a run, steer the back through the blocks.</p>
 </div>
 
 <div class="win" id="over" hidden>
@@ -637,18 +661,68 @@
     { name:"Bunch right",  spots:[[3.5,false],[21,true],[24,true]] },
     { name:"Twins right",  spots:[[4,false],[22,false],[26,true]] }
   ];
+  function formation(name){
+    return FORMATIONS.filter(function(f){ return f.name === name; })[0] || FORMATIONS[0];
+  }
+
+  /* Six plays, and the one you are handed before each snap is a guess at what
+     the down wants. Each names its own formation and its own three routes
+     rather than rolling for them, so calling the same play twice gets you the
+     same play - which is the whole point of having a book.
+
+     A run carries a lane: where the back aims until you take him somewhere
+     else, as a fraction across the field. A pass carries how long the pocket
+     holds, because a deep route needs time a quick one does not. */
+  var PLAYBOOK = [
+    { id:"dive",  name:"Dive",         kind:"run",  form:"Pro set",
+      routes:["drag","drag","drag"], lane:0.50, hold:0.30,
+      note:"Straight up the middle. Takes what is there." },
+    { id:"sweep", name:"Sweep right",  kind:"run",  form:"Trips right",
+      routes:["dig","drag","drag"],  lane:0.78, hold:0.55,
+      note:"Wide to the right behind the blocks. Slower to start." },
+    { id:"draw",  name:"Draw",         kind:"run",  form:"Spread left",
+      routes:["go","go","curl"],     lane:0.42, hold:0.85, blockT:0.62,
+      note:"Shows the pass first, so the rush comes upfield and leaves a lane." },
+    { id:"quick", name:"Quick slants", kind:"pass", form:"Bunch right",
+      routes:["slant","slant","drag"], sack:2.6,
+      note:"Three short breaks inside. Out of your hands quickly." },
+    { id:"spread",name:"Spread",       kind:"pass", form:"Twins right",
+      routes:["dig","curl","post"],  sack:3.4,
+      note:"Medium routes at three depths. The all-purpose call." },
+    { id:"deep",  name:"Deep shot",    kind:"pass", form:"Spread left",
+      routes:["go","post","go"],     sack:4.1,
+      note:"Everyone runs. Needs the pocket to hold." }
+  ];
+  function playById(id){
+    return PLAYBOOK.filter(function(p){ return p.id === id; })[0] || PLAYBOOK[4];
+  }
+
+  /* What the down is asking for. Short yardage wants the ground, third and
+     long wants the ball in the air, and the rest of the time the sensible call
+     is the ordinary one. */
+  function suggestPlay(st){
+    var toGo = st.toGo, down = st.down, toGoal = FIELD_L - st.ballOn;
+    if(down >= 3 && toGo >= 8) return playById(toGo >= 14 ? "deep" : "spread");
+    if(down >= 3 && toGo <= 2) return playById("dive");
+    if(toGo <= 3) return playById("dive");
+    if(toGoal <= 6) return playById("dive");
+    if(down === 1) return playById(toGo >= 10 ? "spread" : "sweep");
+    if(toGo >= 9) return playById("quick");
+    return playById("draw");
+  }
 
   // Five linemen either side of the centre. They only block and are drawn, but
   // without them the snap does not read as a snap.
   var OL_X = [12, 13.5, 15, 16.5, 18];
 
-  function buildPlay(st, rng){
+  function buildPlay(st, rng, call){
     var los = st.ballOn;
-    var form = FORMATIONS[Math.floor(rng() * FORMATIONS.length)];
+    call = call || suggestPlay(st);
+    var form = formation(call.form);
 
     var recs = form.spots.map(function(spot, i){
       var x = spot[0], y = los - (spot[1] ? 1 : 0);
-      var name = ROUTE_NAMES[Math.floor(rng() * ROUTE_NAMES.length)];
+      var name = call.routes[i] || ROUTE_NAMES[Math.floor(rng() * ROUTE_NAMES.length)];
       // routes break toward the middle of the field, so mirror for the right side
       var flip = x > FIELD_W / 2;
       var hist = [];
@@ -676,10 +750,11 @@
 
     return {
       phase: "presnap",       // presnap | live | air | carry | done
-      kind: "pass",           // pass | run
+      call: call,             // the play out of the book
+      kind: "pass",           // pass | run - set by the call at the snap
       t: 0,
       los: los,
-      formation: form.name,
+      formation: call.name,
       qb: { x: FIELD_W/2, y: los - 4.5, hist: [{ x: FIELD_W/2, y: los - 4.5 }] },
       recs: recs, defs: defs,
       line: OL_X.map(function(x){ return { x:x, y:los }; }),
@@ -693,8 +768,10 @@
     };
   }
 
+  /* One snap. What happens after it is what the play said it would. */
   function snapBall(play){
     if(!play || play.phase !== "presnap") return false;
+    if(play.call && play.call.kind === "run") return callRun(play);
     play.phase = "live";
     play.t = 0;
     return true;
@@ -706,12 +783,14 @@
   function callRun(play){
     if(!play || play.phase !== "presnap") return false;
     play.kind = "run";
+    play.phase = "live";
+    play.t = 0;
     play.rushers.forEach(function(ru){
       play.defs.push({ id: 90 + play.defs.length, mark: -3, lag: 0, react: 0.12,
                        x: ru.x, y: ru.y });
     });
     play.rushers = [];
-    return snapBall(play);
+    return true;
   }
 
   /* A block is a hold, not a touch. Re-choosing the nearest man every frame
@@ -728,7 +807,11 @@
        and no carry ever reached ten yards. */
     play.line.concat(play.recs).forEach(function(o){
       var lineman = play.line.indexOf(o) >= 0;
-      var holdFor = lineman ? ENGAGE_T : REC_ENGAGE;
+      /* A draw sells the pass first, so the linemen are back on their heels
+         when the ball goes and their blocks do not last. Without that it was
+         the best run in the book by a distance and nothing else got called. */
+      var holdFor = (lineman ? ENGAGE_T : REC_ENGAGE) *
+                    ((play.call && play.call.blockT) || 1);
       // stay with the man you have until he sheds you
       if(o.on){
         o.lock -= dt;
@@ -780,10 +863,13 @@
 
     if(play.kind === "run"){
       // the back takes it a beat after the snap and it is his from there
-      if(play.phase === "live" && play.t >= HANDOFF_T){
+      if(play.phase === "live" && play.t >= (play.call ? play.call.hold : HANDOFF_T)){
         play.phase = "carry";
         play.carryT = play.t;
         play.carrier = play.back;
+        // he runs for the lane the play asked for until your thumb says otherwise
+        if(play.steerX === null && play.call && play.call.lane !== undefined)
+          play.steerX = FIELD_W * play.call.lane;
       }
       runBlocking(play, dt);
     }
@@ -880,13 +966,14 @@
     // The rush is a timer rather than blockers to beat: the ends sweep round the
     // edge and arrive together when protection runs out.
     if(play.phase === "live" && play.rushers.length){
-      var frac = clamp(play.t / SACK_TIME, 0, 1);
+      var hold = (play.call && play.call.sack) || SACK_TIME;
+      var frac = clamp(play.t / hold, 0, 1);
       play.rushers.forEach(function(ru, i){
         var sx0 = i === 0 ? 10.5 : 19.5;
         ru.x = sx0 + (play.qb.x - sx0) * frac;
         ru.y = play.los + 0.5 + (play.qb.y - play.los - 0.5) * frac;
       });
-      if(play.t >= SACK_TIME){
+      if(play.t >= hold){
         endPlay(st, play, "sack", play.qb.y);
         return;
       }
@@ -1966,11 +2053,13 @@
     var yourBall = st.driveIsYours && !st.over;
     var presnap = !!(play && play.phase === "presnap") && yourBall && !running;
     el("snap").disabled = !yourBall || running;
-    el("snap").textContent = st.over ? "Full time" : (yourBall ? "Pass" : "Rivals' ball");
+    el("snap").textContent = st.over ? "Full time" : (yourBall ? "Snap" : "Rivals' ball");
     /* The middle button is the run call before the snap and the scramble after
        it, which is the same thought in both halves of the play: take it
        yourself rather than throw it. */
-    el("run").textContent = presnap ? "Run" : "Scramble";
+    el("run").textContent = presnap ? "Change play" : "Scramble";
+    el("call-name").textContent = (play && play.call) ? play.call.name : "\u2014";
+    if(!presnap && !el("playbook").hidden) showPlaybook(false);
     // you cannot scramble on a run: the quarterback has not got it
     el("run").disabled = presnap ? false : !(play && play.phase === "live" && play.kind !== "run");
     el("punt").disabled = !yourBall || running;
@@ -2120,9 +2209,81 @@
 
   // A play is set up as soon as the down begins so its routes can be studied;
   // pressing snap only starts the clock.
+  var chosen = null;      // the play you picked, until it is snapped
+
   function ensurePlay(){
     if(st.over || !st.driveIsYours){ play = null; return; }
-    if(!play || play.phase === "done") play = buildPlay(st, rng);
+    if(!play || play.phase === "done") play = buildPlay(st, rng, chosen || suggestPlay(st));
+  }
+
+  /* A sketch of the play from its own route data, so the card cannot drift
+     from what actually happens: the line across the middle is the scrimmage,
+     the circles are your men and the tails are where they go. On a run the
+     arrow is the lane the back aims for. */
+  function playArt(call){
+    var W = 100, H = 42, los = 26, f = formation(call.form);
+    var bits = ['<svg viewBox="0 0 ' + W + ' ' + H + '" aria-hidden="true">'];
+    bits.push('<path d="M4 ' + los + ' H' + (W - 4) + '" stroke="rgba(255,255,255,.22)" stroke-width="1" fill="none"/>');
+    var ink = yourKit().a;
+    f.spots.forEach(function(spot, i){
+      var x = 4 + (spot[0] / FIELD_W) * (W - 8);
+      var y = los - (spot[1] ? 2 : 0);
+      if(call.kind === "pass"){
+        var r = ROUTES[call.routes[i]] || ROUTES.drag;
+        var flip = spot[0] > FIELD_W / 2;
+        var px = x, py = y, d = "M" + x + " " + y;
+        r.forEach(function(step){
+          px = clamp(x + (flip ? -step[0] : step[0]) / FIELD_W * (W - 8), 3, W - 3);
+          py = Math.max(3, y - step[1] * 0.62);
+          d += " L" + px.toFixed(1) + " " + py.toFixed(1);
+        });
+        bits.push('<path d="' + d + '" stroke="' + tint(ink, 0.75) + '" stroke-width="1.4" fill="none"/>');
+      }
+      bits.push('<circle cx="' + x.toFixed(1) + '" cy="' + y + '" r="2.4" fill="' + ink + '"/>');
+    });
+    if(call.kind === "run"){
+      var lx = 4 + call.lane * (W - 8);
+      bits.push('<path d="M' + (W/2) + ' ' + (los + 9) + ' L' + (W/2) + ' ' + (los + 3) +
+                ' L' + lx.toFixed(1) + ' ' + (los - 9) + '" stroke="' + tint(ink, 0.85) +
+                '" stroke-width="1.6" fill="none"/>');
+      bits.push('<circle cx="' + (W/2) + '" cy="' + (los + 9) + '" r="2.4" fill="' + ink + '"/>');
+    }
+    bits.push("</svg>");
+    return bits.join("");
+  }
+
+  function paintPlaybook(){
+    var host = el("playbook");
+    host.innerHTML = "";
+    var now = (play && play.call) ? play.call.id : null;
+    PLAYBOOK.forEach(function(call){
+      var b = document.createElement("button");
+      b.className = "pcard";
+      b.type = "button";
+      b.dataset.id = call.id;
+      b.setAttribute("aria-pressed", call.id === now);
+      b.innerHTML = '<span class="pn">' + call.name +
+                    '<span class="pk">' + call.kind + "</span></span>" +
+                    playArt(call) + '<span class="pd">' + call.note + "</span>";
+      b.addEventListener("click", function(){
+        chosen = call;
+        play = buildPlay(st, rng, call);
+        showPlaybook(false);
+        syncChrome();
+      });
+      host.appendChild(b);
+    });
+  }
+
+  /* The six cards need the room the pitch is using, and there is nothing to
+     watch on it while you are choosing, so it stands down until you have. */
+  function showPlaybook(on){
+    el("playbook").hidden = !on;
+    el("callbar").hidden = on;
+    canvas.style.display = on ? "none" : "";
+    el("downbar").hidden = on;
+    if(on) paintPlaybook();
+    if(!on) resize();
   }
 
   el("snap").addEventListener("click", function(){
@@ -2138,7 +2299,11 @@
     }
     if(!st.driveIsYours) return;
     ensurePlay();
-    if(snapBall(play)){ st.playedEver = true; profile.playedEver = true; save(); syncChrome(); }
+    if(snapBall(play)){
+      chosen = null;                 // the next down gets a fresh suggestion
+      showPlaybook(false);
+      st.playedEver = true; profile.playedEver = true; save(); syncChrome();
+    }
   });
   el("run").addEventListener("click", function(){
     if(st.over || !st.driveIsYours) return;
@@ -2146,9 +2311,7 @@
       scramble(st, play); aim = null; pointerDown = false; syncChrome(); return;
     }
     ensurePlay();
-    if(play && play.phase === "presnap" && callRun(play)){
-      st.playedEver = true; profile.playedEver = true; save(); syncChrome();
-    }
+    if(play && play.phase === "presnap") showPlaybook(el("playbook").hidden);
   });
   el("punt").addEventListener("click", function(){
     if(!st.driveIsYours || st.over) return;
