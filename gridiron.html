@@ -167,7 +167,7 @@
 
   <div class="callbar" id="callbar"><span>Play</span><b id="call-name">&mdash;</b></div>
 
-  <div class="playbook" id="playbook" hidden></div>
+  <div class="playbook" id="playbook" data-aside hidden></div>
 
   <div class="actions">
     <button class="act" data-primary="true" id="snap">Snap</button>
@@ -1683,6 +1683,13 @@
      so nothing is ever painted in that state. */
   var howtoGone = null;
 
+  /* A panel that stands in FOR the pitch rather than beside it. The playbook
+     is one: it is only ever open while the pitch is hidden, so measuring it
+     into the room the pitch has to fit in charged the pitch for six cards it
+     never shares the screen with - and the pitch came back short every time
+     you called a play. */
+  function aside(node){ return node.hasAttribute && node.hasAttribute("data-aside"); }
+
   function reserved(){
     var host = canvas.parentNode;
     var cs = getComputedStyle(host);
@@ -1691,14 +1698,14 @@
       var ch = host.children[i];
       // a panel marked gone will not come back, so its room is handed to the
       // board rather than held empty for the rest of the game
-      if(ch !== canvas && ch.hidden && !ch.hasAttribute("data-gone")){
+      if(ch !== canvas && ch.hidden && !ch.hasAttribute("data-gone") && !aside(ch)){
         ch.hidden = false; unhidden.push(ch);
       }
     }
     var used = 0, visible = 1;
     for(var j = 0; j < host.children.length; j++){
       var c2 = host.children[j];
-      if(c2 === canvas) continue;
+      if(c2 === canvas || aside(c2)) continue;
       used += c2.offsetHeight; visible++;
     }
     unhidden.forEach(function(ch){ ch.hidden = true; });
