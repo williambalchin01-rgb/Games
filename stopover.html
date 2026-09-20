@@ -17,7 +17,7 @@
      flex stack and the map is the one thing in it that grows. */
   #gameview{flex:1;display:flex;flex-direction:column;min-height:0;gap:8px}
   .maprow{flex:1;min-height:0;position:relative}
-  canvas{display:block;width:100%;height:100%;border-radius:8px;touch-action:manipulation;background:#121820}
+  canvas{display:block;width:100%;height:100%;border-radius:8px;touch-action:manipulation;background:#0D151D}
 
   .actions{display:flex;gap:8px}
   .actions button{
@@ -74,6 +74,30 @@
   .goal .nm{flex:1;font-size:13.5px}
   .goal .nm small{display:block;font-size:11.5px;color:var(--muted);margin-top:1px}
   .goal .amt{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+
+  /* A card, for the two things you buy. A row of text was fine for reading a
+     board and hopeless for choosing between six aircraft - the numbers that
+     separate them were buried in a sentence. */
+  .card{
+    display:flex;gap:12px;align-items:center;width:100%;text-align:left;
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    padding:11px 12px;
+  }
+  .card:disabled{opacity:.45}
+  .card[data-owned="true"]{border-color:var(--accent)}
+  .card .art{flex:none;width:68px;height:46px}
+  .card .body{flex:1;min-width:0}
+  .card .top{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+  .card .nm{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .card .price{font-size:14px;font-variant-numeric:tabular-nums;flex:none;color:var(--muted)}
+  .card .price[data-ok="true"]{color:var(--accent)}
+  .card .short{font-size:11px;color:var(--muted);margin-top:5px}
+  .tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}
+  .tag{
+    font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);
+    border:1px solid var(--line);border-radius:20px;padding:3px 7px;white-space:nowrap;
+  }
+  .tag b{color:var(--ink);font-weight:400;font-variant-numeric:tabular-nums}
 </style>
 </head>
 <body>
@@ -111,6 +135,7 @@
 </div>
 
 <script src="./sw-boot.js"></script>
+<script src="./map-land.js"></script>
 <script>
 (function(){
   "use strict";
@@ -231,21 +256,6 @@
   ];
   var CITY = {};
   CITIES.forEach(function(c){ CITY[c.id] = c; });
-
-  /* Meridians and parallels as pairs of invisible points. They live in the
-     same lookup the projector reads, so the grid cannot drift away from the
-     dots the way a separately computed one would. */
-  var GRID = (function(){
-    var segs = [], n = 0;
-    function put(lat, lon){
-      var id = "_g" + (n++);
-      CITY[id] = { id: id, name: "", lat: lat, lon: lon, cls: 0, grid: true };
-      return id;
-    }
-    for(var lon = -180; lon <= 180; lon += 10) segs.push([put(-80, lon), put(80, lon)]);
-    for(var lat = -80; lat <= 80; lat += 10) segs.push([put(lat, -180), put(lat, 180)]);
-    return segs;
-  })();
 
   /* What an airport costs to open. A hub is worth many strips, so it is
      priced like many strips - otherwise the only sensible move would be to
@@ -804,34 +814,106 @@
     return Object.keys(ids);
   }
 
-  function projector(w, h){
-    var ids = shown();
-    var mid = ids.reduce(function(n, id){ return n + CITY[id].lat; }, 0) / ids.length;
-    var k = Math.cos(toRad(Math.max(-70, Math.min(70, mid))));
-    var xs = ids.map(function(id){ return CITY[id].lon * k; });
-    var ys = ids.map(function(id){ return -CITY[id].lat; });
-    var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
-    var y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
-    // A single airport has no extent at all, so give the box a floor.
-    // a third again on each side, so there is somewhere to grow into
-    var spanX = Math.max(x1 - x0, 2) * 1.35, spanY = Math.max(y1 - y0, 2) * 1.35;
-    var pad = 22;
-    var scale = Math.min((w - pad * 2) / spanX, (h - pad * 2) / spanY);
-    var cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-    return function(id){
-      var c = CITY[id];
-      return { x: w / 2 + (c.lon * k - cx) * scale, y: h / 2 + (-c.lat - cy) * scale };
-    };
+  /* Mercator, which is what a map looks like: it is conformal, so Britain is
+     Britain-shaped at every zoom the game ever uses, and it stretches the
+     high latitudes, which happens to fill a portrait screen better than a
+     flat latitude scale did - a world-spanning network used to sit in a
+     letterbox with half the screen empty above and below it. Distances are
+     never read off it; those come from the great-circle sum. */
+  function mercY(lat){
+    var L = Math.max(-84, Math.min(84, lat));
+    return -Math.log(Math.tan(Math.PI / 4 + toRad(L) / 2)) * 180 / Math.PI;
   }
 
-  /* The projection is only defined for cities, so the graticule borrows it
-     by projecting two stand-in points per line. Cheaper than a second
-     projection that could drift out of step with the first. */
+  function projector(w, h){
+    var ids = shown();
+    var xs = ids.map(function(id){ return CITY[id].lon; });
+    var ys = ids.map(function(id){ return mercY(CITY[id].lat); });
+    var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+    var y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
+    // a fifth again on each side, so there is somewhere to grow into
+    var spanX = Math.max(x1 - x0, 2) * 1.2, spanY = Math.max(y1 - y0, 2) * 1.2;
+    var pad = 20;
+    var scale = Math.min((w - pad * 2) / spanX, (h - pad * 2) / spanY);
+    var cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    function at(id){
+      var c = CITY[id];
+      return at.ll(c.lat, c.lon);
+    }
+    /* Any point on the globe, not only an airport - the coastline needs it,
+       and so did the graticule, which used to fake it with a hundred
+       invisible stand-in cities registered in the city lookup. */
+    at.ll = function(lat, lon){
+      return { x: w / 2 + (lon - cx) * scale, y: h / 2 + (mercY(lat) - cy) * scale };
+    };
+    at.scale = scale;
+    return at;
+  }
+
   function drawGrid(ctx, at, w, h){
-    GRID.forEach(function(seg){
-      var a = at(seg[0]), b = at(seg[1]);
-      if(!isFinite(a.x) || !isFinite(b.x)) return;
+    var g;
+    for(g = -180; g <= 180; g += 10){
+      var a = at.ll(-84, g), b = at.ll(84, g);
       ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    }
+    for(g = -80; g <= 80; g += 10){
+      var c = at.ll(g, -180), d = at.ll(g, 180);
+      ctx.beginPath(); ctx.moveTo(c.x, c.y); ctx.lineTo(d.x, d.y); ctx.stroke();
+    }
+  }
+
+  /* The coastline, decoded once out of map-land.js into rings of hundredths
+     of a degree, each with its bounding box so a frame over Britain does not
+     walk the points of South America. */
+  var LAND = (function(){
+    var A = {}, CH = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_";
+    for(var i = 0; i < CH.length; i++) A[CH[i]] = i;
+    var blob = (typeof window !== "undefined" && window.LAND) || "";
+    if(!blob) return [];
+    return blob.split("|").map(function(part){
+      var pts = [], px = 0, py = 0, i = 0, acc = [];
+      while(i < part.length){
+        var v = 0;
+        if(part[i] === "("){                 // a bracketed run is one number
+          i++;
+          while(part[i] !== ")"){ v = v * 64 + A[part[i]]; i++; }
+          i++;
+        } else { v = A[part[i]]; i++; }
+        acc.push((v & 1) ? -((v + 1) / 2) : v / 2);    // undo the zig-zag
+        if(acc.length === 2){
+          px += acc[0]; py += acc[1];
+          pts.push(px / 100, py / 100);
+          acc = [];
+        }
+      }
+      var lo = { lon: 1e9, lat: 1e9 }, hi = { lon: -1e9, lat: -1e9 };
+      for(var j = 0; j < pts.length; j += 2){
+        if(pts[j] < lo.lon) lo.lon = pts[j];
+        if(pts[j] > hi.lon) hi.lon = pts[j];
+        if(pts[j+1] < lo.lat) lo.lat = pts[j+1];
+        if(pts[j+1] > hi.lat) hi.lat = pts[j+1];
+      }
+      return { pts: pts, lo: lo, hi: hi };
+    });
+  })();
+
+  function drawLand(ctx, at, w, h){
+    ctx.fillStyle = "#1C2733";
+    ctx.strokeStyle = "#35465A";
+    ctx.lineWidth = 1;
+    LAND.forEach(function(ring){
+      // is any of this ring on screen at all?
+      var a = at.ll(ring.hi.lat, ring.lo.lon), b = at.ll(ring.lo.lat, ring.hi.lon);
+      if(b.x < -40 || a.x > w + 40 || b.y < -40 || a.y > h + 40) return;
+      var p = ring.pts;
+      ctx.beginPath();
+      for(var i = 0; i < p.length; i += 2){
+        var q = at.ll(p[i+1], p[i]);
+        if(i === 0) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
     });
   }
 
@@ -854,7 +936,7 @@
     if(!st || el("maprow").hidden) return;
     var size = cssSize(), w = size.w, h = size.h;
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = "#121820";
+    ctx.fillStyle = "#0D151D";
     ctx.fillRect(0, 0, w, h);
 
     var at = projector(w, h);
@@ -863,7 +945,8 @@
     /* A graticule, because a field of dots on black gives you nothing to
        judge distance against - and distance is the number every decision on
        this map turns on. Ten degrees, drawn faintly enough to ignore. */
-    ctx.strokeStyle = "rgba(108,122,135,.09)";
+    drawLand(ctx, at, w, h);
+    ctx.strokeStyle = "rgba(108,122,135,.07)";
     ctx.lineWidth = 1;
     drawGrid(ctx, at, w, h);
 
@@ -1239,21 +1322,98 @@
     })[0];
   }
 
+  /* One silhouette, drawn from the aircraft's own numbers rather than six
+     hand-drawn pictures: span and length come from the seat count, the
+     engines from the class, and the wing sweeps back as it gets faster. So
+     a Skyliner looks like a Skyliner because it is one. */
+  function planeArt(m){
+    var W = 68, H = 46, cx = W / 2, cy = H / 2;
+    var len = 15 + Math.sqrt(m.seats) * 3.4;
+    var span = 10 + Math.sqrt(m.seats) * 2.9;
+    var sweep = (m.speed - 340) / 560 * 7;           // 0 for a prop, 7 for a jet
+    var ink = m.cls === 3 ? "#8FB7FF" : m.cls === 2 ? "#4FA88B" : "#9AA7B2";
+    var bits = ['<svg viewBox="0 0 ' + W + ' ' + H + '" class="art" aria-hidden="true">'];
+    // wings
+    bits.push('<path d="M' + cx + ' ' + (cy - 1) +
+              ' L' + (cx - span) + ' ' + (cy + sweep + 4) +
+              ' L' + (cx - span) + ' ' + (cy + sweep + 6) +
+              ' L' + cx + ' ' + (cy + 3) + ' Z" fill="' + ink + '" opacity=".75"/>');
+    bits.push('<path d="M' + cx + ' ' + (cy - 1) +
+              ' L' + (cx + span) + ' ' + (cy + sweep + 4) +
+              ' L' + (cx + span) + ' ' + (cy + sweep + 6) +
+              ' L' + cx + ' ' + (cy + 3) + ' Z" fill="' + ink + '" opacity=".75"/>');
+    // tailplane
+    bits.push('<path d="M' + cx + ' ' + (cy + len / 2 - 4) +
+              ' L' + (cx - span * 0.38) + ' ' + (cy + len / 2 + 1) +
+              ' L' + (cx + span * 0.38) + ' ' + (cy + len / 2 + 1) + ' Z" fill="' + ink + '" opacity=".75"/>');
+    // fuselage
+    bits.push('<rect x="' + (cx - 2.4) + '" y="' + (cy - len / 2) + '" width="4.8" height="' + len +
+              '" rx="2.4" fill="' + ink + '"/>');
+    // engines: one pair per class, hung off the wing
+    for(var e = 0; e < m.cls; e++){
+      var off = span * (0.42 + e * 0.26);
+      [-1, 1].forEach(function(side){
+        bits.push('<rect x="' + (cx + side * off - 1.7) + '" y="' + (cy + sweep + 1.5) +
+                  '" width="3.4" height="5.5" rx="1.7" fill="' + ink + '"/>');
+      });
+    }
+    bits.push("</svg>");
+    return bits.join("");
+  }
+
+  /* A class as a picture: the bigger the ring, the bigger the party it can
+     hand you and the bigger the aircraft it will take. */
+  function portArt(cls){
+    var r = 5 + cls * 3.8;
+    return '<svg viewBox="0 0 68 46" class="art" aria-hidden="true">' +
+           '<circle cx="34" cy="23" r="' + (r + 5) + '" fill="none" stroke="#2C3945" stroke-width="1"/>' +
+           '<circle cx="34" cy="23" r="' + r + '" fill="' + (cls === 3 ? "#8FB7FF" : cls === 2 ? "#4FA88B" : "#9AA7B2") +
+           '" opacity=".85"/>' +
+           '<text x="34" y="27" text-anchor="middle" font-size="12" fill="#151C24">' + cls + "</text></svg>";
+  }
+
+  function tag(label, value){
+    return '<span class="tag">' + label + " <b>" + value + "</b></span>";
+  }
+  function cardNode(o){
+    var b = document.createElement("button");
+    b.className = "card";
+    b.type = "button";
+    if(o.disabled) b.disabled = true;
+    if(o.owned) b.setAttribute("data-owned", "true");
+    b.innerHTML = o.art +
+      '<span class="body">' +
+        '<span class="top"><span class="nm">' + o.name + "</span>" +
+        '<span class="price" data-ok="' + !!o.afford + '">' + o.price + "</span></span>" +
+        '<span class="tags">' + o.tags.join("") + "</span>" +
+        (o.short ? '<span class="short">' + o.short + "</span>" : "") +
+      "</span>";
+    if(o.on) b.addEventListener("click", o.on);
+    return b;
+  }
+
   function paintMarket(body){
     el("sheet-title").textContent = "Market";
-    el("sheet-sub").textContent = money(st.cash);
+    el("sheet-sub").textContent = money(st.cash) + " to spend";
 
     body.appendChild(headNode("Aircraft"));
     MODELS.forEach(function(m){
       var base = bestBase(st, m);
-      var poor = st.cash < m.price;
-      body.appendChild(rowNode({
-        title: m.name,
-        note: m.seats + " seats \u00b7 " + m.range + "km \u00b7 " + m.speed + "km/h \u00b7 " +
-              money(UPKEEP_FLAT + Math.round(m.price * UPKEEP_RATE)) + " a day" +
-              (base ? " \u00b7 to " + CITY[base].name : " \u00b7 needs a class " + m.cls + " airport"),
-        amt: money(m.price),
-        disabled: !base || poor,
+      var afford = st.cash >= m.price;
+      var owned = st.fleet.filter(function(p){ return p.model === m.id; }).length;
+      body.appendChild(cardNode({
+        art: planeArt(m),
+        name: m.name,
+        price: money(m.price),
+        afford: afford && base,
+        owned: owned > 0,
+        disabled: !base || !afford,
+        tags: [tag("seats", m.seats), tag("range", m.range + "km"),
+               tag("speed", m.speed + "km/h"),
+               tag("upkeep", money(UPKEEP_FLAT + Math.round(m.price * UPKEEP_RATE)) + "/day")],
+        short: !base ? "No class " + m.cls + " airport to keep it at"
+             : !afford ? money(m.price - st.cash) + " short"
+             : (owned ? "You have " + owned + " \u00b7 " : "") + "Delivered to " + CITY[base].name,
         on: function(){
           if(buyPlane(st, m.id, base)){ say("A " + m.name + " joins the fleet at " + CITY[base].name); after(); }
         }
@@ -1264,10 +1424,15 @@
     if(st.fleet.length > 1 && idle.length){
       body.appendChild(headNode("Sell \u00b7 sixty pence in the pound"));
       idle.forEach(function(p){
-        body.appendChild(rowNode({
-          title: MODEL[p.model].name,
-          note: "At " + CITY[p.at].name + (p.hold.length ? " \u00b7 " + p.hold.length + " aboard would be put off" : ""),
-          amt: money(Math.round(MODEL[p.model].price * 0.6)),
+        var m = MODEL[p.model];
+        body.appendChild(cardNode({
+          art: planeArt(m),
+          name: m.name,
+          price: money(Math.round(m.price * 0.6)),
+          afford: true,
+          tags: [tag("at", CITY[p.at].name), tag("seats", m.seats),
+                 tag("aboard", p.hold.length)],
+          short: p.hold.length ? "What it is carrying goes back on the board" : "",
           on: function(){ if(sellPlane(st, p)){ say("Sold"); after(); } }
         }));
       });
@@ -1281,12 +1446,21 @@
       near[c.id] = Math.min.apply(null, st.ports.map(function(m){ return dist(m, c.id); }));
     });
     offers.sort(function(a, b){ return near[a.id] - near[b.id]; }).slice(0, 20).forEach(function(c){
-      body.appendChild(rowNode({
-        title: c.name,
-        note: "Class " + c.cls + " \u00b7 " + near[c.id] + "km from your nearest \u00b7 " +
-              "parties of up to " + JOB_TOP[c.cls],
-        amt: money(portPrice(st, c.id)),
-        disabled: st.cash < portPrice(st, c.id),
+      var price = portPrice(st, c.id), afford = st.cash >= price;
+      body.appendChild(cardNode({
+        art: portArt(c.cls),
+        name: c.name,
+        price: money(price),
+        afford: afford,
+        disabled: !afford,
+        // the ring already says the class and the tags already say the size,
+        // so the line underneath is for what you do not otherwise know
+        tags: [tag("takes", c.cls === 1 ? "props" : c.cls === 2 ? "props, jets" : "anything"),
+               tag("parties to", JOB_TOP[c.cls]),
+               tag("nearest", near[c.id] + "km")],
+        short: !afford ? money(price - st.cash) + " short"
+             : st.ports.every(function(id){ return CITY[id].cls < c.cls; })
+               ? "Bigger than anything you have" : "",
         on: function(){ if(buyPort(st, c.id)){ say("Opened " + c.name); after(); } }
       }));
     });
