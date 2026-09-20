@@ -125,11 +125,6 @@
     <p class="locked" id="kit-locked" hidden>You are under contract. Restart your career to coach elsewhere.</p>
   </div>
 
-  <div>
-    <div class="section">Quarter length</div>
-    <div class="chiprow" id="qlens" style="border-bottom:none;padding-bottom:0"></div>
-  </div>
-
   <div class="controls">
     <button class="ctrl" id="start-season">New season</button>
     <button class="ctrl" id="start-ex">Exhibition</button>
@@ -550,16 +545,12 @@
   var SIDE_COST = 0.35;
   var ZONE_REACH = 9;      // how far a zone defender will stray from his patch
   var HIST = 40;
-  /* Four quarters on a clock that only runs while the ball is live, the way the
-     game this copies does it: eight fixed drives meant a game could not be
-     closed out or played for time, and the last one always felt the same
-     length as the first. Possession changes at the end of every quarter. */
-  var QUARTERS = 4;
-  var QLENS = [
-    { id:"short", label:"1 min", secs:60 },
-    { id:"even",  label:"2 min", secs:120 },
-    { id:"long",  label:"3 min", secs:180 }
-  ];
+  /* Two halves of four minutes, on a clock that only runs while the ball is
+     live. Four quarters at a length you picked meant three breaks to sit
+     through and a setting to get wrong; a half is long enough to mount
+     something and short enough to be worth hurrying. */
+  var HALVES = 2;
+  var HALF_LEN = 240;
   /* The clock runs while the ball is live and then keeps running between plays
      until the next snap - which is where most of a game's time actually goes.
      Charging it as a flat multiplier on live seconds hid that: the clock moved
@@ -569,7 +560,7 @@
 
      A downed runner does not stop it. An incompletion does, and so does going
      out of bounds - which is what makes throwing to the sideline late in a
-     quarter worth something. */
+     half worth something. */
   /* The carrier is held inside 0.8 of the touchline by the same clamp that
      stops him leaving the pitch, so anything at or inside that is a man on the
      paint - which is what out of bounds means here. */
@@ -582,12 +573,11 @@
     return kind === "incomplete" || kind === "outOfBounds" || kind === "touchdown" ||
            kind === "interception" || kind === "safety";
   }
-  /* What a simulated rival possession costs off the clock, as a share of a
-     quarter. You do not play these, you are told about them, so they have to
-     cost what a drive costs: a march that ends in a touchdown takes half a
-     quarter with it, and a rival who goes three and out has still had the ball
-     for a while. Cheap possessions handed him ten a game and eighty points. */
-  var RIVAL_TIME = { td:0.50, fg:0.42, out:0.24 };
+  /* What a simulated rival possession costs off the clock, in seconds. You do
+     not play these, you are told about them, so they have to cost what a drive
+     costs. Written as a share of a period they quietly changed meaning the
+     moment the period did - which is how the timings went wrong before. */
+  var RIVAL_TIME = { td:60, fg:50, out:29 };
 
   // Routes are polylines relative to where the receiver lines up. Positive dy is
   // downfield. Each is mirrored for receivers lined up on the left.
@@ -1121,8 +1111,7 @@
       you: 0, opp: 0,
       driveIsYours: true,
       qtr: 1,
-      qlen: (QLENS[opts.qlen === undefined ? 1 : opts.qlen] || QLENS[1]).secs,
-      qlenIdx: opts.qlen === undefined ? 1 : opts.qlen,
+      half: 1,
       clock: 0,
       ballOn: 25, down: 1, toGo: 10, firstDownAt: 35,
       over: false, lastMsg: "Your ball", playedEver: false,
@@ -1137,7 +1126,7 @@
       week: opts.week || 0,
       seed: seed || 1
     };
-    st.clock = st.qlen;
+    st.clock = HALF_LEN;
     newDriveState(st, 25);
     return st;
   }
@@ -1150,7 +1139,8 @@
     var q = el("clock-q"), t = el("clock-t");
     if(!q || !t) return;
     var text = clockText(st.clock);
-    if(q.textContent !== "Q" + Math.min(st.qtr, QUARTERS)) q.textContent = "Q" + Math.min(st.qtr, QUARTERS);
+    var label = "H" + Math.min(st.half, HALVES);
+    if(q.textContent !== label) q.textContent = label;
     if(t.textContent !== text) t.textContent = text;
   }
 
@@ -1238,14 +1228,14 @@
     // can read ahead of time is worth more than one that quietly tracks your form.
     var strength = GRADES[st.grade].strength;
     if(roll < strength){
-      st.opp += 7; burnClock(st, st.qlen * RIVAL_TIME.td);
+      st.opp += 7; burnClock(st, RIVAL_TIME.td);
       return "Rivals score a touchdown";
     }
     if(roll < strength + 0.26){
-      st.opp += 3; burnClock(st, st.qlen * RIVAL_TIME.fg);
+      st.opp += 3; burnClock(st, RIVAL_TIME.fg);
       return "Rivals kick a field goal";
     }
-    burnClock(st, st.qlen * RIVAL_TIME.out);
+    burnClock(st, RIVAL_TIME.out);
     return "Rivals go three and out";
   }
 
@@ -1266,26 +1256,21 @@
     return true;
   }
 
-  /* Only half time changes hands. The first and third quarters are a change of
-     ends and nothing else: whoever has the ball keeps it, on the same down and
-     the same yard line. Turning it over at every break handed the rival a free
-     possession four times a game, which he mostly scored from.
+  /* Half time is the only break there is, and it is the one that changes hands:
+     the side that kicked off receives. Quarters used to turn the ball over at
+     every break, which handed the rival a free possession four times a game.
 
      At half time the side that did not start the game with the ball receives,
      and you always start with it, so the second half opens with the rival. */
-  function endQuarter(st){
+  function endHalf(st){
     if(st.over) return;
-    if(st.qtr >= QUARTERS){ finishGame(st); return; }
-    var halfTime = st.qtr === 2;
-    st.qtr++;
-    st.clock = st.qlen;
-    if(halfTime){
-      st.driveIsYours = false;
-      newDriveState(st, 25);
-      st.lastMsg = "Half time";
-    } else {
-      st.lastMsg = "End of quarter " + (st.qtr - 1);
-    }
+    if(st.half >= HALVES){ finishGame(st); return; }
+    st.half++;
+    st.clock = HALF_LEN;
+    // the only break there is, so it is the one that changes hands
+    st.driveIsYours = false;
+    newDriveState(st, 25);
+    st.lastMsg = "Half time";
   }
 
   function finishGame(st){
@@ -1301,7 +1286,7 @@
 
   var storageOK = true, memory = null;
   var st, play = null, rng;
-  var profile = { kit: 0, qlen: 1, season: null, ex: { wins:0, losses:0, ties:0, best:0 }, playedEver: false };
+  var profile = { kit: 0, season: null, ex: { wins:0, losses:0, ties:0, best:0 }, playedEver: false };
 
   function load(){
     try{ var raw = localStorage.getItem(KEY); return raw ? JSON.parse(raw) : null; }
@@ -1319,12 +1304,11 @@
       if(typeof saved.kit === "number" && PAIRS[saved.kit]) profile.kit = saved.kit;
       if(saved.season && saved.season.fix && saved.season.fix.length === SEASON_LEN) profile.season = saved.season;
       if(saved.ex) profile.ex = saved.ex;
-      if(typeof saved.qlen === "number" && QLENS[saved.qlen]) profile.qlen = saved.qlen;
       profile.playedEver = !!saved.playedEver;
     }
     // a game is only built once a mode is chosen; until then the lobby is the page
     st = newGameState(Date.now() >>> 0,
-      { kitYou: profile.kit, kitOpp: rivalFor(profile.kit, Math.random), qlen: profile.qlen });
+      { kitYou: profile.kit, kitOpp: rivalFor(profile.kit, Math.random) });
     st.playedEver = profile.playedEver;
     rng = makeRng(st.seed);
   }
@@ -1509,17 +1493,6 @@
     el("you-name").textContent = PAIRS[profile.kit].team;
     el("start-season").textContent = locked ? "Restart career" : "New season";
 
-    var qrow = el("qlens");
-    if(!qrow.children.length){
-      QLENS.forEach(function(q, i){
-        var b = document.createElement("button");
-        b.className = "chip"; b.type = "button"; b.dataset.q = i; b.textContent = q.label;
-        b.addEventListener("click", function(){ profile.qlen = i; save(); paintLobby(); });
-        qrow.appendChild(b);
-      });
-    }
-    for(var q = 0; q < qrow.children.length; q++)
-      qrow.children[q].setAttribute("aria-pressed", q === profile.qlen ? "true" : "false");
 
     var sn = profile.season;
     el("season-panel").hidden = !sn;
@@ -1572,8 +1545,7 @@
 
   function startExhibition(){
     st = newGameState(Date.now() >>> 0,
-      { mode:"ex", kitYou: profile.kit, kitOpp: rivalFor(profile.kit, Math.random), grade: 1,
-        qlen: profile.qlen });
+      { mode:"ex", kitYou: profile.kit, kitOpp: rivalFor(profile.kit, Math.random), grade: 1 });
     st.wins = profile.ex.wins; st.losses = profile.ex.losses; st.ties = profile.ex.ties;
     st.best = profile.ex.best || 0;
     st.playedEver = profile.playedEver;
@@ -1605,7 +1577,7 @@
       opp = pg.opp; grade = gradeFor(sn.rate[opp]); round = pg.round;
     }
     st = newGameState(Date.now() >>> 0,
-      { mode:"season", kitYou: sn.kit, kitOpp: opp, grade: grade, week: sn.week, qlen: profile.qlen,
+      { mode:"season", kitYou: sn.kit, kitOpp: opp, grade: grade, week: sn.week,
         round: round,
         // a divisional rival may wear your colours; he changes for the day
         oppAway: clashes(PAIRS[opp], PAIRS[sn.kit]) });
@@ -2355,8 +2327,8 @@
     var guard = 0;
     while(!st.over && !st.driveIsYours && guard++ < 40){
       st.lastMsg = simOpponentDrive(st, rng);
-      // his possession may have taken the rest of the quarter with it
-      if(st.clock <= 0) endQuarter(st); else endDrive(st);
+      // his possession may have taken the rest of the half with it
+      if(st.clock <= 0) endHalf(st); else endDrive(st);
     }
     ensurePlay();
     bankIfOver();
@@ -2409,8 +2381,8 @@
         if(runoffLeft > 0){ burnClock(st, runoffLeft); runoffLeft = 0; }
         var wasYours = st.driveIsYours;
         play = null;
-        // a play that starts before the quarter runs out is allowed to finish
-        if(st.clock <= 0 && !st.over) endQuarter(st);
+        // a play that starts before the half runs out is allowed to finish
+        if(st.clock <= 0 && !st.over) endHalf(st);
         else if(!wasYours || !st.driveIsYours) afterDrive();
         if(!st.over && !st.driveIsYours) afterDrive();
         ensurePlay();
