@@ -146,12 +146,12 @@
   </div>
 
   <div class="actions">
-    <button class="act" data-primary="true" id="snap">Snap</button>
-    <button class="act" id="run" disabled>Scramble</button>
+    <button class="act" data-primary="true" id="snap">Pass</button>
+    <button class="act" id="run">Run</button>
     <button class="act" id="punt">Punt</button>
   </div>
 
-  <p class="howto" id="howto" hidden>Dashed lines show the routes. Snap, then pull back and release to throw &mdash; the ball flies the opposite way, and further the harder you pull.</p>
+  <p class="howto" id="howto" hidden>Dashed lines show the routes. Pass, then pull back and release to throw &mdash; the ball flies the opposite way, and further the harder you pull. Or hand it to the back and run it.</p>
 </div>
 
 <div class="win" id="over" hidden>
@@ -470,7 +470,24 @@
   // is untouched by this, only the wall clock changes.
   var TIME_SCALE = 0.62;
 
-  var SPD = { rec: 7.6, def: 6.95, qb: 6.4, pursue: 8.6, carry: 6.0 };
+  var SPD = { rec: 7.6, def: 6.95, qb: 6.4, pursue: 8.6, carry: 6.0, block: 6.7 };
+
+  /* The running game. A carry out of the backfield with nobody blocking is
+     worth about a yard - measured - so the five linemen, who until now were
+     drawn and nothing else, have to actually pick somebody up. Each takes the
+     nearest man no team-mate has already taken, and a man with a blocker on
+     him moves at a third speed until he sheds it. The lane is whatever is
+     left over, and finding it is the play. */
+  var HANDOFF_T = 0.35;    // seconds from the snap to the back having it
+  var BLOCK_R  = 1.6;      // how close a blocker has to be to hold a man up
+  var BLOCK_SLOW = 0.16;   // what a man held by a lineman moves at
+  var ENGAGE_T = 1.6;      // how long a lineman holds his man before the shed
+  // a receiver is not a lineman: he gets in the way for a moment, no more
+  var REC_SLOW = 0.80, REC_ENGAGE = 0.65;
+  var BACK_SPEED = 7.4;    // what a running back carries at
+  var BREAK_ODDS = 0.22;   // a tackler's chance of being shrugged off
+  var MAX_BREAKS = 2;      // how many a carrier gets in one run
+  var SHAKE_T = 0.7;       // how long a shrugged tackler is out of it
 
   // Coverage is beatable because defenders react late: each one chases where his
   // man WAS a moment ago, not where he is. On a straight route that settles into
@@ -659,6 +676,7 @@
 
     return {
       phase: "presnap",       // presnap | live | air | carry | done
+      kind: "pass",           // pass | run
       t: 0,
       los: los,
       formation: form.name,
@@ -682,9 +700,72 @@
     return true;
   }
 
+  /* Calling a run before the snap. The ends stop being a sack timer and become
+     two more men to beat, which is what they are when nobody is dropping back
+     to throw - and it means the line has somebody to block. */
+  function callRun(play){
+    if(!play || play.phase !== "presnap") return false;
+    play.kind = "run";
+    play.rushers.forEach(function(ru){
+      play.defs.push({ id: 90 + play.defs.length, mark: -3, lag: 0, react: 0.12,
+                       x: ru.x, y: ru.y });
+    });
+    play.rushers = [];
+    return snapBall(play);
+  }
+
+  /* A block is a hold, not a touch. Re-choosing the nearest man every frame
+     meant a beaten defender was free again the moment the carrier went past
+     him, and since everyone chasing is a third faster than everyone carrying,
+     a clean hole was still only worth four yards. A lineman now locks on to
+     the man he reaches and the two of them are out of it together until he
+     sheds - so getting through the front actually means something. */
+  function runBlocking(play, dt){
+    play.defs.forEach(function(d){ d.held = false; });
+    var taken = {};
+    /* The receivers block on a run, which is what they are for on one. With
+       only the five linemen engaging, the corners came off their men untouched
+       and no carry ever reached ten yards. */
+    play.line.concat(play.recs).forEach(function(o){
+      var lineman = play.line.indexOf(o) >= 0;
+      var holdFor = lineman ? ENGAGE_T : REC_ENGAGE;
+      // stay with the man you have until he sheds you
+      if(o.on){
+        o.lock -= dt;
+        var gone = dist(o.x, o.y, o.on.x, o.on.y) > BLOCK_R * 2.2;
+        if(o.lock <= 0 || gone) o.on = null;
+      }
+      if(!o.on){
+        var best = null, bd = Infinity;
+        play.defs.forEach(function(d){
+          if(taken[d.id] || d.held) return;
+          if(d.y < play.los - 3) return;          // nobody behind the ball
+          var dd = dist(o.x, o.y, d.x, d.y);
+          if(dd < bd){ bd = dd; best = d; }
+        });
+        if(best && bd <= BLOCK_R){ o.on = best; o.lock = holdFor; }
+        else if(best && bd > 0.01){
+          var sp = SPD.block * dt;
+          o.x += (best.x - o.x) / bd * sp;
+          o.y += (best.y - o.y) / bd * sp;
+          taken[best.id] = 1;
+        }
+      }
+      if(o.on){
+        taken[o.on.id] = 1;
+        o.on.held = true;
+        o.on.holdSlow = lineman ? BLOCK_SLOW : REC_SLOW;
+        // he wears the block, so the blocker goes where he goes
+        o.x += (o.on.x - o.x) * Math.min(1, dt * 9);
+        o.y += (o.on.y - o.y) * Math.min(1, dt * 9);
+      }
+    });
+  }
+
   function nearestDefender(play, x, y){
     var best = null, bd = Infinity;
     play.defs.forEach(function(d){
+      if(d.shaken > play.t) return;          // still picking himself up
       var dd = dist(d.x, d.y, x, y);
       if(dd < bd){ bd = dd; best = d; }
     });
@@ -697,8 +778,18 @@
     if(play.phase === "done" || play.phase === "presnap") return;
     play.t += dt;
 
+    if(play.kind === "run"){
+      // the back takes it a beat after the snap and it is his from there
+      if(play.phase === "live" && play.t >= HANDOFF_T){
+        play.phase = "carry";
+        play.carryT = play.t;
+        play.carrier = play.back;
+      }
+      runBlocking(play, dt);
+    }
+
     // receivers run their routes, each remembering where he has been
-    if(play.phase !== "carry"){
+    if(play.phase !== "carry" && play.kind !== "run"){
       play.recs.forEach(function(r){
         follow(r, SPD.rec, dt);
         r.hist.push({ x:r.x, y:r.y });
@@ -732,7 +823,7 @@
         var aimY = c.y + (c.svy === undefined ? RUN_SPEED : c.svy) * lead;
         var pd = dist(d.x, d.y, aimX, aimY);
         if(pd > 0.01){
-          var ps = SPD.pursue * dt;
+          var ps = SPD.pursue * dt * (d.held ? d.holdSlow : 1);
           d.x += (aimX - d.x) / pd * ps;
           d.y += (aimY - d.y) / pd * ps;
         }
@@ -760,6 +851,7 @@
         }
         return;
       }
+      if(d.mark === -3) return;      // an end on a run: nothing to cover, just wait
       if(d.mark >= 0){
         man = play.recs[d.mark];
       }else{
@@ -787,7 +879,7 @@
 
     // The rush is a timer rather than blockers to beat: the ends sweep round the
     // edge and arrive together when protection runs out.
-    if(play.phase === "live"){
+    if(play.phase === "live" && play.rushers.length){
       var frac = clamp(play.t / SACK_TIME, 0, 1);
       play.rushers.forEach(function(ru, i){
         var sx0 = i === 0 ? 10.5 : 19.5;
@@ -820,12 +912,17 @@
       var px = c.x, py = c.y;
       var want = 0;
       if(play.steerX !== null) want = clamp((play.steerX - c.x) / COMMIT_YD, -1, 1);
-      var targetVx = want * RUN_SPEED;
+      /* A back carries quicker than a quarterback caught with it. Everyone
+         chasing runs at 8.6 and everyone carrying ran at 6.4, so no carry
+         could ever break away however clean the hole - which is fine for a
+         scrambling passer and wrong for the man the play is designed around. */
+      var top = (c === play.back) ? BACK_SPEED : RUN_SPEED;
+      var targetVx = want * top;
       var step = LAT_ACCEL * dt;
       c.lvx = (c.lvx || 0) + clamp(targetVx - (c.lvx || 0), -step, step);
       // whatever is left of the budget after going sideways goes upfield
       var sideways = Math.abs(c.lvx);
-      var forward = RUN_SPEED * Math.max(0, 1 - SIDE_COST * sideways / RUN_SPEED);
+      var forward = top * Math.max(0, 1 - SIDE_COST * sideways / top);
       c.x = clamp(c.x + c.lvx * dt, 0.8, FIELD_W - 0.8);
       c.y += forward * dt;
       c.vx = (c.x - px) / dt;
@@ -843,8 +940,21 @@
       if(c.x <= SIDELINE || c.x >= FIELD_W - SIDELINE){
         endPlay(st, play, "outOfBounds", c.y); return;
       }
+      /* A tackle can be broken. Without it every carry ended at almost exactly
+         the same yard - four and a bit, never more - because the last man
+         always arrives and always makes it. Two shrugs at most, so it stays a
+         tail on the distribution rather than a way through the whole defence. */
       var n = nearestDefender(play, c.x, c.y);
-      if(n.d <= TACKLE_R){ endPlay(st, play, "tackle", c.y); return; }
+      if(n.d <= TACKLE_R){
+        var shed = (c.breaks || 0) < MAX_BREAKS && rng() < BREAK_ODDS;
+        if(shed){
+          c.breaks = (c.breaks || 0) + 1;
+          n.def.shaken = play.t + SHAKE_T;
+          play.lastBreak = play.t;
+        } else if(!(n.def.shaken > play.t)){
+          endPlay(st, play, "tackle", c.y); return;
+        }
+      }
       if(c.y <= 0){ endPlay(st, play, "safety", 0); return; }
     }
   }
@@ -1731,7 +1841,8 @@
 
     var mine = yourKit(), theirs = theirKit();
     play.line.forEach(function(o){ drawKit(o.x, o.y, 0.5, mine, true); });
-    drawKit(play.back.x, play.back.y, 0.52, mine, true);
+    if(play.carrier === play.back) drawMan(play.back.x, play.back.y, 0.6, mine, true);
+    else drawKit(play.back.x, play.back.y, 0.52, mine, true);
 
     play.defs.forEach(function(d){ drawKit(d.x, d.y, 0.62, theirs, false); });
     if(play.phase === "live" || play.phase === "presnap"){
@@ -1853,9 +1964,15 @@
     var running = (play && play.phase !== "done" && play.phase !== "presnap") ||
                   resultHold > 0 || runoffLeft > 0;
     var yourBall = st.driveIsYours && !st.over;
+    var presnap = !!(play && play.phase === "presnap") && yourBall && !running;
     el("snap").disabled = !yourBall || running;
-    el("snap").textContent = st.over ? "Full time" : (yourBall ? "Snap" : "Rivals' ball");
-    el("run").disabled = !(play && play.phase === "live");
+    el("snap").textContent = st.over ? "Full time" : (yourBall ? "Pass" : "Rivals' ball");
+    /* The middle button is the run call before the snap and the scramble after
+       it, which is the same thought in both halves of the play: take it
+       yourself rather than throw it. */
+    el("run").textContent = presnap ? "Run" : "Scramble";
+    // you cannot scramble on a run: the quarterback has not got it
+    el("run").disabled = presnap ? false : !(play && play.phase === "live" && play.kind !== "run");
     el("punt").disabled = !yourBall || running;
 
     el("over").hidden = !st.over;
@@ -2024,7 +2141,14 @@
     if(snapBall(play)){ st.playedEver = true; profile.playedEver = true; save(); syncChrome(); }
   });
   el("run").addEventListener("click", function(){
-    if(play && play.phase === "live"){ scramble(st, play); aim = null; pointerDown = false; syncChrome(); }
+    if(st.over || !st.driveIsYours) return;
+    if(play && play.phase === "live" && play.kind !== "run"){
+      scramble(st, play); aim = null; pointerDown = false; syncChrome(); return;
+    }
+    ensurePlay();
+    if(play && play.phase === "presnap" && callRun(play)){
+      st.playedEver = true; profile.playedEver = true; save(); syncChrome();
+    }
   });
   el("punt").addEventListener("click", function(){
     if(!st.driveIsYours || st.over) return;
