@@ -98,6 +98,11 @@
     border:1px solid var(--line);border-radius:20px;padding:3px 7px;white-space:nowrap;
   }
   .tag b{color:var(--ink);font-weight:400;font-variant-numeric:tabular-nums}
+  /* The clock, which runs whether you are looking at it or not. */
+  .clockline{
+    margin:0;text-align:center;font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--muted);font-variant-numeric:tabular-nums;min-height:1.2em;
+  }
 </style>
 </head>
 <body>
@@ -124,14 +129,16 @@
 
   <p class="msg" id="msg"></p>
 
+  <p class="clockline" id="clockline">Nothing in the air</p>
+
   <div class="actions" id="actions">
-    <button id="advance" data-primary="true">Advance</button>
+    <button id="back-to-map" data-primary="true" hidden>Back to the map</button>
     <button id="fleet">Fleet</button>
     <button id="market">Market</button>
     <button id="goals">Goals</button>
   </div>
 
-  <p class="howto" id="howto">Tap an airport to see who wants to fly.</p>
+  <p class="howto" id="howto">Tap an airport to see who wants to fly. An hour passes every minute, whether you are watching or not.</p>
 </div>
 
 <script src="./sw-boot.js"></script>
@@ -346,10 +353,27 @@
   /* ---------------------------------------------------------------------
      STATE
      --------------------------------------------------------------------- */
+  /* The clock is the phone's. A game hour passes every real minute, so a
+     propeller hop lands in about two minutes and a long haul takes a
+     quarter of an hour - slow enough that a flight is a commitment, quick
+     enough that you can watch one land while you are looking at the map.
+
+     `at` is the wall-clock moment `hour` was true. Everything about time
+     since is derived from the difference, which is what lets the airline
+     keep flying while the app is shut. */
+  var MS_PER_HOUR = 60000;
+  /* However long you have been away, you come back to at most a day of it.
+     Uncapped, a night's sleep was twenty game days of crewed flying and the
+     whole progression went out of the window; a day is about what a quiet
+     day's trading is worth, which is the right size for a bonus. */
+  var OFFLINE_CAP = 24;
+
   function newGame(){
     return {
       cash: START_CASH,
       hour: 8,                  // the first morning, not midnight
+      at: Date.now(),           // when that hour was
+
       ports: START_PORTS.slice(),
       fleet: [ newPlane("pup", "BFS", 1) ],
       jobs: {},                 // cityId -> [job]
@@ -363,6 +387,25 @@
   }
   function newPlane(modelId, at, id){
     return { id:id, model:modelId, at:at, hold:[], leg:null, auto:false };
+  }
+
+  /* How many whole game hours the wall clock says are owed, and what the
+     anchor becomes once they are paid. A phone whose clock has gone
+     backwards - a timezone change, a manual correction - owes nothing and
+     is simply re-anchored, because the alternative is an airline that
+     un-flies its aeroplanes. */
+  function owed(st, now, cap){
+    var elapsed = now - (st.at || now);
+    if(elapsed < 0) return { hours: 0, at: now };
+    var hours = Math.floor(elapsed / MS_PER_HOUR);
+    if(cap && hours > cap) return { hours: cap, at: now };   // the rest is forfeit
+    return { hours: hours, at: (st.at || now) + hours * MS_PER_HOUR };
+  }
+  /* Where an aeroplane is between one hour and the next, so the marker
+     creeps across the map rather than hopping once a minute. */
+  function partHour(st, now){
+    var f = (now - (st.at || now)) / MS_PER_HOUR;
+    return Math.max(0, Math.min(1, f - Math.floor(f)));
   }
 
   function day(st){ return Math.floor(st.hour / 24) + 1; }
@@ -788,6 +831,10 @@
       if(!o.ports.length || !o.fleet.length) return null;
       o.jobs = o.jobs || {};
       o.done = o.done || {};
+      // a save from before the clock ran, or one written by a phone whose
+      // clock has since gone backwards, starts from now rather than owing
+      // or being owed anything
+      if(typeof o.at !== "number" || o.at > Date.now()) o.at = Date.now();
       return o;
     }catch(e){ return null; }
   }
@@ -1022,7 +1069,8 @@
     st.fleet.forEach(function(p){
       if(!p.leg) return;
       var a = at(p.leg.from), b = at(p.leg.to);
-      var t = (st.hour - p.leg.left) / Math.max(1, p.leg.arrive - p.leg.left);
+      var t = (st.hour + partHour(st, Date.now()) - p.leg.left) /
+              Math.max(1, p.leg.arrive - p.leg.left);
       t = Math.max(0, Math.min(1, t));
       var x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
       ctx.save();
@@ -1088,7 +1136,7 @@
   }
 
   function paintSheet(){
-    var body = el("sheet-body");
+    var body = el("sheet-body"), keep = el("sheet").scrollTop;
     body.innerHTML = "";
     if(!view) return;
     if(view.kind === "city") paintCity(body, view.id);
@@ -1097,6 +1145,7 @@
     else if(view.kind === "fleet") paintFleet(body);
     else if(view.kind === "market") paintMarket(body);
     else if(view.kind === "goals") paintGoals(body);
+    if(keep) el("sheet").scrollTop = keep;
   }
 
   function planeById(id){
@@ -1489,16 +1538,27 @@
   /* ---------------------------------------------------------------------
      CHROME
      --------------------------------------------------------------------- */
-  function syncChrome(){
+  /* The numbers at the top, which are wanted every second. Split out from
+     the rest because the clock now beats whether or not you have touched
+     anything, and redrawing a sheet under a moving thumb - throwing away
+     where you had scrolled to - is not an acceptable price for a ticking
+     bank balance. */
+  function syncStats(){
     el("cash").innerHTML = money(st.cash) + '<span class="lbl">Bank</span>';
     el("when").textContent = "Day " + day(st) + " · " + clockOf(st);
     el("fleetn").innerHTML = st.fleet.length + '<span class="lbl">Fleet</span>';
+  }
+
+  function syncChrome(){
+    syncStats();
 
     var sheeting = !!view;
     el("sheet").hidden = !sheeting;
     el("maprow").hidden = sheeting;
     el("howto").hidden = sheeting;
-    el("advance").textContent = sheeting ? "Back to the map" : nextLabel();
+    el("clockline").textContent = sheeting ? "" : whenLabel();
+    el("clockline").hidden = sheeting;
+    el("back-to-map").hidden = !sheeting;
     el("fleet").hidden = sheeting;
     el("market").hidden = sheeting;
     el("goals").hidden = sheeting;
@@ -1513,10 +1573,21 @@
     });
     return soon;
   }
-  function nextLabel(){
+
+  /* What the clock line says. Counting down in real minutes and seconds
+     rather than game hours, because the wait is real now and a number you
+     can feel passing is the difference between waiting and being stuck. */
+  function whenLabel(){
     var soon = nextArrival();
-    if(soon === null) return "Wait 3h";
-    return "Skip " + Math.max(1, soon - st.hour) + "h";
+    if(soon === null){
+      var idle = st.fleet.filter(function(p){ return !p.leg; }).length;
+      return idle === 1 ? "Nothing in the air" : "Nothing in the air \u00b7 " + idle + " on the ground";
+    }
+    var left = (soon - st.hour) * MS_PER_HOUR - (Date.now() - st.at);
+    var secs = Math.max(0, Math.round(left / 1000));
+    var who = null;
+    st.fleet.forEach(function(p){ if(p.leg && p.leg.arrive === soon && !who) who = CITY[p.leg.to].name; });
+    return "Next into " + who + " in " + (secs >= 60 ? Math.floor(secs / 60) + "m " + (secs % 60) + "s" : secs + "s");
   }
 
   function after(){
@@ -1525,25 +1596,58 @@
     syncChrome();
   }
 
-  function advance(){
-    var soon = nextArrival();
-    var target = soon === null ? st.hour + 3 : Math.max(st.hour + 1, soon);
+  /* The clock, paid in whole hours. `cap` is set when the app has been out
+     of sight, which is the only time the sum can be large. */
+  function catchUp(cap){
+    var due = owed(st, Date.now(), cap);
+    if(!due.hours){ st.at = Math.min(st.at, Date.now()); return 0; }
     var lines = [];
-    while(st.hour < target) tick(st, rng, function(t){ lines.push(t); });
-    say(lines.length ? lines[lines.length - 1] : "Quiet.");
-    after();
+    for(var i = 0; i < due.hours; i++) tick(st, rng, function(t){ lines.push(t); });
+    st.at = due.at;
+    if(lines.length) say(lines[lines.length - 1]);
+    claimGoals(st, say);
+    save();
+    return due.hours;
   }
 
-  el("advance").addEventListener("click", function(){
-    if(view){ close(); return; }
-    advance();
+  /* Once a second: pay the clock, move the aeroplanes, redraw. A second is
+     plenty - an hour takes sixty of them - and it keeps the countdown
+     honest without a frame loop running all day. */
+  var beat = null;
+  function startClock(){
+    if(beat) return;
+    beat = setInterval(function(){
+      if(document.hidden) return;
+      var moved = catchUp(0);
+      if(view){
+        // a sheet is open: the figures move, the list you are reading does not
+        if(moved) syncStats();
+        return;
+      }
+      /* On the map every second is a frame: the countdown, the figures and
+         the aeroplanes. The figures are redrawn whether or not an hour was
+         paid, because "only when the clock moved" left the header reading
+         day one while the clock line counted down - three writes a second
+         is not worth being clever about. */
+      el("clockline").textContent = whenLabel();
+      syncStats();
+      draw();
+    }, 1000);
+  }
+  document.addEventListener("visibilitychange", function(){
+    if(document.hidden){ save(); return; }
+    // back from wherever: settle up, but only for a day of it
+    catchUp(OFFLINE_CAP);
+    syncChrome();
   });
+  el("back-to-map").addEventListener("click", close);
   el("fleet").addEventListener("click", function(){ open({ kind: "fleet" }); });
   el("market").addEventListener("click", function(){ open({ kind: "market" }); });
   el("goals").addEventListener("click", function(){ open({ kind: "goals" }); });
   el("restart").addEventListener("click", function(){
     if(!window.confirm("Sell up and start a new airline?")) return;
     st = newGame();
+    st.at = Date.now();
     view = null;
     say("A Puddlejumper, three airfields and " + money(st.cash) + ".");
     after();
@@ -1555,9 +1659,18 @@
   });
 
   st = load() || newGame();
-  say(st.delivered ? "Day " + day(st) + ". " + st.delivered + " delivered so far."
-                   : "A Puddlejumper, three airfields and " + money(st.cash) + ".");
+  /* Whatever happened while the app was shut, up to a day of it, happens
+     now - so you open it to aeroplanes that have landed and boards that
+     have filled rather than to the moment you left. */
+  var missed = catchUp(OFFLINE_CAP);
+  if(missed >= 2){
+    say(missed >= OFFLINE_CAP ? "A day's flying while you were away."
+                              : missed + " hours went by while you were away.");
+  } else if(!st.delivered){
+    say("A Puddlejumper, three airfields and " + money(st.cash) + ".");
+  }
   after();
+  startClock();
   setTimeout(resize, 60);
 
   /* The tests drive the same code the phone runs rather than a copy of it,
@@ -1565,7 +1678,11 @@
   window.__stopover = {
     state: function(){ return st; },
     CITIES: CITIES, MODELS: MODELS, GOALS: GOALS, CITY: CITY, MODEL: MODEL,
-    dist: dist, tick: tick, depart: depart, advance: advance, tapMap: tapMap,
+    dist: dist, tick: tick, depart: depart, tapMap: tapMap,
+    /* Tests cannot sit through a real minute per game hour, so they move the
+       anchor back and let the same catch-up the phone uses do the work. */
+    warp: function(hours, cap){ st.at -= hours * MS_PER_HOUR; return catchUp(cap || 0); },
+    catchUp: catchUp, MS_PER_HOUR: MS_PER_HOUR, OFFLINE_CAP: OFFLINE_CAP,
     open: open, close: close, loadJob: loadJob, legalDest: legalDest, owns: owns,
     boardGroups: boardGroups, netWorth: netWorth
   };
