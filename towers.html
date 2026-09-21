@@ -49,6 +49,12 @@
   }
   .bar button:disabled{color:var(--line)}
 
+  /* The speed toggle has to look switched on, not merely say so in an
+     attribute. Amber because that is already what "this one is selected"
+     means on this page, over on the tower picker. */
+  #speed{max-width:96px;font-variant-numeric:tabular-nums}
+  #speed[aria-pressed="true"]{border-color:var(--sel);color:var(--sel)}
+
   /* Two screens in one page: the chooser, then the board with the whole page
      to itself. Both flex so the board can be sized from what is left over. */
   #gameview{flex:1;display:flex;flex-direction:column;min-height:0}
@@ -111,6 +117,7 @@
 
   <div class="controls">
     <button class="ctrl" id="go">Send wave 1</button>
+    <button class="ctrl" id="speed" aria-pressed="false">1&times;</button>
   </div>
 
   <p class="note" id="note" hidden>Storage is blocked here, so your progress won't be saved between sessions.</p>
@@ -451,7 +458,8 @@
     var s = {
       lives:st.lives, gold:st.gold, wave:st.wave, best:st.best,
       map:st.map, bests:st.bests,
-      towers:st.towers, placedEver:st.placedEver, over:st.phase === "over"
+      towers:st.towers, placedEver:st.placedEver, over:st.phase === "over",
+      speed:speed              // a preference, not part of the game: it outlives a reset
     };
     memory = s;
     try{ localStorage.setItem(KEY, JSON.stringify(s)); }
@@ -461,6 +469,7 @@
     var s = load();
     if(!s) return;
     st.bests = s.bests || {};
+    if(SPEEDS.indexOf(s.speed) >= 0) speed = s.speed;
     // a saved game belongs to the map it was played on
     if(s.map){ useMap(mapById(s.map)); st.map = MAPS[mapIndex].id; }
     st.best = st.bests[st.map] || s.best || 0;
@@ -757,6 +766,10 @@
     go.disabled = st.phase !== "build";
     go.textContent = st.phase === "wave" ? "Wave " + st.wave + " incoming" : "Send wave " + st.wave;
 
+    var sp = el("speed");
+    sp.textContent = speed + "\u00d7";
+    sp.setAttribute("aria-pressed", speed > 1);
+
     var bar = el("selbar");
     if(selectedTower){
       var s = statsOf(selectedTower), d = TOWERS[selectedTower.type];
@@ -819,6 +832,11 @@
   el("go").addEventListener("click", function(){
     if(startWave(st)){ selectedTower = null; syncChrome(); }
   });
+  el("speed").addEventListener("click", function(){
+    speed = SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length];
+    save();
+    syncChrome();
+  });
   function reset(){
     var best = st.best, bests = st.bests;
     st = newState();
@@ -838,6 +856,13 @@
 
   var STEP = 1/60, acc = 0, last = 0;
 
+  /* Fast forward runs the same sixtieth-of-a-second step more often. It does
+     not stretch the step, which would let a shot travel through an enemy
+     between one frame and the next - at three times speed the wave plays out
+     exactly as it would have done, just sooner. Nothing about the game
+     changes, which is the whole point and is what the test checks. */
+  var SPEEDS = [1, 2, 3], speed = 1;
+
   function frame(now){
     if(!last) last = now;
     var dt = (now - last) / 1000;
@@ -846,8 +871,14 @@
 
     if(st.phase === "wave"){
       var wasWave = true;
-      acc += dt;
-      while(acc >= STEP){ step(st, STEP); acc -= STEP; }
+      acc += dt * speed;
+      /* A phone that cannot keep up must fall behind in real time rather
+         than spiral: past this many steps the leftover is dropped, so a slow
+         frame costs the wave a moment instead of costing the next frame even
+         more work. */
+      var budget = 20 * speed;
+      while(acc >= STEP && budget-- > 0){ step(st, STEP); acc -= STEP; }
+      if(budget <= 0) acc = 0;
       if(st.phase !== "wave" && wasWave){ acc = 0; save(); }
       syncChrome();
     }
