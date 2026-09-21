@@ -1216,6 +1216,15 @@
       default:                       // tackle
         gained = Math.round(r.at - st.ballOn);
         st.ballOn = clamp(r.at, 1, FIELD_L - 1);
+        /* A runner brought down uses a down like anybody else. This was the
+           one outcome that did not count one, and because a tackle short of
+           the sticks is far and away the commonest thing that happens in a
+           game, the effect was invisible in midfield - four runs of two and
+           a half yards reach the line to gain anyway, so you got your first
+           down and never noticed it was your fifth attempt. First and goal
+           is where it showed: there is no line to gain inside the ten, so
+           the down had nothing to reset it and stayed on first for ever. */
+        st.down++;
         st.lastMsg = (gained >= 0 ? "+" : "") + gained + (Math.abs(gained) === 1 ? " yard" : " yards");
     }
 
@@ -2032,7 +2041,10 @@
 
   /* ---------- chrome ---------- */
 
-  function ord(n){ return ["", "1st", "2nd", "3rd", "4th"][n] || (n + "th"); }
+  /* A fifth down exists for one instant - between the tackle that used the
+     fourth and the turnover that follows it - and there is no version of
+     this game where the bar should say "5th". */
+  function ord(n){ return ["", "1st", "2nd", "3rd", "4th"][Math.min(n, 4)] || "4th"; }
 
   function syncChrome(){
     el("you-score").textContent = st.you;
