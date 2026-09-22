@@ -328,13 +328,21 @@
   function toRad(d){ return d * Math.PI / 180; }
   /* Great circle, because the map is a globe and the long legs are where
      a flat measure would be most wrong. */
+  /* Remembered, because the world does not move. Routing asks for the same
+     pair over and over - once per airport per carried passenger per minute -
+     and a day of catch-up on a large airline went from a tenth of a second
+     to two whole ones the moment it started doing that arithmetic for real. */
+  var SPANS = {};
+
   function dist(a, b){
     var A = CITY[a], B = CITY[b];
     if(!A || !B) return Infinity;
+    var key = a < b ? a + "|" + b : b + "|" + a;
+    if(SPANS[key] !== undefined) return SPANS[key];
     var dLat = toRad(B.lat - A.lat), dLon = toRad(B.lon - A.lon);
     var s = Math.sin(dLat/2)*Math.sin(dLat/2) +
             Math.cos(toRad(A.lat))*Math.cos(toRad(B.lat))*Math.sin(dLon/2)*Math.sin(dLon/2);
-    return Math.round(6371 * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1-s)));
+    return (SPANS[key] = Math.round(6371 * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1-s))));
   }
 
   /* Turning the aeroplane round: pushback, loading, taxi, the queue for the
@@ -631,35 +639,114 @@
      Later, with twenty aeroplanes, it very much is not. */
   var AUTO_CUT = 0.12;
 
+  /* The next airport on the way to one this aeroplane cannot reach in a
+     single leg. Strictly closer to the destination or nothing at all: with
+     "closer or the same" a crew can put a passenger down where it collected
+     them, call it progress, and do it again for ever. Because every hop
+     must cut the remaining distance, a chain cannot revisit anywhere and so
+     cannot loop.
+
+     This is what a crew was missing. Kirkwall to Exeter is 915km and a
+     Puddlejumper has 900 - so nobody was ever taken, although you could
+     carry them yourself in two legs all along. The board offered the job,
+     the sheet said "needs a stopover", and the crew looked straight past
+     it. */
+  var HOPS = {};
+  function nextHop(st, plane, toId){
+    /* Class is a wall, not a distance. No chain of hops makes a Shuttle fit
+       on a Highland strip, so work for one is not picked up at all - without
+       this the crew took Belfast passengers, flew them to Dublin because
+       Dublin is nearer Belfast, and then sat on them for ever with the seats
+       blocked. It cost the jets stage nine tenths of its takings. */
+    if(MODEL[plane.model].cls > CITY[toId].cls) return null;
+    if(legalDest(st, plane, toId)) return toId;
+    /* The answer depends on where the aeroplane is, what it is, where the
+       passenger is going and which airports exist - and the first three
+       repeat constantly while the fourth only ever grows, so the count of
+       them is version enough. Without this the search ran once per airport
+       per passenger per minute. */
+    var key = plane.at + "|" + plane.model + "|" + toId + "|" + st.ports.length;
+    if(HOPS[key] !== undefined) return HOPS[key];
+    var best = null, bestLeft = dist(plane.at, toId);
+    st.ports.forEach(function(id){
+      if(!legalDest(st, plane, id)) return;
+      var left = dist(id, toId);
+      if(left < bestLeft - 1){ bestLeft = left; best = id; }
+    });
+    return (HOPS[key] = best);
+  }
+
+  /* A leg that only gets somebody closer earns nothing yet, so it is
+     credited with the share of their journey it covers. Two hops that each
+     cover half are worth the same as the one that cannot be flown. */
+  /* How much of a fare a crew counts towards the leg in front of it.
+     Carrying somebody halfway is worth something, but it is not money yet,
+     so it is shaded: on a close call the crew takes the fare it can bank.
+     Not shaded far, because at half credit a Kirkwall passenger for Exeter
+     was never worth starting and the aeroplane simply sat there - which is
+     the whole thing this is for. Measured against the same airline without
+     any of this, the takings are unchanged at every stage; what changes is
+     that work needing two legs gets taken at all. */
+  var CARRY_CREDIT = 0.8;
+
+  function legValue(st, plane, job, hop){
+    if(job.to === hop) return job.fee;
+    var whole = dist(plane.at, job.to) || 1;
+    var share = (whole - dist(hop, job.to)) / whole;
+    return share > 0 ? job.fee * share * CARRY_CREDIT : 0;
+  }
+
   function autoChoice(st, plane){
     var best = null, bestRate = 0;
     boardGroups(st, plane).forEach(function(gr){
-      if(!gr.take.length || !legalDest(st, plane, gr.to)) return;
-      var km = dist(plane.at, gr.to);
-      var hrs = flightMins(MODEL[plane.model], km);
-      // what it would be paid, less the crew's cut, less what the leg costs
-      var take = Math.round(gr.fee * (1 + FILL_BONUS) * (1 - AUTO_CUT));
-      var rate = (take - fuelCost(MODEL[plane.model], km) - landingFee(gr.to)) / hrs;
-      if(rate > bestRate){ bestRate = rate; best = gr; }
+      if(!gr.take.length) return;
+      var hop = nextHop(st, plane, gr.to);
+      if(!hop) return;
+      var km = dist(plane.at, hop);
+      var mins = flightMins(MODEL[plane.model], km);
+      var worth = 0;
+      gr.take.forEach(function(j){ worth += legValue(st, plane, j, hop); });
+      // the full-load bonus is only paid on a hold that all gets off together
+      if(hop === gr.to) worth *= (1 + FILL_BONUS);
+      var take = Math.round(worth * (1 - AUTO_CUT));
+      var rate = (take - fuelCost(MODEL[plane.model], km) - landingFee(hop)) / mins;
+      if(rate > bestRate){ bestRate = rate; best = { group: gr, hop: hop }; }
     });
     return best;
   }
-  /* A crewed aeroplane already carrying something takes it on rather than
-     sitting on it: anything aboard is going somewhere it can reach. */
+
+  /* No filling up with work for other cities on the way. The full-load
+     bonus is paid on a hold that all gets off together, so a crew that
+     topped up with onward freight lost a quarter of every fare to gain a
+     few part-loads - measured, it cut the jets stage from seventy-eight
+     thousand a game day to eight. One destination at a time, all the way to
+     the end of the chain. */
+
   function autoOnward(st, plane){
+    // each passenger's way onward is worked out once, not once per airport
+    var onward = plane.hold.map(function(j){
+      return { job: j, hop: nextHop(st, plane, j.to) };
+    });
     var best = null, bestNet = 0;
     st.ports.forEach(function(id){
       if(!legalDest(st, plane, id)) return;
       var net = departRevenue(plane, id) * (1 - AUTO_CUT) - departCost(st, plane, id);
+      onward.forEach(function(o){
+        // fares for this stop are already in departRevenue; the rest are
+        // credited only for the leg that is genuinely on their way
+        if(o.job.to === id || o.hop !== id) return;
+        net += legValue(st, plane, o.job, id) * (1 - AUTO_CUT);
+      });
       if(net > bestNet){ bestNet = net; best = id; }
     });
     return best;
   }
+
   function runAuto(st, plane, rng, log){
-    var gr = autoChoice(st, plane);
-    if(gr){
-      loadGroup(st, plane, gr);
-      return depart(st, plane, gr.to, rng, log);
+    var pick = autoChoice(st, plane);
+    if(pick){
+      loadGroup(st, plane, pick.group);
+      return depart(st, plane, pick.hop, rng, log);
     }
     var on = plane.hold.length ? autoOnward(st, plane) : null;
     return on ? depart(st, plane, on, rng, log) : false;
