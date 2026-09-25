@@ -72,9 +72,10 @@
   .fx[data-state="done"]{opacity:.55}
   .fx[data-state="now"]{border-color:var(--accent)}
 
-  /* the six cards, two across, each drawing its own routes so the picture and
-     the play can never disagree */
-  .playbook{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}
+  /* the cards, two across, each drawing its own play so the picture and the
+     play can never disagree */
+  .playbook{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;align-content:start}
+  .ptabs{grid-column:1 / -1;display:flex;gap:6px;padding:0 0 2px}
   .pcard{
     display:flex;flex-direction:column;gap:3px;text-align:left;
     background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
@@ -83,7 +84,7 @@
   .pcard[aria-pressed="true"]{border-color:var(--accent)}
   .pcard .pn{font-size:12.5px;font-weight:500;display:flex;align-items:baseline;gap:6px}
   .pcard .pk{font-size:9.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted)}
-  .pcard svg{width:100%;height:34px;display:block}
+  .pcard svg{width:100%;height:40px;display:block}
   .pcard .pd{
     font-size:10px;color:var(--muted);line-height:1.3;
     display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
@@ -170,7 +171,7 @@
     <button class="act" id="punt">Punt</button>
   </div>
 
-  <p class="howto" id="howto" hidden>A play is called for you each down; change it for any of six. On a pass, pull back and release to throw &mdash; the ball flies the opposite way, and further the harder you pull. On a run, steer the back through the blocks.</p>
+  <p class="howto" id="howto" hidden>A play is called for you each down; change it for any of sixteen, eight on the ground and eight in the air. On a pass, pull back and release to throw &mdash; the ball flies the opposite way, and further the harder you pull. On a run, steer the carrier through the blocks.</p>
 </div>
 
 <div class="win" id="over" hidden>
@@ -497,6 +498,13 @@
      nearest man no team-mate has already taken, and a man with a blocker on
      him moves at a third speed until he sheds it. The lane is whatever is
      left over, and finding it is the play. */
+  var SNEAK_SPEED = 3.2;    // a quarterback pushing into the pile behind his centre
+  var JET_SPEED = 8.1;      // a man already sprinting in motion when he takes it
+  var RUN_READ = 0.7;       // seconds a linebacker takes to read run and flow to it
+  var MOTION_LOST = 0.35;   // extra it costs the man covering a jet sweep's motion
+  var CONTACT = 0.85;       // yards between a blocker and his man, so both can be seen
+  var DRIVE = 1.6;          // yards a second a run block moves a man out of the hole
+  var HELD_REACH = 0.6;     // how much of a free man's tackling reach a blocked one has
   var HANDOFF_T = 0.35;    // seconds from the snap to the back having it
   var BLOCK_R  = 1.6;      // how close a blocker has to be to hold a man up
   var BLOCK_SLOW = 0.16;   // what a man held by a lineman moves at
@@ -615,7 +623,20 @@
     dig:   [[0,6],[7,7]],
     slant: [[0,3],[8,9]],
     curl:  [[0,11],[-1,9]],
-    drag:  [[0,2],[13,4]]
+    drag:  [[0,2],[13,4]],
+    /* The ones that break toward the touchline. Only ever given to a man
+       lined up inside - a slot or a tight man - because from a split end
+       at x=3 there is no grass that way, and the clamp would leave him
+       running up the paint. */
+    out:    [[0,7],[-6,7]],
+    corner: [[0,8],[-6,15]],
+    flat:   [[0,1],[-6,3]],
+    // a curl at six rather than eleven: sit down in front of the linebackers
+    hook:   [[0,6.5],[-0.6,5.2]],
+    // a deep drag that keeps going to the far flat: the bottom level of a flood
+    cross:  [[0,3],[20,6]],
+    // the jet man: already in motion at the snap, flat across behind the line
+    jet:    [[4,-1.2],[9,-1]]
   };
   var ROUTE_NAMES = Object.keys(ROUTES);
 
@@ -649,6 +670,8 @@
       dt -= d / speed;
       if(dt <= 0) return m.wi >= m.path.length;
     }
+    // a screen back sits where he has drifted to and waits for the ball
+    if(m.settle) return true;
     // past the last waypoint: keep drifting downfield rather than freezing, but
     // never off the back of the field. Letting them run past the end line meant
     // that near the goal every receiver was out of reach of a throw, since the
@@ -668,61 +691,140 @@
     { name:"Spread left",  spots:[[3,false],[8.5,true],[26.5,false]] },
     { name:"Pro set",      spots:[[3.5,false],[19.5,false],[26.5,false]] },
     { name:"Bunch right",  spots:[[3.5,false],[21,true],[24,true]] },
-    { name:"Twins right",  spots:[[4,false],[22,false],[26,true]] }
+    { name:"Twins right",  spots:[[4,false],[22,false],[26,true]] },
+    // everyone tight to the ball: the short-yardage look
+    { name:"Goal line",    spots:[[10.5,false],[19.5,false],[21,true]] },
+    // a tight end on the right and two wide - the balanced under-centre set
+    { name:"Singleback",   spots:[[3.5,false],[19.5,false],[26.5,false]] },
+    { name:"Trips left",   spots:[[4.5,false],[9,true],[27,false]] },
+    // the slot already moving toward the ball when it is snapped
+    { name:"Jet motion",   spots:[[3,false],[10.5,true],[26.5,false]] }
   ];
   function formation(name){
     return FORMATIONS.filter(function(f){ return f.name === name; })[0] || FORMATIONS[0];
   }
 
-  /* Six plays, and the one you are handed before each snap is a guess at what
-     the down wants. Each names its own formation and its own three routes
-     rather than rolling for them, so calling the same play twice gets you the
-     same play - which is the whole point of having a book.
+  /* Sixteen plays, eight on the ground and eight in the air, and the one you
+     are handed before each snap is a guess at what the down wants. Each names
+     its own formation and its own routes rather than rolling for them, so
+     calling the same play twice gets you the same play - which is the whole
+     point of having a book.
 
-     A run carries a lane: where the back aims until you take him somewhere
+     A run carries a lane: where the carrier aims until you take him somewhere
      else, as a fraction across the field. A pass carries how long the pocket
-     holds, because a deep route needs time a quick one does not. */
+     holds, because a deep route needs time a quick one does not.
+
+     The rest are what make a play that play rather than another with a new
+     name: `under` puts the quarterback under centre rather than in the gun;
+     `carrier` says who takes it if it is not the back; `jab` is a first step
+     one way before the lane (a counter); `pull` is the lineman who leaves his
+     spot to lead through the hole (power); `screen` lets the rush in and sends
+     the line out in front of the back; `pa` is how long the fake holds the
+     linebackers. */
   var PLAYBOOK = [
-    { id:"dive",  name:"Dive",         kind:"run",  form:"Pro set",
-      routes:["drag","drag","drag"], lane:0.50, hold:0.30,
-      note:"Straight up the middle. Takes what is there." },
-    { id:"sweep", name:"Sweep right",  kind:"run",  form:"Trips right",
-      routes:["dig","drag","drag"],  lane:0.78, hold:0.55,
-      note:"Wide to the right behind the blocks. Slower to start." },
-    { id:"draw",  name:"Draw",         kind:"run",  form:"Spread left",
-      routes:["go","go","curl"],     lane:0.42, hold:0.85, blockT:0.62,
+    // ------------------------------------------------------------ the ground
+    { id:"sneak",   name:"QB sneak",     kind:"run",  form:"Goal line", under:true, carrier:"qb",
+      lane:0.50, hold:0.10, blockT:1.3, fool:-0.35,
+      note:"Under centre and straight in behind him. A yard, nearly always." },
+    { id:"dive",    name:"Dive",         kind:"run",  form:"Pro set", under:true,
+      lane:0.50, hold:0.30,
+      note:"Straight up the middle on the linemen's backs. Takes what is there." },
+    { id:"power",   name:"Power right",  kind:"run",  form:"Singleback", under:true,
+      lane:0.62, hold:0.45, pull:1,
+      note:"The left guard pulls across and leads him through the right side." },
+    { id:"counter", name:"Counter left", kind:"run",  form:"Pro set", under:true,
+      lane:0.36, hold:0.40, jab:{ lane:0.56, t:0.24 }, fool:0.35,
+      note:"A step right to draw the linebackers, then back against the grain." },
+    { id:"sweep",   name:"Toss right",   kind:"run",  form:"Trips right", under:true,
+      lane:0.78, hold:0.40,
+      note:"Pitched wide from under centre, behind the blocks on the right." },
+    { id:"stretch", name:"Stretch left", kind:"run",  form:"Trips left",
+      lane:0.24, hold:0.45,
+      note:"Outside zone. The line steps left together and he picks his crease." },
+    { id:"draw",    name:"Draw",         kind:"run",  form:"Spread left",
+      lane:0.42, hold:0.85, blockT:0.62, fool:0.3,
       note:"Shows the pass first, so the rush comes upfield and leaves a lane." },
-    { id:"quick", name:"Quick slants", kind:"pass", form:"Bunch right",
+    { id:"jet",     name:"Jet sweep",    kind:"run",  form:"Jet motion", carrier:"jet",
+      routes:["drag","jet","drag"], lane:0.86, hold:0.30, fool:0.25,
+      note:"The slot is already running at the snap. First to the edge, if they are not waiting." },
+    // --------------------------------------------------------------- the air
+    { id:"quick",    name:"Quick slants", kind:"pass", form:"Bunch right",
       routes:["slant","slant","drag"], sack:2.6,
       note:"Three short breaks inside. Out of your hands quickly." },
-    { id:"spread",name:"Spread",       kind:"pass", form:"Twins right",
-      routes:["dig","curl","post"],  sack:3.4,
+    { id:"curlflat", name:"Curl flat",    kind:"pass", form:"Twins right",
+      routes:["hook","flat","hook"], sack:2.9,
+      note:"The outside man sits down at six, the inside man runs under him to the flat." },
+    { id:"mesh",     name:"Mesh",         kind:"pass", form:"Spread left",
+      routes:["hook","drag","drag"], sack:3.0,
+      note:"Two shallow crossers rub past each other under a man sitting at six." },
+    { id:"screen",   name:"RB screen",    kind:"pass", form:"Spread left", screen:true, fool:0.4,
+      routes:["go","go","go"], sack:2.4,
+      note:"The line lets the rush in and releases in front of the back. Throw it behind them." },
+    { id:"spread",   name:"Spread",       kind:"pass", form:"Twins right",
+      routes:["dig","curl","post"], sack:3.4,
       note:"Medium routes at three depths. The all-purpose call." },
-    { id:"deep",  name:"Deep shot",    kind:"pass", form:"Spread left",
-      routes:["go","post","go"],     sack:4.1,
+    { id:"flood",    name:"Flood right",  kind:"pass", form:"Trips right",
+      routes:["cross","corner","go"], sack:3.5,
+      note:"Three men at three depths down the right. One corner cannot take them all." },
+    { id:"pa",       name:"Play action",  kind:"pass", form:"Pro set", under:true, pa:0.6,
+      routes:["post","dig","go"], sack:3.9,
+      note:"Fake the handoff. The linebackers come up for it and the grass behind them opens." },
+    { id:"deep",     name:"Deep shot",    kind:"pass", form:"Spread left",
+      routes:["go","post","go"], sack:4.1,
       note:"Everyone runs. Needs the pocket to hold." }
   ];
   function playById(id){
-    return PLAYBOOK.filter(function(p){ return p.id === id; })[0] || PLAYBOOK[4];
+    return PLAYBOOK.filter(function(p){ return p.id === id; })[0] ||
+           PLAYBOOK.filter(function(p){ return p.id === "spread"; })[0];
   }
 
   /* What the down is asking for. Short yardage wants the ground, third and
      long wants the ball in the air, and the rest of the time the sensible call
-     is the ordinary one. */
+     is the ordinary one. With sixteen plays there is more than one ordinary
+     call for most downs, so the spot on the field picks among them - the same
+     situation always gets the same suggestion, but a drive does not hear the
+     same one six times running. */
   function suggestPlay(st){
     var toGo = st.toGo, down = st.down, toGoal = FIELD_L - st.ballOn;
-    if(down >= 3 && toGo >= 8) return playById(toGo >= 14 ? "deep" : "spread");
-    if(down >= 3 && toGo <= 2) return playById("dive");
-    if(toGo <= 3) return playById("dive");
-    if(toGoal <= 6) return playById("dive");
-    if(down === 1) return playById(toGo >= 10 ? "spread" : "sweep");
-    if(toGo >= 9) return playById("quick");
-    return playById("draw");
+    var v = (Math.round(st.ballOn) + down * 3) % 4;
+    if(toGoal <= 2) return playById("sneak");
+    if(down >= 3 && toGo <= 1) return playById("sneak");
+    if(down >= 3 && toGo >= 14) return playById("deep");
+    if(down >= 3 && toGo >= 7) return playById(["flood", "spread", "mesh", "flood"][v]);
+    if(down >= 3 && toGo <= 3) return playById(["dive", "power", "curlflat", "dive"][v]);
+    if(toGoal <= 6) return playById(["dive", "power", "quick", "counter"][v]);
+    if(toGo <= 3) return playById(["dive", "power", "counter", "dive"][v]);
+    if(down === 1) return playById(["pa", "power", "spread", "stretch"][v]);
+    if(toGo >= 9) return playById(["quick", "screen", "mesh", "curlflat"][v]);
+    return playById(["draw", "sweep", "curlflat", "jet"][v]);
   }
 
-  // Five linemen either side of the centre. They only block and are drawn, but
-  // without them the snap does not read as a snap.
+  /* Five linemen, left tackle to right tackle. They were drawn and nothing
+     else: on a pass they stood on the line of scrimmage for the whole play,
+     facing nobody, while two edge rushers slid past them on a timer. Now each
+     has a spot in the pocket to drop to on a pass, a man across from him to
+     block, and a job once the ball is gone. */
   var OL_X = [12, 13.5, 15, 16.5, 18];
+  /* Where each drops to in pass protection, relative to the ball: the guards
+     and centre a yard and a bit back, the tackles kicked out and deeper so
+     the pocket is a cup rather than a wall. */
+  var POCKET = [[11.0, -2.2], [13.2, -1.3], [15, -1.1], [16.8, -1.3], [19.0, -2.2]];
+  /* The defensive front: two ends outside the tackles and two tackles over
+     the guards. There was no one at all over the guards and centre before,
+     which is why the middle of the line had nothing to do. */
+  var FRONT = [
+    { role:"end", side:-1, x:10.5, dy:0.5 },
+    { role:"end", side: 1, x:19.5, dy:0.5 },
+    { role:"dt",  side:-1, x:13.8, dy:0.7 },
+    { role:"dt",  side: 1, x:16.2, dy:0.7 }
+  ];
+  // the back's path on a screen: out behind the tackle, then settle and wait
+  /* He was drifting out five yards behind the line and catching it there,
+     with the convoy four yards downfield waiting for him - so every screen
+     was a five-yard sprint just to get back to where it started. */
+  var SCREEN_PATH = [[-2.5,0.6],[-5.5,1.8],[-6.5,2.6]];
+  // where the linemen who release set up: just in front of him, not beyond
+  var CONVOY = [[5.2, 0.6], [7.8, 1.2], [10.2, 0.4]];
 
   function buildPlay(st, rng, call){
     var los = st.ballOn;
@@ -731,7 +833,7 @@
 
     var recs = form.spots.map(function(spot, i){
       var x = spot[0], y = los - (spot[1] ? 1 : 0);
-      var name = call.routes[i] || ROUTE_NAMES[Math.floor(rng() * ROUTE_NAMES.length)];
+      var name = (call.routes && call.routes[i]) || "drag";
       // routes break toward the middle of the field, so mirror for the right side
       var flip = x > FIELD_W / 2;
       var hist = [];
@@ -757,6 +859,40 @@
     defs.push({ id: 4, mark: -2, lag: LAG_COVER, react: 0.22, zx: 11.5, zy: 5, x: 11.5, y: los + 5 });
     defs.push({ id: 5, mark: -2, lag: LAG_COVER, react: 0.30, zx: 18.5, zy: 5.5, x: 18.5, y: los + 5.5 });
 
+    /* Under centre or in the gun. Under centre the quarterback is right on
+       the ball and the back is straight behind him in the I; in the gun the
+       quarterback is five yards deep with the back offset at his side. */
+    var qb = call.under ? { x: FIELD_W/2, y: los - 1.2 } : { x: FIELD_W/2, y: los - 4.5 };
+    qb.hist = [{ x: qb.x, y: qb.y }];
+    var back = call.under ? { x: FIELD_W/2, y: los - 4.6 } : { x: FIELD_W/2 - 2.6, y: los - 4.2 };
+
+    // a play-action pocket sets deeper, because the quarterback has further to drop
+    var deep = call.pa ? -0.6 : 0;
+    var line = OL_X.map(function(x, i){
+      return { x: x, y: los, idx: i,
+               hx: x, hy: los,
+               px: POCKET[i][0], py: los + POCKET[i][1] + deep };
+    });
+
+    var rushers = FRONT.map(function(f){
+      return { role: f.role, side: f.side, sx: f.x, sy: los + f.dy, x: f.x, y: los + f.dy };
+    });
+
+    /* On a screen the back is the target, so he joins the receivers - after
+       the coverage has been handed out, so nobody is assigned to shadow him.
+       Screens work because nobody is. */
+    if(call.screen){
+      var bh = [];
+      for(var k = 0; k < HIST; k++) bh.push({ x: back.x, y: back.y });
+      back.id = recs.length;
+      back.sx = back.x; back.sy = back.y;
+      back.path = waypoints(back.x, back.y, SCREEN_PATH, false);
+      back.wi = 0; back.route = "screen"; back.hist = bh;
+      back.pace = 0.75;          // he drifts out, he does not sprint
+      back.settle = true;        // and then he waits for it
+      recs.push(back);
+    }
+
     return {
       phase: "presnap",       // presnap | live | air | carry | done
       call: call,             // the play out of the book
@@ -764,12 +900,16 @@
       t: 0,
       los: los,
       formation: call.name,
-      qb: { x: FIELD_W/2, y: los - 4.5, hist: [{ x: FIELD_W/2, y: los - 4.5 }] },
+      qb: qb,
       recs: recs, defs: defs,
-      line: OL_X.map(function(x){ return { x:x, y:los }; }),
-      back: { x: FIELD_W/2 - 2.6, y: los - 4.2 },
-      // two ends rushing off the edges, outside the blockers
-      rushers: [{ x: 10.5, y: los + 0.5 }, { x: 19.5, y: los + 0.5 }],
+      line: line,
+      back: back,
+      rushers: rushers,
+      /* How long the pocket holds this snap. It was the same count every
+         time, so the same call always collapsed on the same beat; a tenth
+         either way keeps the average where it was tuned and stops it being a
+         metronome. */
+      protect: ((call && call.sack) || SACK_TIME) * (0.9 + rng() * 0.2),
       ball: null,
       carrier: null,
       result: null,
@@ -783,6 +923,12 @@
     if(play.call && play.call.kind === "run") return callRun(play);
     play.phase = "live";
     play.t = 0;
+    /* A screen is misdirection too: the linebackers read pass and drop into
+       their zones, so when the ball goes to the back behind them they are
+       turning round rather than already coming. */
+    if(play.call && play.call.fool){
+      play.defs.forEach(function(d){ if(d.mark === -2) d.react += play.call.fool; });
+    }
     return true;
   }
 
@@ -796,10 +942,86 @@
     play.t = 0;
     play.rushers.forEach(function(ru){
       play.defs.push({ id: 90 + play.defs.length, mark: -3, lag: 0, react: 0.12,
-                       x: ru.x, y: ru.y });
+                       role: ru.role, side: ru.side, x: ru.x, y: ru.y });
     });
     play.rushers = [];
+    assignRunBlocks(play);
+    /* The linebackers read before they flow. They were the quickest men on
+       the field to react to a run - a fifth of a second - and with the front
+       now four men across from five linemen, one of them always goes
+       unblocked, so he met every carry at the line. A read of half a second
+       is what lets a run get started; misdirection (a counter's jab, a
+       draw's fake pass, a man in motion) holds them longer, which is what
+       those plays are for. */
+    var fool = (play.call && play.call.fool) || 0;
+    play.defs.forEach(function(d){
+      if(d.mark === -2) d.react = RUN_READ + fool;
+    });
+    /* On a jet sweep the man covering the motion passes him off rather than
+       chasing him across the formation - which is what defences do, and what
+       makes the play a play at all. Until he has read it he holds where he
+       is; a late reaction on its own did nothing, because a man still
+       covering the runner is already chasing him. */
+    if(play.call && play.call.carrier === "jet"){
+      play.defs.forEach(function(d){
+        if(d.mark === 1){ d.mark = -3; d.react += MOTION_LOST; }
+      });
+    }
     return true;
+  }
+
+  /* Who the line blocks on a run. It was each man for the nearest defender,
+     which with four across from five left whichever linebacker happened to
+     be left - usually the one sitting in the hole the play was aimed at,
+     who made the tackle on the line of scrimmage. A real line has
+     assignments: the four men across from them, and the spare man - the
+     centre - climbing to the linebacker on the side the ball is going. The
+     one left over is the backside linebacker, who has to run across the
+     whole formation to get there.
+
+     On power the left guard pulls to lead through the hole, so the centre
+     blocks back on the tackle the guard has left and the guard takes the
+     playside linebacker when he arrives. */
+  function assignRunBlocks(play){
+    var call = play.call || {};
+    var laneX = FIELD_W * (call.lane !== undefined ? call.lane : 0.5);
+    function front(role, side){
+      return play.defs.filter(function(d){ return d.role === role && d.side === side; })[0] || null;
+    }
+    var lbs = play.defs.filter(function(d){ return d.mark === -2; });
+    lbs.sort(function(a, b){ return Math.abs(a.zx - laneX) - Math.abs(b.zx - laneX); });
+    var playsideLB = lbs[0] || null;
+    var L = play.line;
+    L[0].assign = front("end", -1);
+    L[1].assign = front("dt", -1);
+    L[2].assign = playsideLB;
+    L[3].assign = front("dt", 1);
+    L[4].assign = front("end", 1);
+    if(call.pull === 1){
+      L[2].assign = front("dt", -1);
+      L[1].assign = playsideLB;
+    }
+  }
+
+  /* Who takes the handoff: the back, unless the play says the quarterback
+     keeps it (a sneak) or the man in motion does (a jet sweep). */
+  function carrierOf(play){
+    var c = play.call && play.call.carrier;
+    if(c === "qb") return play.qb;
+    if(c === "jet") return play.recs[1];
+    return play.back;
+  }
+
+  /* Once the ball is gone the rush has nothing to rush, so the front turns
+     and chases like everybody else - a beat late, because they were going
+     the other way. They used to simply vanish from the field. */
+  function releaseRush(play){
+    if(!play.rushers.length) return;
+    play.rushers.forEach(function(ru){
+      play.defs.push({ id: 90 + play.defs.length, mark: -3, lag: 0, react: 0.55,
+                       role: ru.role, side: ru.side, x: ru.x, y: ru.y });
+    });
+    play.rushers = [];
   }
 
   /* A block is a hold, not a touch. Re-choosing the nearest man every frame
@@ -808,14 +1030,34 @@
      a clean hole was still only worth four yards. A lineman now locks on to
      the man he reaches and the two of them are out of it together until he
      sheds - so getting through the front actually means something. */
-  function runBlocking(play, dt){
-    play.defs.forEach(function(d){ d.held = false; });
+  /* `who` is everybody blocking: on a run the line and the receivers, after a
+     catch only the line (receivers on a pass are still in their routes). The
+     man carrying the ball is never one of them - on a jet sweep he is one of
+     the receivers, and he was dutifully trying to block for himself. */
+  function runBlocking(play, dt, who){
+    play.defs.forEach(function(d){ d.held = false; d.byLine = false; });
     var taken = {};
+    var call = play.call || {};
     /* The receivers block on a run, which is what they are for on one. With
        only the five linemen engaging, the corners came off their men untouched
        and no carry ever reached ten yards. */
-    play.line.concat(play.recs).forEach(function(o){
+    (who || play.line.concat(play.recs)).forEach(function(o){
+      if(o === play.carrier) return;
       var lineman = play.line.indexOf(o) >= 0;
+      /* Power: one guard leaves his spot at the snap, runs flat behind the
+         line to the hole and leads through it. Until he gets there he is not
+         blocking anybody, which is the price of the play. */
+      if(lineman && call.pull === o.idx && play.kind === "run" && !o.pulled){
+        var gx = FIELD_W * call.lane, gy = play.los - 0.4;
+        var gd = dist(o.x, o.y, gx, gy);
+        if(gd > 0.9 && play.t < (call.hold || 0) + 0.7){
+          var ps = SPD.block * 1.1 * dt;
+          o.x += (gx - o.x) / gd * Math.min(ps, gd);
+          o.y += (gy - o.y) / gd * Math.min(ps, gd);
+          return;
+        }
+        o.pulled = true;
+      }
       /* A draw sells the pass first, so the linemen are back on their heels
          when the ball goes and their blocks do not last. Without that it was
          the best run in the book by a distance and nothing else got called. */
@@ -829,12 +1071,39 @@
       }
       if(!o.on){
         var best = null, bd = Infinity;
-        play.defs.forEach(function(d){
-          if(taken[d.id] || d.held) return;
-          if(d.y < play.los - 3) return;          // nobody behind the ball
-          var dd = dist(o.x, o.y, d.x, d.y);
-          if(dd < bd){ bd = dd; best = d; }
-        });
+        // your man first, if he is still there to be blocked
+        var mine = o.assign;
+        var ahead = play.blockAhead && play.carrier ? play.carrier.y - 1 : -Infinity;
+        if(mine && !(mine.y < play.los - 3) && !(mine.y < ahead) && !(taken[mine.id] && !o.hadAssign)){
+          best = mine; bd = dist(o.x, o.y, mine.x, mine.y);
+        } else {
+          var cr = play.blockAhead ? play.carrier : null;
+          play.defs.forEach(function(d){
+            if(taken[d.id] || d.held) return;
+            if(d.y < play.los - 3) return;          // nobody behind the ball
+            if(d.y < ahead) return;                 // nor behind the man with it
+            var dd = dist(o.x, o.y, d.x, d.y);
+            /* Downfield, pick up whoever is about to reach the ball, not
+               whoever is nearest you. Nearest-to-you had a screen's convoy
+               chasing the corners away downfield with their receivers while
+               the linebacker came straight down the middle and made the
+               tackle untouched. */
+            var score = cr ? dist(cr.x, cr.y, d.x, d.y) + dd * 0.35 : dd;
+            if(score < bd){ bd = score; best = d; }
+          });
+          if(best) bd = dist(o.x, o.y, best.x, best.y);
+          /* And downfield, whoever you were going for, a man who runs into
+             you gets blocked - the screen's linebacker was running straight
+             through the convoy while its linemen headed for someone further
+             off. Only downfield: on a run it made the toss the best play in
+             the book by three yards, because the receivers on the edge
+             walled off everybody who came near them. */
+          if(play.blockAhead) play.defs.forEach(function(d){
+            if(taken[d.id] || d.held || d.y < ahead || d.y < play.los - 3) return;
+            var dd = dist(o.x, o.y, d.x, d.y);
+            if(dd <= BLOCK_R && dd < bd){ bd = dd; best = d; }
+          });
+        }
         if(best && bd <= BLOCK_R){ o.on = best; o.lock = holdFor; }
         else if(best && bd > 0.01){
           var sp = SPD.block * dt;
@@ -847,11 +1116,196 @@
         taken[o.on.id] = 1;
         o.on.held = true;
         o.on.holdSlow = lineman ? BLOCK_SLOW : REC_SLOW;
-        // he wears the block, so the blocker goes where he goes
-        o.x += (o.on.x - o.x) * Math.min(1, dt * 9);
-        o.y += (o.on.y - o.y) * Math.min(1, dt * 9);
+        /* A run block moves a man, it does not just stand with him. With the
+           two defensive tackles added, the guards met them on the snap and
+           the pair stood in the middle of the hole - where the back ran into
+           them. Every run in the book lost yards. A lineman on a run now
+           drives his man back and away from where the ball is going. */
+        if(lineman && play.kind === "run"){
+          o.on.byLine = true;
+          var laneX = play.steerX !== null ? play.steerX : FIELD_W * (call.lane || 0.5);
+          var away = o.on.x >= laneX ? 1 : -1;
+          o.on.x += away * DRIVE * dt;
+          o.on.y += DRIVE * 0.45 * dt;
+        }
+        /* He wears the block, so the blocker goes where he goes - on his own
+           side of him, in contact rather than on the same spot. Moved onto
+           his man, every lineman at the point of attack was drawn exactly
+           underneath the defender he was blocking, and the line vanished
+           from the picture on the very plays that are about the line. */
+        var tx = o.on.x, ty = o.on.y - CONTACT;
+        o.x += (tx - o.x) * Math.min(1, dt * 9);
+        o.y += (ty - o.y) * Math.min(1, dt * 9);
       }
     });
+  }
+
+  function ease(t){ return t < 0 ? 0 : t > 1 ? 1 : t * t * (3 - 2 * t); }
+  function moveToward(o, x, y, speed, dt){
+    var d = dist(o.x, o.y, x, y);
+    if(d < 0.001) return true;
+    var step = speed * dt;
+    if(step >= d){ o.x = x; o.y = y; return true; }
+    o.x += (x - o.x) / d * step;
+    o.y += (y - o.y) / d * step;
+    return false;
+  }
+
+  /* Pass protection, drawn as what it is. The sack still comes at the count
+     the play was tuned for - the length of protection is the play's, and
+     sixteen of them were balanced against it - but it now arrives because
+     the ends have worked round the tackles, rather than two men gliding in a
+     straight line through a line of statues.
+
+     The ends take a wide arc: upfield and outside the tackle for most of the
+     count, then round the corner at the quarterback. The tackles over the
+     guards bull straight in and are held, giving a couple of yards as the
+     pocket is squeezed. Each lineman drops to his spot in the cup and then
+     mirrors the man across from him, staying between him and the passer -
+     until, at the end of the count, his man gets past. */
+  function passPocket(st, play, dt){
+    var call = play.call || {};
+    var P = play.protect || SACK_TIME;
+    var f = clamp(play.t / P, 0, 1);
+    var qb = play.qb;
+
+    // play action: under centre, turn, show the ball to the back, drop
+    if(call.pa){
+      qb.y = play.los - 1.2 - 4.6 * ease(play.t / 0.95);
+    }
+
+    /* The back. On a screen he is a receiver and running his own route. On
+       play action he carries out the fake into the line first. Otherwise he
+       stays in and steps up beside the quarterback to pick up whoever comes
+       free - which is what a back does on most passes. */
+    if(!call.screen){
+      if(call.pa && play.t < call.pa){
+        moveToward(play.back, FIELD_W/2 - 0.9, play.los - 2.4, SPD.block, dt);
+      } else {
+        moveToward(play.back, FIELD_W/2 - 1.6, qb.y + 0.9, SPD.block * 0.8, dt);
+      }
+    }
+
+    // on a screen the linemen hold for a moment to sell it, then let their
+    // men through and go
+    var released = call.screen && play.t >= 0.45;
+
+    play.rushers.forEach(function(ru){
+      var qx = qb.x - ru.side * 0.5, qy = qb.y;
+      if(ru.role === "end"){
+        // out and round the tackle for three quarters of the count...
+        var ax = ru.sx + ru.side * 1.3, ay = play.los - 3.0;
+        if(f <= 0.75){
+          var g1 = ease(f / 0.75);
+          ru.x = ru.sx + (ax - ru.sx) * g1;
+          ru.y = ru.sy + (ay - ru.sy) * g1;
+        } else {
+          // ...then turn the corner and close
+          var g2 = ease((f - 0.75) / 0.25);
+          ru.x = ax + (qx - ax) * g2;
+          ru.y = ay + (qy - ay) * g2;
+        }
+      } else {
+        // a tackle bulls straight in; on a screen he is waved through
+        if(released){
+          moveToward(ru, qx, qy + 0.6, SPD.def, dt);
+        } else {
+          var tx = ru.sx + ru.side * 0.2, ty = play.los - 2.4;
+          var g3 = Math.pow(f, 1.3);
+          ru.x = ru.sx + (tx - ru.sx) * g3;
+          ru.y = ru.sy + (ty - ru.sy) * g3;
+        }
+      }
+    });
+
+    // who each lineman has: tackles the ends, guards the tackles, the
+    // centre whichever tackle is deeper
+    var ends = play.rushers.filter(function(r){ return r.role === "end"; });
+    var dts  = play.rushers.filter(function(r){ return r.role === "dt"; });
+    function manFor(o){
+      if(o.idx === 0) return ends[0];
+      if(o.idx === 4) return ends[1];
+      if(o.idx === 1) return dts[0];
+      if(o.idx === 3) return dts[1];
+      if(!dts.length) return null;
+      return dts[0].y < dts[1].y ? dts[0] : dts[1];
+    }
+
+    play.line.forEach(function(o){
+      if(released && o.idx <= 2){
+        /* The screen side of the line goes out in front of where the back
+           is waiting: a convoy, which is the whole reason the play exists. */
+        var cx = CONVOY[o.idx][0], cy = play.los + CONVOY[o.idx][1];
+        moveToward(o, cx, cy, SPD.block, dt);
+        return;
+      }
+      // first, get back to your spot
+      if(!o.set){
+        o.set = moveToward(o, o.px, o.py, SPD.block * 1.2, dt) || play.t > 0.45;
+        return;
+      }
+      var man = manFor(o);
+      if(!man) return;
+      // beaten: an end who has come round his tackle is gone, and the tackle
+      // is left turning on the spot
+      if(man.role === "end" && f > 0.8) return;
+      var inside = o.idx === 2 ? 0 : -man.side * 0.55;
+      var sx = man.x + inside;
+      // stay between him and the passer, and give ground slowly as he pushes
+      var sy = Math.min(o.py + 0.3, man.y - 0.85);
+      sy = Math.max(sy, qb.y + 1.4);
+      moveToward(o, sx, sy, SPD.block, dt);
+    });
+
+    if(play.t >= P){
+      endPlay(st, play, "sack", qb.y);
+      return true;
+    }
+    return false;
+  }
+
+  /* The line once the ball is gone: turn and run after it, and hit whoever
+     is near the man who caught it. Linemen downfield are a real thing and
+     they were missing - they stayed on the line of scrimmage for the whole
+     play, facing nobody, while the catch was made twenty yards away. */
+  function lineAfterThrow(play, dt){
+    var screen = play.call && play.call.screen;
+    if(play.phase === "air"){
+      var b = play.ball;
+      play.line.forEach(function(o){
+        // a screen's convoy keeps going to where it was going; everyone else
+        // turns and follows the ball
+        if(screen && o.idx <= 2){
+          moveToward(o, CONVOY[o.idx][0], play.los + CONVOY[o.idx][1], SPD.block, dt);
+          return;
+        }
+        moveToward(o, clamp(b.tx, 2, FIELD_W - 2), Math.max(play.los, Math.min(b.ty, play.los + 6)),
+                   SPD.block * 0.75, dt);
+      });
+    } else if(play.phase === "carry"){
+      /* Downfield, a lineman blocks the man in front of the ball, not the one
+         chasing it. Blocking whoever was nearest had the screen's convoy turn
+         round and wall off the pass rushers behind the play while the
+         linebackers came up untouched in front of it. */
+      play.blockAhead = true;
+      runBlocking(play, dt, play.line);
+      play.blockAhead = false;
+    }
+  }
+
+  /* Whoever can make the tackle. A man tied up in a block can only reach out
+     and grab at a carrier going past him - he cannot square up - so his reach
+     is shorter than a free man's. Without this, a defensive tackle held in
+     the middle of the line made the tackle on every run up the middle. */
+  function tackler(play, x, y){
+    var best = null, bd = Infinity;
+    play.defs.forEach(function(d){
+      if(d.shaken > play.t) return;
+      var reach = d.held ? TACKLE_R * HELD_REACH : TACKLE_R;
+      var dd = dist(d.x, d.y, x, y);
+      if(dd <= reach && dd < bd){ bd = dd; best = d; }
+    });
+    return { def: best, d: bd };
   }
 
   function nearestDefender(play, x, y){
@@ -866,19 +1320,62 @@
 
   /* ---------- per-frame play simulation ---------- */
 
+  /* Nobody but the man with the ball ever leaves the field - his step over
+     the touchline is what ends a play, and he is dealt with by that rule.
+     Everyone else is kept inside it after every step, however they came to
+     be moving: a stretch left sent the corner, held by the receiver blocking
+     him, chasing a carrier bound for the touchline, and the two of them
+     walked off the pitch together a moment before the carrier did. Routes
+     were already kept in; pursuit, blocks and the pocket are what this
+     catches. */
+  var EDGE = 0.7;
+  function keepOnPitch(play){
+    function keep(m){
+      if(!m || m === play.carrier) return;
+      if(m.x < EDGE) m.x = EDGE;
+      else if(m.x > FIELD_W - EDGE) m.x = FIELD_W - EDGE;
+    }
+    play.defs.forEach(keep);
+    play.recs.forEach(keep);
+    play.line.forEach(keep);
+    play.rushers.forEach(keep);
+    keep(play.back);
+    keep(play.qb);
+  }
+
   function stepPlay(st, play, dt, rng){
+    stepPlayInner(st, play, dt, rng);
+    if(play.phase !== "presnap") keepOnPitch(play);
+  }
+
+  function stepPlayInner(st, play, dt, rng){
     if(play.phase === "done" || play.phase === "presnap") return;
     play.t += dt;
 
     if(play.kind === "run"){
-      // the back takes it a beat after the snap and it is his from there
-      if(play.phase === "live" && play.t >= (play.call ? play.call.hold : HANDOFF_T)){
+      var rc = play.call || {};
+      // the carrier takes it a beat after the snap and it is his from there
+      if(play.phase === "live" && play.t >= (rc.hold !== undefined ? rc.hold : HANDOFF_T)){
         play.phase = "carry";
         play.carryT = play.t;
-        play.carrier = play.back;
-        // he runs for the lane the play asked for until your thumb says otherwise
-        if(play.steerX === null && play.call && play.call.lane !== undefined)
-          play.steerX = FIELD_W * play.call.lane;
+        play.carrier = carrierOf(play);
+        // he runs for the lane the play asked for until your thumb says
+        // otherwise - on a counter, for the jab first
+        if(play.steerX === null && rc.lane !== undefined)
+          play.steerX = FIELD_W * (rc.jab ? rc.jab.lane : rc.lane);
+      }
+      // the counter's cut back, unless you have already taken him yourself
+      if(play.phase === "carry" && rc.jab && !play.thumb && !play.cut &&
+         play.t - play.carryT >= rc.jab.t){
+        play.steerX = FIELD_W * rc.lane;
+        play.cut = true;
+      }
+      // the man in motion keeps moving until the ball reaches him
+      if(play.phase === "live" && rc.carrier === "jet"){
+        var jm = play.recs[1];
+        follow(jm, SPD.rec, dt);
+        jm.hist.push({ x:jm.x, y:jm.y });
+        if(jm.hist.length > HIST) jm.hist.shift();
       }
       runBlocking(play, dt);
     }
@@ -886,7 +1383,7 @@
     // receivers run their routes, each remembering where he has been
     if(play.phase !== "carry" && play.kind !== "run"){
       play.recs.forEach(function(r){
-        follow(r, SPD.rec, dt);
+        follow(r, SPD.rec * (r.pace || 1), dt);
         r.hist.push({ x:r.x, y:r.y });
         if(r.hist.length > HIST) r.hist.shift();
       });
@@ -918,7 +1415,12 @@
         var aimY = c.y + (c.svy === undefined ? RUN_SPEED : c.svy) * lead;
         var pd = dist(d.x, d.y, aimX, aimY);
         if(pd > 0.01){
-          var ps = SPD.pursue * dt * (d.held ? d.holdSlow : 1);
+          /* A man a lineman has hold of on a run is being moved, not walking
+             through it: he makes no ground on the carrier at all while the
+             block lasts. At the old sixteenth-speed crawl he walked back into
+             the hole as fast as the block drove him out of it, and the hole
+             never opened. Receivers' blocks are lighter, and still slow him. */
+          var ps = SPD.pursue * dt * (d.held ? (d.byLine ? 0 : d.holdSlow) : 1);
           d.x += (aimX - d.x) / pd * ps;
           d.y += (aimY - d.y) / pd * ps;
         }
@@ -927,8 +1429,29 @@
       if(d.mark === -2){
         // zone: hold a patch of grass, sliding toward the nearest receiver in it
         var anchorX = d.zx, anchorY = play.los + d.zy;
+        /* Play action: for as long as the fake lasts the linebackers read run
+           and come up to fill, toward the back. When they realise, they are
+           a yard off the line with the grass they were meant to cover behind
+           them - which is what the play is for. */
+        var pc = play.call || {};
+        if(pc.pa && play.phase === "live" && play.t < pc.pa + 0.25){
+          anchorX = (d.zx + FIELD_W / 2) / 2;
+          anchorY = play.los + 1.0;
+          var bd2 = dist(d.x, d.y, anchorX, anchorY);
+          if(bd2 > 0.01){
+            var bs = SPD.def * dt;
+            d.x += (anchorX - d.x) / bd2 * bs;
+            d.y += (anchorY - d.y) / bd2 * bs;
+          }
+          return;
+        }
+        /* A zone is a patch of grass downfield, and it only holds what comes
+           into it. They were sliding toward any receiver in reach, a back
+           still two yards behind the line included - so every screen was
+           read from the snap and the linebackers were waiting for it. */
         var near = null, nd = Infinity;
         play.recs.forEach(function(r){
+          if(r.y < play.los) return;
           var dd2 = dist(r.x, r.y, anchorX, anchorY);
           if(dd2 < nd){ nd = dd2; near = r; }
         });
@@ -972,20 +1495,12 @@
       }
     });
 
-    // The rush is a timer rather than blockers to beat: the ends sweep round the
-    // edge and arrive together when protection runs out.
-    if(play.phase === "live" && play.rushers.length){
-      var hold = (play.call && play.call.sack) || SACK_TIME;
-      var frac = clamp(play.t / hold, 0, 1);
-      play.rushers.forEach(function(ru, i){
-        var sx0 = i === 0 ? 10.5 : 19.5;
-        ru.x = sx0 + (play.qb.x - sx0) * frac;
-        ru.y = play.los + 0.5 + (play.qb.y - play.los - 0.5) * frac;
-      });
-      if(play.t >= hold){
-        endPlay(st, play, "sack", play.qb.y);
-        return;
-      }
+    if(play.kind === "pass" && play.phase === "live"){
+      if(passPocket(st, play, dt)) return;
+    }
+    if(play.kind === "pass" && (play.phase === "air" || play.phase === "carry")){
+      releaseRush(play);
+      lineAfterThrow(play, dt);
     }
 
     // ball in flight
@@ -1012,7 +1527,15 @@
          chasing runs at 8.6 and everyone carrying ran at 6.4, so no carry
          could ever break away however clean the hole - which is fine for a
          scrambling passer and wrong for the man the play is designed around. */
-      var top = (c === play.back) ? BACK_SPEED : RUN_SPEED;
+      /* Who is carrying decides how fast. A back is quicker than a passer
+         caught with it; a man taking a jet sweep is already at a sprint when
+         it reaches him, which is the point of the play; and a sneak is not a
+         run at all but a push into the pile behind the centre. */
+      var cc0 = play.call || {};
+      var top = (play.kind === "run" && c === play.qb) ? SNEAK_SPEED
+              : (play.kind === "run" && cc0.carrier === "jet") ? JET_SPEED
+              : (c === play.back || (play.kind === "run" && c !== play.qb)) ? BACK_SPEED
+              : RUN_SPEED;
       var targetVx = want * top;
       var step = LAT_ACCEL * dt;
       c.lvx = (c.lvx || 0) + clamp(targetVx - (c.lvx || 0), -step, step);
@@ -1040,8 +1563,8 @@
          the same yard - four and a bit, never more - because the last man
          always arrives and always makes it. Two shrugs at most, so it stays a
          tail on the distribution rather than a way through the whole defence. */
-      var n = nearestDefender(play, c.x, c.y);
-      if(n.d <= TACKLE_R){
+      var n = tackler(play, c.x, c.y);
+      if(n.def){
         var shed = (c.breaks || 0) < MAX_BREAKS && rng() < BREAK_ODDS;
         if(shed){
           c.breaks = (c.breaks || 0) + 1;
@@ -1944,13 +2467,15 @@
 
     var mine = yourKit(), theirs = theirKit();
     play.line.forEach(function(o){ drawKit(o.x, o.y, 0.5, mine, true); });
-    if(play.carrier === play.back) drawMan(play.back.x, play.back.y, 0.6, mine, true);
-    else drawKit(play.back.x, play.back.y, 0.52, mine, true);
+    // on a screen the back is one of the receivers and is drawn with them
+    if(play.recs.indexOf(play.back) < 0){
+      if(play.carrier === play.back) drawMan(play.back.x, play.back.y, 0.6, mine, true);
+      else drawKit(play.back.x, play.back.y, 0.52, mine, true);
+    }
 
     play.defs.forEach(function(d){ drawKit(d.x, d.y, 0.62, theirs, false); });
-    if(play.phase === "live" || play.phase === "presnap"){
-      play.rushers.forEach(function(ru){ drawKit(ru.x, ru.y, 0.6, theirs, false); });
-    }
+    // the front, until it has turned to chase and become part of the defence
+    play.rushers.forEach(function(ru){ drawKit(ru.x, ru.y, 0.6, theirs, false); });
     play.recs.forEach(function(r){
       drawMan(r.x, r.y, 0.62, mine, play.carrier === r);
     });
@@ -2163,12 +2688,12 @@
     if(!play) return;
     pointerDown = true;
     if(play.phase === "live") aim = { ox:x, oy:y, cx:x, cy:y };
-    if(play.phase === "carry") play.steerX = fieldX(x);
+    if(play.phase === "carry"){ play.steerX = fieldX(x); play.thumb = true; }
   }
   function moveAim(x, y){
     if(!play || !pointerDown) return;
     if(play.phase === "live" && aim){ aim.cx = x; aim.cy = y; }
-    if(play.phase === "carry") play.steerX = fieldX(x);
+    if(play.phase === "carry"){ play.steerX = fieldX(x); play.thumb = true; }
   }
   // Releasing and being cancelled do the same thing: a pull that was far enough
   // to count is thrown. Losing it silently is the worse failure by far.
@@ -2239,43 +2764,123 @@
      from what actually happens: the line across the middle is the scrimmage,
      the circles are your men and the tails are where they go. On a run the
      arrow is the lane the back aims for. */
+  /* The diagram on each card, drawn from the play itself so the picture and
+     the play can never disagree. Every card shows the line now - five marks
+     with the centre square, the way a coach draws it - because every play
+     is built on them, and a book where they only appeared on runs was
+     telling you they only mattered on runs. */
   function playArt(call){
-    var W = 100, H = 42, los = 26, f = formation(call.form);
+    /* Wide rather than square: the card is five times as wide as it is tall,
+       and a square diagram squeezed into it drew the whole play in a sliver
+       down the middle where the linemen ran together into one smudge. */
+    var W = 150, H = 44, los = 21, f = formation(call.form);
+    var ink = yourKit().a, soft = tint(ink, 0.75), faint = tint(ink, 0.45);
+    function X(fx){ return 4 + (fx / FIELD_W) * (W - 8); }
+    function DN(yd){ return Math.max(3, los - yd * 0.62); }      // downfield
+    function BK(yd){ return Math.min(H - 2.5, los + yd * 3.4); }  // backfield
     var bits = ['<svg viewBox="0 0 ' + W + ' ' + H + '" aria-hidden="true">'];
     bits.push('<path d="M4 ' + los + ' H' + (W - 4) + '" stroke="rgba(255,255,255,.22)" stroke-width="1" fill="none"/>');
-    var ink = yourKit().a;
+
+    // the line
+    OL_X.forEach(function(ox, i){
+      var x = X(ox), y = los + 2.6;
+      if(i === 2) bits.push('<rect x="' + (x - 2).toFixed(1) + '" y="' + (y - 2) + '" width="4" height="4" fill="' + soft + '"/>');
+      else bits.push('<circle cx="' + x.toFixed(1) + '" cy="' + y + '" r="2" fill="' + soft + '"/>');
+    });
+
+    var qbY = call.under ? BK(1.3) : BK(4.5);
+    var backX = call.under ? X(FIELD_W / 2) : X(FIELD_W / 2 - 2.6);
+    var backY = call.under ? BK(4.6) : BK(4.2);
+
+    // receivers, and their routes on a pass
     f.spots.forEach(function(spot, i){
-      var x = 4 + (spot[0] / FIELD_W) * (W - 8);
-      var y = los - (spot[1] ? 2 : 0);
+      var x = X(spot[0]), y = spot[1] ? los + 3 : los;
       if(call.kind === "pass"){
         var r = ROUTES[call.routes[i]] || ROUTES.drag;
         var flip = spot[0] > FIELD_W / 2;
-        var px = x, py = y, d = "M" + x + " " + y;
+        var d = "M" + x.toFixed(1) + " " + y;
         r.forEach(function(step){
-          px = clamp(x + (flip ? -step[0] : step[0]) / FIELD_W * (W - 8), 3, W - 3);
-          py = Math.max(3, y - step[1] * 0.62);
-          d += " L" + px.toFixed(1) + " " + py.toFixed(1);
+          var px = clamp(x + (flip ? -step[0] : step[0]) / FIELD_W * (W - 8), 3, W - 3);
+          d += " L" + px.toFixed(1) + " " + DN(step[1]).toFixed(1);
         });
-        bits.push('<path d="' + d + '" stroke="' + tint(ink, 0.75) + '" stroke-width="1.4" fill="none"/>');
+        bits.push('<path d="' + d + '" stroke="' + soft + '" stroke-width="1.4" fill="none"/>');
       }
-      bits.push('<circle cx="' + x.toFixed(1) + '" cy="' + y + '" r="2.4" fill="' + ink + '"/>');
+      bits.push('<circle cx="' + x.toFixed(1) + '" cy="' + y + '" r="2.3" fill="' + ink + '"/>');
     });
+
+    // the quarterback and the back
+    bits.push('<circle cx="' + (W/2) + '" cy="' + qbY.toFixed(1) + '" r="2.3" fill="' + ink + '"/>');
+    bits.push('<circle cx="' + backX.toFixed(1) + '" cy="' + backY.toFixed(1) + '" r="2.1" fill="' + soft + '"/>');
+
+    function arrow(pts, dashed, w){
+      var d = "M" + pts.map(function(p){ return p[0].toFixed(1) + " " + p[1].toFixed(1); }).join(" L");
+      bits.push('<path d="' + d + '" stroke="' + tint(ink, 0.9) + '" stroke-width="' + (w || 1.6) + '" fill="none"' +
+                (dashed ? ' stroke-dasharray="2 2"' : "") + '/>');
+    }
+
     if(call.kind === "run"){
-      var lx = 4 + call.lane * (W - 8);
-      bits.push('<path d="M' + (W/2) + ' ' + (los + 9) + ' L' + (W/2) + ' ' + (los + 3) +
-                ' L' + lx.toFixed(1) + ' ' + (los - 9) + '" stroke="' + tint(ink, 0.85) +
-                '" stroke-width="1.6" fill="none"/>');
-      bits.push('<circle cx="' + (W/2) + '" cy="' + (los + 9) + '" r="2.4" fill="' + ink + '"/>');
+      var lx = X(call.lane * FIELD_W);
+      if(call.carrier === "qb"){
+        arrow([[W/2, qbY], [W/2, DN(9)]]);
+      } else if(call.carrier === "jet"){
+        var js = f.spots[1];
+        arrow([[X(js[0]), los + 3], [W/2 + 6, BK(1.4)], [lx, los + 1], [lx, DN(9)]]);
+      } else if(call.jab){
+        var jx = X(call.jab.lane * FIELD_W);
+        arrow([[backX, backY], [jx, BK(2.4)], [lx, los + 2], [lx, DN(9)]]);
+      } else {
+        arrow([[backX, backY], [lx, los + 4], [lx, DN(9)]]);
+      }
+      // power: the guard who pulls, drawn as a dashed run behind the line
+      if(call.pull !== undefined){
+        var gx = X(OL_X[call.pull]);
+        arrow([[gx, los + 2.6], [gx, BK(1.6)], [lx - 5, BK(1.6)], [lx - 1, los - 2]], true, 1.2);
+      }
+    } else if(call.screen){
+      var sx = backX, sy = backY, d2 = [[sx, sy]];
+      SCREEN_PATH.forEach(function(st2){ d2.push([sx + st2[0] / FIELD_W * (W - 8), BK(4.2 - st2[1])]); });
+      arrow(d2);
+      // the linemen who release to lead it
+      CONVOY.forEach(function(c, k){
+        var from = X(OL_X[k]);
+        arrow([[from, los + 2.6], [X(c[0]), DN(c[1] + 1.5)]], true, 1.1);
+      });
+    } else if(call.pa){
+      // the fake: the ball shown to the back, then taken away
+      arrow([[W/2, qbY], [W/2 - 5, BK(3.4)]], true, 1.2);
     }
     bits.push("</svg>");
     return bits.join("");
   }
 
+  /* Sixteen cards will not fit where six did, so the book opens on the half
+     of it the current call comes from - the ground or the air - with a tab
+     for the other. Eight a side is two across and four down, which fits in
+     the space the pitch gives up without scrolling on anything the size of
+     a phone. */
+  var bookTab = null;
+
   function paintPlaybook(){
     var host = el("playbook");
     host.innerHTML = "";
     var now = (play && play.call) ? play.call.id : null;
-    PLAYBOOK.forEach(function(call){
+    var kind = bookTab || (play && play.call ? play.call.kind : "run");
+
+    var tabs = document.createElement("div");
+    tabs.className = "ptabs";
+    [["run", "Run"], ["pass", "Pass"]].forEach(function(t){
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "chip";
+      b.dataset.tab = t[0];
+      b.textContent = t[1];
+      b.setAttribute("aria-pressed", kind === t[0]);
+      b.addEventListener("click", function(){ bookTab = t[0]; paintPlaybook(); });
+      tabs.appendChild(b);
+    });
+    host.appendChild(tabs);
+
+    PLAYBOOK.filter(function(c){ return c.kind === kind; }).forEach(function(call){
       var b = document.createElement("button");
       b.className = "pcard";
       b.type = "button";
@@ -2297,6 +2902,7 @@
   /* The six cards need the room the pitch is using, and there is nothing to
      watch on it while you are choosing, so it stands down until you have. */
   function showPlaybook(on){
+    if(on) bookTab = null;          // open on the half the current call is in
     el("playbook").hidden = !on;
     el("callbar").hidden = on;
     canvas.style.display = on ? "none" : "";
