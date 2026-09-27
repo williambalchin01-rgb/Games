@@ -1,0 +1,2123 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#151C24">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Arcade">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<link rel="icon" href="./icon-192.png">
+<title>Wayfarer</title>
+<link rel="stylesheet" href="./app.css">
+<style>
+  #gameview{flex:1;display:flex;flex-direction:column;min-height:0;gap:8px}
+  .maprow{flex:1;min-height:0;position:relative}
+  canvas#map{display:block;width:100%;height:100%;border-radius:8px;touch-action:none;background:#070B10}
+  .zoom{position:absolute;right:8px;top:8px;display:flex;flex-direction:column;gap:6px}
+  .zoom button{
+    width:34px;height:34px;border-radius:8px;border:1px solid var(--line);
+    background:rgba(21,28,36,.82);color:var(--muted);font-size:17px;line-height:1;
+  }
+
+  .actions{display:flex;gap:8px}
+  .actions button{
+    flex:1;text-align:center;border:1px solid var(--line);border-radius:var(--radius);
+    background:var(--surface);padding:12px 6px;font-size:13px;
+  }
+  .actions button[data-primary="true"]{border-color:var(--accent);color:var(--accent)}
+  .actions button:disabled{color:var(--line);border-color:var(--line)}
+  #go{
+    width:100%;text-align:center;border:1px solid var(--sel);border-radius:var(--radius);
+    background:var(--surface);color:var(--sel);padding:13px 8px;font-size:14px;
+  }
+  #go:disabled{color:var(--muted);border-color:var(--line)}
+
+  .sheet{
+    flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;
+    display:flex;flex-direction:column;gap:8px;
+  }
+  .sheethead{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+  .sheethead h2{margin:0;font-size:19px;font-weight:300;letter-spacing:-.01em}
+  .sheethead .sub{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+  #sheet-body{display:flex;flex-direction:column;gap:8px}
+
+  /* The picture at the top of a system: whatever you last tapped, big. */
+  .hero{position:relative;border-radius:var(--radius);overflow:hidden;background:#070B10;border:1px solid var(--line)}
+  .hero canvas{display:block;width:100%;height:170px}
+  .hero .cap{position:absolute;left:12px;right:12px;bottom:10px;font-size:12px;color:var(--ink);text-shadow:0 1px 3px #000}
+  .hero .cap b{display:block;font-size:15px;font-weight:400;margin-bottom:2px}
+  .hero .cap span{color:#AFBAC4}
+  .hero .cap[data-side="true"]{right:auto;max-width:52%}
+
+  .card{
+    display:flex;gap:12px;align-items:center;width:100%;text-align:left;
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    padding:10px 12px;
+  }
+  .card[aria-pressed="true"]{border-color:var(--sel)}
+  .card .art{flex:none;width:56px;height:56px}
+  .card .body{flex:1;min-width:0}
+  .card .nm{font-size:14.5px}
+  .card .short{font-size:11.5px;color:var(--muted);margin-top:3px}
+  .card .act{
+    flex:none;font-size:12px;border:1px solid var(--accent);color:var(--accent);
+    border-radius:20px;padding:8px 11px;white-space:nowrap;
+  }
+  .card .act:disabled{border-color:var(--line);color:var(--muted)}
+  .card .act[data-done="true"]{border-color:transparent;color:var(--muted);padding-right:0}
+  .tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
+  .tag{
+    font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);
+    border:1px solid var(--line);border-radius:20px;padding:3px 7px;white-space:nowrap;
+  }
+  .tag[data-hot="true"]{color:var(--sel);border-color:rgba(224,164,88,.45)}
+  .tag[data-good="true"]{color:var(--accent);border-color:rgba(79,168,139,.45)}
+  .tag b{color:var(--ink);font-weight:400;font-variant-numeric:tabular-nums}
+  .finds{margin:5px 0 0;padding:0;list-style:none;font-size:11.5px;color:var(--muted)}
+  .finds li{margin-top:2px}
+  .finds li b{color:var(--ink);font-weight:400}
+  .finds li i{font-style:normal;color:var(--sel)}
+
+  .pips{display:flex;gap:4px;margin-top:6px}
+  .pips span{width:16px;height:5px;border-radius:3px;background:var(--line)}
+  .pips span[data-on="true"]{background:var(--accent)}
+
+  .grouphead{
+    font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);
+    padding:6px 2px 0;display:flex;justify-content:space-between;
+  }
+  .empty{color:var(--muted);font-size:13px;text-align:center;padding:14px 10px;margin:0}
+  .entry{padding:8px 2px;border-bottom:1px solid var(--line);font-size:13.5px}
+  .entry small{display:block;font-size:11.5px;color:var(--muted);margin-top:2px}
+  .entry[data-unknown="true"]{color:var(--line)}
+  .bar{height:5px;border-radius:3px;background:var(--line);overflow:hidden}
+  .bar i{display:block;height:100%;background:var(--accent)}
+
+  .goal{display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid var(--line)}
+  .goal:last-child{border-bottom:none}
+  .goal .tick{flex:none;width:18px;height:18px;border-radius:50%;border:1px solid var(--line)}
+  .goal[data-done="true"] .tick{background:var(--accent);border-color:var(--accent)}
+  .goal .nm{flex:1;font-size:13.5px}
+  .goal .nm small{display:block;font-size:11.5px;color:var(--muted);margin-top:1px}
+  .goal .amt{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+
+  .story{
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    padding:16px 14px;font-size:14.5px;line-height:1.5;
+  }
+  .story p{margin:0}
+  .story .then{margin-top:12px;color:var(--sel)}
+  .choice{display:flex;gap:8px}
+  .choice button{
+    flex:1;text-align:center;border:1px solid var(--line);border-radius:var(--radius);
+    background:var(--surface);padding:13px 6px;font-size:14px;
+  }
+  .choice button[data-primary="true"]{border-color:var(--sel);color:var(--sel)}
+
+  .clockline{
+    margin:0;text-align:center;font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--muted);font-variant-numeric:tabular-nums;min-height:1.2em;
+  }
+  .clockline[data-low="true"]{color:var(--sel)}
+</style>
+</head>
+<body>
+
+<header>
+  <a class="back" id="back" href="./index.html">&larr; Arcade</a>
+  <button class="chip" id="restart">New galaxy</button>
+</header>
+
+<div id="gameview">
+
+  <div class="statline">
+    <span class="big" id="cash">0<span class="lbl">Credits</span></span>
+    <span class="mid" id="where">Day 1</span>
+    <span class="big" id="fuel">0<span class="lbl">Fuel</span></span>
+  </div>
+
+  <div class="maprow" id="maprow">
+    <canvas id="map"></canvas>
+    <div class="zoom">
+      <button id="zin" aria-label="Zoom in">+</button>
+      <button id="zout" aria-label="Zoom out">&minus;</button>
+      <button id="zhome" aria-label="Centre on the ship">&#9678;</button>
+    </div>
+  </div>
+
+  <div class="sheet" id="sheet" hidden>
+    <div class="sheethead"><h2 id="sheet-title"></h2><span class="sub" id="sheet-sub"></span></div>
+    <div id="sheet-body"></div>
+  </div>
+
+  <p class="msg" id="msg"></p>
+
+  <p class="clockline" id="clockline"></p>
+
+  <button id="go" hidden></button>
+
+  <div class="actions" id="actions">
+    <button id="back-to-map" data-primary="true" hidden>Back to the map</button>
+    <button id="system">System</button>
+    <button id="ship">Ship</button>
+    <button id="codex">Codex</button>
+    <button id="goals">Goals</button>
+  </div>
+
+  <p class="howto" id="howto">Tap a star to plot a course. Land on worlds to survey them, and sell what you find at a dock.</p>
+</div>
+
+<script src="./sw-boot.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  /* ---------------------------------------------------------------------
+     CHANCE
+
+     Everything about the galaxy comes from its seed, so nothing about it
+     has to be saved: the same number always makes the same stars, the same
+     worlds and the same things waiting on them. The save holds only what
+     you have done.
+     --------------------------------------------------------------------- */
+  function hash(a, b, c){
+    var h = (a ^ 0x9E3779B9) >>> 0;
+    h = Math.imul(h ^ ((b + 0x85EBCA6B) | 0), 0xC2B2AE35);
+    h ^= h >>> 15;
+    h = Math.imul(h ^ ((c + 0x27D4EB2F) | 0), 0x165667B1);
+    h ^= h >>> 13;
+    h = Math.imul(h, 0x2C1B3C6D);
+    h ^= h >>> 16;
+    return h >>> 0;
+  }
+  function rngFrom(n){
+    var a = n >>> 0;
+    return function(){
+      a = (a + 0x6D2B79F5) | 0;
+      var t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function gauss(r){ return (r() + r() + r() + r() - 2) * 0.87; }
+  function pick(r, list, weight){
+    var sum = 0, i;
+    for(i = 0; i < list.length; i++) sum += weight(list[i]);
+    var x = r() * sum;
+    for(i = 0; i < list.length; i++){ x -= weight(list[i]); if(x <= 0) return list[i]; }
+    return list[list.length - 1];
+  }
+
+  /* ---------------------------------------------------------------------
+     WHAT IS OUT THERE
+
+     Six shelves of the codex: the stars, the kinds of world, what lives on
+     them, what lies on them, what someone left behind, and the things that
+     are simply strange. `v` is what the first sighting is worth before
+     distance and your survey suite are applied.
+     --------------------------------------------------------------------- */
+  var CLASSES = {
+    O:  { name:"Blue giant",        col:"#9DB4FF", dot:3.4, w:2,  scoop:true,  desc:"Huge, hot and brief. It will be gone in a few million years." },
+    B:  { name:"Blue-white star",   col:"#B3C8FF", dot:3.0, w:4,  scoop:true,  desc:"Bright enough to read by from the next system over." },
+    A:  { name:"White star",        col:"#DCE4FF", dot:2.6, w:7,  scoop:true,  desc:"Young and spinning so fast it bulges at the equator." },
+    F:  { name:"Yellow-white star", col:"#F6F2E4", dot:2.4, w:10, scoop:true,  desc:"A little hotter than the Sun, and a little shorter-lived." },
+    G:  { name:"Yellow star",       col:"#FFE3A0", dot:2.3, w:14, scoop:true,  desc:"Middle-aged and steady. The kind of star people call home." },
+    K:  { name:"Orange star",       col:"#FFBC76", dot:2.1, w:20, scoop:true,  desc:"Cool and patient. It will outlive every star brighter than it." },
+    M:  { name:"Red dwarf",         col:"#FF8766", dot:1.7, w:33, scoop:true,  desc:"The commonest star there is, and the dimmest you can see." },
+    WD: { name:"White dwarf",       col:"#EAF2FF", dot:1.4, w:5,  scoop:false, desc:"The cooling core of a star that has already died." },
+    PS: { name:"Pulsar",            col:"#9FEFFF", dot:1.6, w:3,  scoop:false, desc:"A spinning neutron star, ticking like a clock." },
+    BH: { name:"Black hole",        col:"#D9894B", dot:2.2, w:2,  scoop:false, desc:"No light at all, only the stars behind it bent out of shape." }
+  };
+  var CLASS_ORDER = ["O","B","A","F","G","K","M","WD","PS","BH"];
+
+  // `fuel` marks a giant: you cannot land on one, but you can skim it
+  var WORLDS = {
+    lava:     { name:"Molten world",   v:14, desc:"Too close to its star. The surface never sets." },
+    barren:   { name:"Barren rock",    v:10, desc:"Craters on craters. Nothing has touched it but rock." },
+    desert:   { name:"Desert world",   v:14, desc:"Dunes a kilometre high, pushed along by thin, hot wind." },
+    ocean:    { name:"Ocean world",    v:28, desc:"One sea from pole to pole, and a scattering of islands." },
+    garden:   { name:"Garden world",   v:55, desc:"Air, water and green. Rarer than anything else out here." },
+    ice:      { name:"Ice world",      v:14, desc:"A frozen shell cracked by tides, with water underneath." },
+    toxic:    { name:"Toxic world",    v:20, desc:"Yellow cloud and sulphur rain under a crushing sky." },
+    twilight: { name:"Twilight world", v:32, desc:"One face always day, one always night, and life in the ring between." },
+    crystal:  { name:"Crystal world",  v:55, desc:"Its crust grew rather than cooled. It rings when struck." },
+    gas:      { name:"Gas giant",      v:8,  fuel:4, desc:"Storms the size of worlds, in bands of hydrogen." },
+    ringed:   { name:"Ringed giant",   v:12, fuel:3, desc:"A gas giant wearing a ring of ice and moonlets." },
+    icegiant: { name:"Ice giant",      v:8,  fuel:3, desc:"Cold blue methane over a slush of water and ammonia." }
+  };
+  var WORLD_ORDER = ["lava","barren","desert","ocean","garden","ice","toxic","twilight","crystal","gas","ringed","icegiant"];
+
+  var LIFE = [
+    { name:"Drift kelp",       on:["ocean"],                   v:60,  desc:"Forests that float, rooted to nothing." },
+    { name:"Lantern shoals",   on:["ocean"],                   v:80,  desc:"Fish that school in the dark and glow in unison." },
+    { name:"Reef builders",    on:["ocean"],                   v:70,  desc:"Polyps the size of a fingernail that have built mountains." },
+    { name:"Tidewalkers",      on:["ocean","garden"],          v:110, desc:"Six-legged grazers that follow the tide across the flats." },
+    { name:"Canopy grazers",   on:["garden"],                  v:90,  desc:"Long-necked herds that never touch the ground." },
+    { name:"Singing moss",     on:["garden","twilight"],       v:100, desc:"It hums when the wind blows. Nobody knows why." },
+    { name:"Glassback herds",  on:["garden"],                  v:130, desc:"Clear shells that focus sunlight onto their young." },
+    { name:"Skyseed trees",    on:["garden"],                  v:120, desc:"Their seeds float for years before they come down." },
+    { name:"Brine worms",      on:["ice"],                     v:70,  desc:"Living in the salt sea under the ice, feeding off vents." },
+    { name:"Frost lichen",     on:["ice","twilight"],          v:50,  desc:"Grows a millimetre a century and does not mind." },
+    { name:"Sulphur blooms",   on:["toxic"],                   v:80,  desc:"Flowers that drink acid rain." },
+    { name:"Acid mats",        on:["toxic"],                   v:55,  desc:"A slick of microbes the size of a continent." },
+    { name:"Dune burrowers",   on:["desert"],                  v:80,  desc:"Sand-swimmers, seen as ripples more than as animals." },
+    { name:"Sandglass cacti",  on:["desert"],                  v:65,  desc:"Plants that grow glass skins to keep their water in." },
+    { name:"Terminator vines", on:["twilight"],                v:120, desc:"They creep along the edge of the night, always just ahead of it." },
+    { name:"Cloud drifters",   on:["gas","ringed","icegiant"], v:150, desc:"Gas-bag creatures the size of towns, grazing on cloud." },
+    { name:"Lava eels",        on:["lava"],                    v:170, desc:"Silicon life, swimming through molten rock." }
+  ];
+  var LIFE_CHANCE = { garden:0.9, ocean:0.7, twilight:0.55, toxic:0.35, ice:0.3, desert:0.28, lava:0.05,
+                      gas:0.1, ringed:0.1, icegiant:0.06 };
+
+  var MINERALS = [
+    { name:"Native iron",       on:["barren","lava"],             v:25,  desc:"Metal lying in the open, no smelting needed." },
+    { name:"Blackglass",        on:["lava"],                      v:45,  desc:"Volcanic glass, smooth as oil." },
+    { name:"Fire opal",         on:["lava","desert"],             v:90,  desc:"Opals with a flame caught inside each one." },
+    { name:"Ruby sand",         on:["desert"],                    v:60,  desc:"Whole beaches of red corundum grit." },
+    { name:"Sulphur crystals",  on:["toxic"],                     v:40,  desc:"Yellow needles grown out of the vents." },
+    { name:"Methane clathrate", on:["ice"],                       v:35,  desc:"Ice that burns." },
+    { name:"Diamond fields",    on:["barren","lava","crystal"],   v:140, desc:"Carbon, crushed deep and left lying on the surface." },
+    { name:"Starsteel ore",     on:["barren","desert"],           v:110, desc:"An alloy no forge made, from the core of a broken world." },
+    { name:"Singing quartz",    on:["crystal"],                   v:120, desc:"It rings on its own, at a pitch that never changes." },
+    { name:"Lodestone",         on:["barren","ice"],              v:35,  desc:"Every stone here points the same way." },
+    { name:"Helium-3",          on:["gas","ringed","icegiant"],   v:70,  desc:"Fusion fuel, skimmed from the top of the cloud." },
+    { name:"Pearl ice",         on:["ice","crystal"],             v:75,  desc:"Ice laid down in layers, like the inside of a shell." }
+  ];
+  var MINERAL_CHANCE = { barren:0.6, lava:0.6, desert:0.45, crystal:1, ice:0.4, toxic:0.35,
+                         ocean:0, garden:0, twilight:0.2, gas:0.4, ringed:0.35, icegiant:0.3 };
+
+  var RELICS = [
+    { name:"Dead beacon",        v:200, desc:"A transmitter, long silent, still aimed at the core." },
+    { name:"Buried city",        v:340, desc:"Streets under the dust, and doors built for something tall." },
+    { name:"Glyph stones",       v:240, desc:"The same six symbols, carved over and over." },
+    { name:"Seed vault",         v:300, desc:"Sealed rooms of seed from a world nobody has found." },
+    { name:"Orbital ring shard", v:280, desc:"A piece of something that once went all the way round a world." },
+    { name:"Empty tomb",         v:220, desc:"Built for one. Whoever it was, they left." },
+    { name:"Star map mural",     v:260, desc:"A map of this galaxy, with the Heart at its centre." },
+    { name:"Silent machine",     v:320, desc:"Still warm. It stops whenever you look at it." }
+  ];
+
+  /* The strange things. You meet one on arriving at a system that has
+     one, and there is always a choice: look, or leave it be. Looking is
+     usually worth it and occasionally costs you fuel - never more. Each
+     outcome has a weight, and what it gives: fuel, data (before distance
+     and the survey suite), a chart of somewhere further in, or a fold in
+     space that carries you there. */
+  var ANOMALIES = [
+    { id:"derelict", name:"Derelict freighter", desc:"A cargo hauler drifting dead, its hold doors open.",
+      text:"A freighter hangs dead in the dark, hold doors open, running lights still blinking.",
+      go:"Board her", out:[
+        { w:55, fuel:5,  t:"Her tanks still hold fuel. You take what you can carry." },
+        { w:30, data:120, t:"The captain's log is intact. Someone will pay well for these routes." },
+        { w:15, fuel:-3, t:"Her reactor flares as you dock. You pull away scorched, and lighter." } ] },
+    { id:"primes", name:"Prime signal", desc:"Something repeating the first dozen primes, over and over.",
+      text:"Something in this system repeats the first dozen primes, over and over, and has done for a long time.",
+      go:"Trace it", out:[
+        { w:60, chart:true, t:"It is a pointer. At the end of it, a system you had not seen." },
+        { w:40, data:150, t:"It is a clock, counting down to something that already happened." } ] },
+    { id:"comet", name:"Rogue comet", desc:"A comet that belongs to no star, passing through.",
+      text:"A comet with a fresh tail is falling through the system. It belongs to no star.",
+      go:"Harvest the tail", out:[
+        { w:70, fuel:6, t:"Clean ice, straight into the tanks." },
+        { w:30, fuel:2, data:40, t:"It fractures as you close. You back away with a little ice." } ] },
+    { id:"lens", name:"Gravitational lens", desc:"Light from far stars, bent round something unseen.",
+      text:"Starlight here bends round something you cannot see, and the stars behind it are magnified.",
+      go:"Take readings", out:[
+        { w:100, chart:true, data:60, t:"Through the lens, clear as day, a system much further in." } ] },
+    { id:"leviathans", name:"Void leviathans", desc:"Creatures the size of moons, crossing between stars.",
+      text:"Shapes the size of moons are moving slowly across the starlight.",
+      go:"Follow them", out:[
+        { w:50, data:250, t:"They stop at a nebula and feed. You record all of it." },
+        { w:50, fuel:-2, data:40, t:"They outpace you easily. You burn fuel for a glimpse." } ] },
+    { id:"storm", name:"Ion storm", desc:"A storm of charged dust filling a whole system.",
+      text:"A storm of charged dust fills the system, crackling on the hull.",
+      go:"Fly through it", out:[
+        { w:55, data:180, t:"Your sensors drink it in. The readings are extraordinary." },
+        { w:45, fuel:-3, t:"It shorts a fuel line before you are clear." } ] },
+    { id:"beacon", name:"Lost beacon", desc:"A distress call, centuries old, still going.",
+      text:"A distress beacon is calling. By its codes, it has been calling for three hundred years.",
+      go:"Answer it", out:[
+        { w:60, chart:true, data:80, t:"No one left, but its log names a world worth the trip." },
+        { w:40, data:60, t:"No one left. You log the names and move on." } ] },
+    { id:"station", name:"Silent station", desc:"A station with every light on and nobody aboard.",
+      text:"A station orbits here with every light on. Nobody answers.",
+      go:"Dock", out:[
+        { w:65, refill:true, t:"The pumps still work. You leave with full tanks." },
+        { w:35, data:200, t:"Its archive copies across to you before the power fails." } ] },
+    { id:"nebula", name:"Green nebula", desc:"A small nebula, glowing from within.",
+      text:"A small nebula glows green from somewhere inside it.",
+      go:"Sample it", out:[
+        { w:80, data:140, t:"The glow is alive - or close enough to argue about." },
+        { w:20, fuel:-2, t:"It is thicker than it looks. Getting out costs you." } ] },
+    { id:"mirror", name:"Mirror sphere", desc:"A perfect reflecting sphere, a kilometre across.",
+      text:"A perfect mirrored sphere, a kilometre across, hangs in empty space.",
+      go:"Touch it", out:[
+        { w:40, data:400, t:"It shows you this sky as it was a million years ago." },
+        { w:60, data:30, t:"Nothing happens. Your reflection waves back a moment late." } ] },
+    { id:"swarm", name:"Probe swarm", desc:"Tiny machines, curious about everything.",
+      text:"A swarm of tiny machines surrounds the hull, tapping at it.",
+      go:"Let them in", out:[
+        { w:50, chart:true, t:"They leave behind a map, and go." },
+        { w:50, fuel:-2, data:60, t:"They take a sip of fuel, leave a little data, and go." } ] },
+    { id:"rift", name:"Fold in space", desc:"A line in space, like a cut in paper.",
+      text:"There is a thin bright line in space here, like a cut in paper.",
+      go:"Look closer", out:[
+        { w:50, fold:true, t:"It opens. You come out a long way from where you went in." },
+        { w:50, data:100, t:"It closes as you approach, leaving a ringing in the sensors." } ] },
+    { id:"seeds", name:"Seed cloud", desc:"Drifting pods, each a tiny sealed garden.",
+      text:"The system is full of drifting pods. Each is a tiny sealed garden.",
+      go:"Collect some", out:[
+        { w:80, data:160, t:"A hundred different plants, none of them from anywhere you know." },
+        { w:20, data:40, t:"Most are dead. You keep the ones that are not." } ] }
+  ];
+  var HEART = { name:"The Heart", desc:"The black hole at the middle of everything. You came all this way to see it." };
+
+  /* ---------------------------------------------------------------------
+     THE SHIP
+
+     Five things to improve, four steps each, and every step costs the
+     same on every line - so the order is yours to choose. Range decides
+     which gaps you can cross; the tank decides how far you can get from a
+     dock; the rest make each trip worth more.
+     --------------------------------------------------------------------- */
+  var TANK    = [12, 16, 22, 30, 40];
+  var DRIVE   = [7, 9, 11.5, 14, 17];
+  var SENSOR  = [16, 21, 27, 34, 42];
+  var SCANNER = [1, 1.25, 1.5, 1.8, 2.2];
+  var SCOOP   = [0, 1, 2, 3, 5];
+  var UP_COST = [0, 1200, 4000, 11000, 28000];
+  var UPGRADES = [
+    { key:"drive",   name:"Jump drive",   vals:DRIVE,   unit:" ly",   what:"How far one jump reaches." },
+    { key:"tank",    name:"Fuel tank",    vals:TANK,    unit:" fuel", what:"How far from a dock you can go." },
+    { key:"scanner", name:"Survey suite", vals:SCANNER, unit:"×",  what:"What every find is worth. From the second step it also picks up relics from orbit." },
+    { key:"sensor",  name:"Sensors",      vals:SENSOR,  unit:" ly",   what:"How far you see from each star you visit." },
+    { key:"scoop",   name:"Fuel scoop",   vals:SCOOP,   unit:" fuel", what:"Fuel taken from each living star you arrive at." }
+  ];
+
+  var START_HOME = "Hearth";
+  /* What the docks earn you each day while you are away: charts sold,
+     fuel sold to whoever passes. Home a little; an outpost more, and more
+     again the further out it is and the more ground it has to work. It is
+     what keeps you going when you have seen everything your drive can
+     reach and cannot yet afford a bigger one. */
+  var HOME_DAILY = 1.5;
+  var OUTPOST_SIGHT = 24;
+  var HEART_DATA = 2500;
+
+  /* ---------------------------------------------------------------------
+     THE GALAXY
+
+     A disc of four spiral arms around a black hole, with a thin field of
+     stars between the arms. The arms are where the stars are close
+     together; the gaps between them are where a short-legged ship cannot
+     go, which is what makes the jump drive worth buying. You start near
+     the rim, at the end of an arm, and the Heart is a long way in.
+     --------------------------------------------------------------------- */
+  var G_R = 150, N_STARS = 560, GAP = 2.6, ARMS = 4, CELL = 17;
+
+  var SYL_A = ["Al","Bel","Cor","Dra","Es","Fen","Gal","Hy","Ir","Jor","Kel","Lu","Mor","Nex","Or","Per",
+               "Qua","Ry","Sol","Tev","Ul","Vyn","Wen","Xa","Yr","Zel","Ath","Bry","Cae","Dun","Eth","Ilm",
+               "Ka","Lor","Mae","Nor","Osk","Pry","Rhu","Sel","Tor","Vey","Ash","Cal","Hal","Mir","Tam","Sab"];
+  var SYL_B = ["a","e","i","o","u","ae","io","ar","en","is","or","ul","","","",""];
+  var SYL_C = ["ron","tha","mir","dus","ne","lis","vex","gard","sa","rin","thys","nor","ka","lon","via",
+               "dra","mos","tis","ven","phi","rel","sk","th","wyn","ris","dor","mel","tar"];
+
+  function starName(r){
+    return pick(r, SYL_A, function(){ return 1; }) + pick(r, SYL_B, function(){ return 1; }) +
+           pick(r, SYL_C, function(){ return 1; });
+  }
+
+  function placeStars(seed){
+    var r = rngFrom(hash(seed, 1, 1));
+    var stars = [{ x:0, y:0 }];
+    var grid = {};
+    function key(x, y){ return Math.floor(x / 10) + "," + Math.floor(y / 10); }
+    function clear(x, y){
+      var cx = Math.floor(x / 10), cy = Math.floor(y / 10);
+      for(var i = -1; i <= 1; i++) for(var j = -1; j <= 1; j++){
+        var c = grid[(cx + i) + "," + (cy + j)];
+        if(!c) continue;
+        for(var k = 0; k < c.length; k++){
+          var s = stars[c[k]], dx = s.x - x, dy = s.y - y;
+          // the Heart keeps a little room round it, so it stands alone on the map
+          var gap = c[k] === 0 ? 7 : GAP;
+          if(dx * dx + dy * dy < gap * gap) return false;
+        }
+      }
+      return true;
+    }
+    grid[key(0, 0)] = [0];
+    var tries = 0;
+    while(stars.length < N_STARS && tries < 60000){
+      tries++;
+      var u = r(), x, y, rad, ang;
+      if(u < 0.1){
+        // the bulge: a crowd round the Heart
+        rad = 8 + 20 * Math.sqrt(r());
+        ang = r() * Math.PI * 2;
+      } else {
+        rad = 18 + (G_R - 18) * Math.sqrt(r());
+        if(u < 0.8){
+          var arm = Math.floor(r() * ARMS);
+          ang = arm * Math.PI * 2 / ARMS + Math.log(rad / 14) * 1.35 + gauss(r) * 0.22;
+        } else ang = r() * Math.PI * 2;
+      }
+      x = rad * Math.cos(ang); y = rad * Math.sin(ang);
+      if(!clear(x, y)) continue;
+      stars.push({ x:x, y:y });
+      var k2 = key(x, y);
+      (grid[k2] = grid[k2] || []).push(stars.length - 1);
+    }
+    return stars;
+  }
+
+  /* Who is within a long jump of whom - the most any drive will ever
+     reach - worked out once, so every route search and every tap is a
+     walk down a short list rather than a sweep of the whole galaxy. */
+  function linkStars(stars){
+    var grid = {};
+    stars.forEach(function(s, i){
+      var k = Math.floor(s.x / CELL) + "," + Math.floor(s.y / CELL);
+      (grid[k] = grid[k] || []).push(i);
+    });
+    var far = DRIVE[DRIVE.length - 1];
+    stars.forEach(function(s, i){
+      s.near = [];
+      var cx = Math.floor(s.x / CELL), cy = Math.floor(s.y / CELL);
+      for(var a = -1; a <= 1; a++) for(var b = -1; b <= 1; b++){
+        var c = grid[(cx + a) + "," + (cy + b)];
+        if(!c) continue;
+        c.forEach(function(j){
+          if(j === i) return;
+          var d = Math.hypot(stars[j].x - s.x, stars[j].y - s.y);
+          if(d <= far) s.near.push({ j:j, d:d });
+        });
+      }
+      s.near.sort(function(p, q){ return p.d - q.d; });
+    });
+  }
+
+  function reachable(stars, from, range){
+    var seen = {}, q = [from], n = 1;
+    seen[from] = true;
+    while(q.length){
+      var a = q.pop();
+      stars[a].near.forEach(function(e){
+        if(e.d > range || seen[e.j]) return;
+        seen[e.j] = true; n++; q.push(e.j);
+      });
+    }
+    return { seen:seen, n:n };
+  }
+
+  /* Home is a star near the rim with room to roam on the starting drive,
+     and from which the Heart can be reached once the drive is three steps
+     up. A galaxy that fails either is thrown back and drawn again - the
+     seed is still the seed, it just has a second number behind it. */
+  var GALAXY = { seed:null, g:null };
+  function galaxy(seed){
+    if(GALAXY.seed === seed) return GALAXY.g;
+    var stars, home = -1;
+    for(var salt = 0; salt < 40 && home < 0; salt++){
+      stars = placeStars(hash(seed, salt, 7));
+      linkStars(stars);
+      for(var i = 1; i < stars.length; i++){
+        var rad = Math.hypot(stars[i].x, stars[i].y);
+        if(rad < 118 || rad > 142) continue;
+        if(reachable(stars, i, DRIVE[0]).n < 40) continue;
+        if(!reachable(stars, i, DRIVE[3]).seen[0]) continue;
+        home = i;
+        break;
+      }
+    }
+    var names = {};
+    stars.forEach(function(s, i){
+      var r = rngFrom(hash(seed, i, 2));
+      s.i = i;
+      s.r = Math.hypot(s.x, s.y);
+      s.cls = pick(r, CLASS_ORDER, function(c){ return CLASSES[c].w; });
+      var nm = starName(r), n = 0;
+      while(names[nm] && n < 6){ nm = starName(r); n++; }
+      if(names[nm]) nm += " " + (i % 9 + 2);
+      names[nm] = true;
+      s.name = nm;
+      s.anom = (i !== 0 && r() < 0.12) ? Math.floor(r() * ANOMALIES.length) : -1;
+    });
+    var h = stars[home];
+    h.cls = "G"; h.name = START_HOME; h.anom = -1; h.home = true;
+    var heart = stars[0];
+    heart.cls = "BH"; heart.name = HEART.name; heart.heart = true;
+    stars.forEach(function(s){ s.dh = Math.hypot(s.x - h.x, s.y - h.y); });
+    var g = { seed:seed, stars:stars, home:home };
+    GALAXY = { seed:seed, g:g };
+    return g;
+  }
+
+  /* ---------------------------------------------------------------------
+     WORLDS
+
+     Made the first time anybody asks, from the star's own number. Hot
+     stars push the temperate band outwards; dead ones have only rock, ice
+     and the odd giant left. Near the core the old worlds are, and so are
+     most of the relics.
+     --------------------------------------------------------------------- */
+  var HEAT = { O:3, B:2.4, A:1.8, F:1.3, G:1, K:0.75, M:0.5, WD:0.3, PS:0.3, BH:0.3 };
+  var ZONES = {
+    inner: { lava:35, barren:30, desert:20, toxic:10, twilight:8 },
+    mid:   { desert:18, ocean:18, garden:9, toxic:15, barren:12, twilight:8, ice:6, crystal:3 },
+    outer: { gas:30, ringed:14, icegiant:18, ice:24, barren:10, crystal:3 },
+    dead:  { barren:40, ice:25, crystal:12, gas:15, lava:8 }
+  };
+  var COUNT = { O:[0,3], B:[0,4], A:[1,5], F:[2,6], G:[2,7], K:[1,6], M:[0,4], WD:[0,2], PS:[0,2], BH:[0,0] };
+
+  function planetsOf(g, s){
+    if(s.pl) return s.pl;
+    var r = rngFrom(hash(g.seed, s.i, 3));
+    var span = COUNT[s.cls];
+    var n = span[0] + Math.floor(r() * (span[1] - span[0] + 1));
+    if(s.home) n = 4;
+    var dead = s.cls === "WD" || s.cls === "PS" || s.cls === "BH";
+    var list = [];
+    for(var k = 0; k < n; k++){
+      var orbit = 0.45 * Math.pow(1.7, k) * (0.85 + r() * 0.3);
+      var t = orbit / HEAT[s.cls];
+      var zone = dead ? "dead" : t < 0.75 ? "inner" : t < 1.9 ? "mid" : "outer";
+      var table = ZONES[zone];
+      var type = pick(r, Object.keys(table), function(key){
+        if(key === "garden" && "FGK".indexOf(s.cls) < 0) return 0;
+        if(key === "twilight" && "KM".indexOf(s.cls) < 0) return 0;
+        return table[key];
+      });
+      if(s.home) type = ["barren", "ocean", "desert", "gas"][k];
+      var p = { k:k, type:type, size:WORLDS[type].fuel ? 3 : 1 + Math.floor(r() * 2.6),
+                seed:hash(g.seed, s.i, 100 + k), life:-1, min:-1, relic:-1 };
+      if(r() < (LIFE_CHANCE[type] || 0)){
+        var lives = LIFE.map(function(x, idx){ return idx; })
+                        .filter(function(idx){ return LIFE[idx].on.indexOf(type) >= 0; });
+        if(lives.length) p.life = pick(r, lives, function(idx){ return 200 / LIFE[idx].v; });
+      }
+      if(r() < (MINERAL_CHANCE[type] || 0)){
+        var mins = MINERALS.map(function(x, idx){ return idx; })
+                           .filter(function(idx){ return MINERALS[idx].on.indexOf(type) >= 0; });
+        if(mins.length) p.min = pick(r, mins, function(idx){ return 200 / MINERALS[idx].v; });
+      }
+      if(!WORLDS[type].fuel && r() < 0.008 + 0.09 * Math.pow(1 - s.r / G_R, 1.5)) p.relic = Math.floor(r() * RELICS.length);
+      if(s.home){ p.relic = -1; if(k === 1) p.life = 0; }
+      list.push(p);
+    }
+    s.pl = list;
+    return list;
+  }
+  var ROMAN = ["I","II","III","IV","V","VI","VII","VIII"];
+  function planetName(s, p){ return s.name + " " + ROMAN[p.k]; }
+  function landable(p){ return !WORLDS[p.type].fuel; }
+  function landCost(p){ return p.size >= 3 ? 2 : 1; }
+  function pkey(s, p){ return s.i + ":" + p.k; }
+
+  /* ---------------------------------------------------------------------
+     A VOYAGE
+     --------------------------------------------------------------------- */
+  function newGame(seed){
+    if(typeof seed !== "number") seed = Math.floor(Math.random() * 4294967296);
+    var g = galaxy(seed);
+    var st = {
+      v:1, seed:seed, at:g.home, fuel:TANK[0], cash:0, data:0, day:1,
+      visited:{}, seen:{}, done:{}, outposts:[], trail:[g.home],
+      up:{ drive:0, tank:0, scanner:0, sensor:0, scoop:0 },
+      codex:{}, goals:{}, anom:{}, pending:null, target:null,
+      jumps:0, lands:0, events:0, tows:0, earned:0, far:0, heart:false
+    };
+    arrive(st, g.home, null);
+    return st;
+  }
+
+  function G(st){ return galaxy(st.seed); }
+  function star(st, i){ return G(st).stars[i]; }
+  function dist(a, b){ return Math.hypot(a.x - b.x, a.y - b.y); }
+  function jumpCost(d){ return Math.max(1, Math.ceil(d / 2.5)); }
+  function tank(st){ return TANK[st.up.tank]; }
+  function range(st){ return DRIVE[st.up.drive]; }
+  function isDock(st, i){ return i === G(st).home || st.outposts.indexOf(i) >= 0; }
+
+  /* What something is worth, found here: the further from home, the more
+     anyone will pay to hear about it. */
+  function worth(st, i, base){
+    return Math.round(base * (1 + star(st, i).dh / 90) * SCANNER[st.up.scanner]);
+  }
+
+  function reveal(st, i, radius){
+    var s = star(st, i), n = 0;
+    G(st).stars.forEach(function(o){
+      if(st.seen[o.i]) return;
+      if(dist(s, o) <= radius){ st.seen[o.i] = 1; n++; }
+    });
+    return n;
+  }
+
+  function note(st, key, base, at, log, name){
+    var fresh = !st.codex[key];
+    if(fresh) st.codex[key] = at + 1;       // +1: star 0 is the Heart, and 0 reads as "not yet"
+    if(!base) return 0;
+    var v = worth(st, at, fresh ? base * 2 : base);
+    if(log) log({ name:name, key:key, fresh:fresh, v:v });
+    return v;
+  }
+
+  function arrive(st, i, log){
+    var g = G(st), s = g.stars[i];
+    st.at = i;
+    st.trail.push(i);
+    if(st.trail.length > 400) st.trail.splice(0, st.trail.length - 400);
+    var said = [];
+    function tell(t){ said.push(t); }
+    if(!st.visited[i]){
+      st.visited[i] = 1;
+      note(st, "s:" + s.cls, 0, i);
+      if(!s.home){
+        var v = worth(st, i, 10);
+        st.data += v;
+        tell("New system, " + v + " in readings.");
+      }
+    }
+    st.seen[i] = 1;
+    reveal(st, i, SENSOR[st.up.sensor]);
+    st.far = Math.max(st.far, Math.round(s.dh));
+    if(s.heart && !st.heart){
+      st.heart = true;
+      note(st, "x:heart", 0, i);
+      st.data += HEART_DATA;
+      tell("The Heart. " + HEART_DATA + " in data from simply looking.");
+    }
+    var scoop = SCOOP[st.up.scoop];
+    if(scoop && CLASSES[s.cls].scoop && st.fuel < tank(st)){
+      var got = Math.min(scoop, tank(st) - st.fuel);
+      st.fuel += got;
+      tell("Scooped " + got + " fuel.");
+    }
+    if(isDock(st, i)) said = said.concat(dock(st));
+    if(s.anom >= 0 && !st.anom[i]) st.pending = i;
+    if(log) said.forEach(log);
+    return said;
+  }
+
+  function dock(st){
+    var out = [];
+    if(st.data > 0){
+      st.cash += st.data;
+      st.earned += st.data;
+      out.push("Sold " + st.data + " in data.");
+      st.data = 0;
+    }
+    if(st.fuel < tank(st)){ st.fuel = tank(st); out.push("Tanks filled."); }
+    return out;
+  }
+
+  function canJump(st, j){
+    if(st.pending !== null) return { ok:false, why:"Answer the anomaly first" };
+    if(j === st.at) return { ok:false, why:"You are here" };
+    var d = dist(star(st, st.at), star(st, j));
+    var cost = jumpCost(d);
+    if(d > range(st)) return { ok:false, why:"Out of range", d:d, cost:cost };
+    if(cost > st.fuel) return { ok:false, why:"Not enough fuel", d:d, cost:cost };
+    return { ok:true, d:d, cost:cost };
+  }
+
+  function outpostDaily(st, i){
+    var s = star(st, i);
+    var ground = planetsOf(G(st), s).filter(landable).length;
+    return (0.6 + ground * 0.3) * (1 + s.dh / 90);
+  }
+  function daily(st){
+    var n = HOME_DAILY;
+    st.outposts.forEach(function(i){ n += outpostDaily(st, i); });
+    return n;
+  }
+  function pass(st, days){
+    st.day += days;
+    var got = Math.round(daily(st) * days);
+    st.cash += got;
+    st.rent = (st.rent || 0) + got;
+    return got;
+  }
+
+  function jump(st, j, log){
+    var c = canJump(st, j);
+    if(!c.ok) return false;
+    st.fuel -= c.cost;
+    pass(st, Math.ceil(c.d));
+    st.jumps++;
+    arrive(st, j, log);
+    if(st.target === j) st.target = null;
+    return true;
+  }
+
+  /* Down to the surface: a fuel or two, and whatever is there is yours to
+     sell. Each thing is worth double the first time the codex sees it. */
+  function land(st, k, log){
+    var s = star(st, st.at), p = planetsOf(G(st), s)[k];
+    if(!p || !landable(p) || st.done[pkey(s, p)] || st.pending !== null) return null;
+    if(st.fuel < landCost(p)) return null;
+    st.fuel -= landCost(p);
+    st.done[pkey(s, p)] = 1;
+    st.lands++;
+    pass(st, 1);
+    return survey(st, s, p, log);
+  }
+
+  function skim(st, k, log){
+    var s = star(st, st.at), p = planetsOf(G(st), s)[k];
+    if(!p || landable(p) || st.done[pkey(s, p)] || st.pending !== null) return null;
+    st.done[pkey(s, p)] = 1;
+    var got = Math.min(WORLDS[p.type].fuel, tank(st) - st.fuel);
+    st.fuel += got;
+    var res = survey(st, s, p, log);
+    res.fuel = got;
+    return res;
+  }
+
+  function survey(st, s, p, log){
+    var finds = [];
+    function add(f){ finds.push(f); }
+    var total = note(st, "p:" + p.type, WORLDS[p.type].v, s.i, add, WORLDS[p.type].name);
+    if(p.life >= 0)  total += note(st, "l:" + p.life, LIFE[p.life].v, s.i, add, LIFE[p.life].name);
+    if(p.min >= 0)   total += note(st, "m:" + p.min, MINERALS[p.min].v, s.i, add, MINERALS[p.min].name);
+    if(p.relic >= 0) total += note(st, "r:" + p.relic, RELICS[p.relic].v, s.i, add, RELICS[p.relic].name);
+    st.data += total;
+    // found on the doorstep of a dock: sold before you have left the ground
+    if(isDock(st, s.i)) dock(st);
+    if(log) finds.forEach(log);
+    return { finds:finds, total:total };
+  }
+
+  /* An outpost can go anywhere there is ground to put it on. It refuels
+     you, buys what you have found, fits upgrades and lights the sky round
+     it - a second home, further out. */
+  function outpostCost(st){ return Math.round(1200 * Math.pow(1.3, st.outposts.length) / 50) * 50; }
+  function canBuild(st){
+    var s = star(st, st.at);
+    if(isDock(st, st.at)) return { ok:false, why:"Already a dock" };
+    if(!planetsOf(G(st), s).some(landable)) return { ok:false, why:"Nowhere to land" };
+    if(st.cash < outpostCost(st)) return { ok:false, why:"Not enough credits" };
+    return { ok:true };
+  }
+  function build(st){
+    if(!canBuild(st).ok) return null;
+    st.cash -= outpostCost(st);
+    st.outposts.push(st.at);
+    reveal(st, st.at, OUTPOST_SIGHT);
+    return dock(st);
+  }
+
+  function upgradeCost(st, key){ var l = st.up[key]; return l >= 4 ? null : UP_COST[l + 1]; }
+  function buy(st, key){
+    var c = upgradeCost(st, key);
+    if(c === null || st.cash < c || !isDock(st, st.at)) return false;
+    st.cash -= c;
+    st.up[key]++;
+    if(key === "tank") st.fuel = tank(st);
+    if(key === "sensor") reveal(st, st.at, SENSOR[st.up.sensor]);
+    return true;
+  }
+
+  /* Somewhere new, further in: not seen yet, a fair way off, and as near
+     the Heart as the pick allows. Charts and folds both use it. */
+  function farStar(st, i, r){
+    var s = star(st, i), best = null, bestScore = Infinity;
+    G(st).stars.forEach(function(o){
+      if(o.i === 0 || st.visited[o.i]) return;
+      var d = dist(s, o);
+      if(d < 28 || d > 70) return;
+      var score = o.r + r() * 40;
+      if(score < bestScore){ bestScore = score; best = o.i; }
+    });
+    return best;
+  }
+
+  function answer(st, go){
+    var i = st.pending;
+    if(i === null) return null;
+    var s = star(st, i), a = ANOMALIES[s.anom];
+    st.pending = null;
+    st.anom[i] = 1;
+    if(!go) return { text:"You leave it be.", left:true };
+    st.events++;
+    note(st, "x:" + a.id, 0, i);
+    var r = rngFrom(hash(st.seed, i, 9));
+    var o = pick(r, a.out, function(x){ return x.w; });
+    var res = { text:o.t, fuel:0, data:0, chart:null, fold:null };
+    if(o.fuel){
+      var before = st.fuel;
+      st.fuel = Math.max(0, Math.min(tank(st), st.fuel + o.fuel));
+      res.fuel = st.fuel - before;
+    }
+    if(o.refill){ res.fuel = tank(st) - st.fuel; st.fuel = tank(st); }
+    if(o.data){ res.data = worth(st, i, o.data); st.data += res.data; }
+    if(o.chart || o.fold){
+      var t = farStar(st, i, r);
+      if(t !== null){
+        st.seen[t] = 1;
+        reveal(st, t, 14);
+        if(o.chart){ res.chart = t; st.target = t; }
+        else { res.fold = t; st.trail.push(-1); arrive(st, t, null); }
+      } else {
+        res.data = worth(st, i, 120); st.data += res.data;
+      }
+    }
+    return res;
+  }
+
+  /* ---------------------------------------------------------------------
+     FINDING THE WAY
+
+     Cheapest fuel first, then fewest jumps, through stars you have seen.
+     A star you have not seen is not somewhere you can plan to go.
+     --------------------------------------------------------------------- */
+  function search(st, from, isGoal){
+    var stars = G(st).stars, R = range(st);
+    var best = {}, prev = {}, open = [from];
+    best[from] = 0;
+    var doneSet = {};
+    while(open.length){
+      var bi = 0;
+      for(var k = 1; k < open.length; k++) if(best[open[k]] < best[open[bi]]) bi = k;
+      var a = open.splice(bi, 1)[0];
+      if(doneSet[a]) continue;
+      doneSet[a] = true;
+      if(isGoal(a)){
+        var path = [a];
+        while(path[0] !== from) path.unshift(prev[path[0]]);
+        return { path:path, fuel:Math.floor(best[a]), to:a };
+      }
+      stars[a].near.forEach(function(e){
+        if(e.d > R || !st.seen[e.j] || doneSet[e.j]) return;
+        var c = best[a] + jumpCost(e.d) + 0.001;
+        if(best[e.j] === undefined || c < best[e.j]){
+          best[e.j] = c; prev[e.j] = a; open.push(e.j);
+        }
+      });
+    }
+    return null;
+  }
+  function route(st, to){
+    if(to === st.at) return { path:[st.at], fuel:0, to:to };
+    return search(st, st.at, function(i){ return i === to; });
+  }
+  function homeward(st, from){
+    return search(st, from === undefined ? st.at : from, function(i){ return isDock(st, i); });
+  }
+
+  /* Stuck: no star in range you can afford, and nothing in this system
+     left to skim. */
+  function stranded(st){
+    if(isDock(st, st.at) || st.pending !== null) return false;
+    var s = star(st, st.at), R = range(st);
+    for(var k = 0; k < s.near.length; k++){
+      var e = s.near[k];
+      if(e.d <= R && jumpCost(e.d) <= st.fuel) return false;
+    }
+    var pl = planetsOf(G(st), s);
+    for(var q = 0; q < pl.length; q++){
+      if(!landable(pl[q]) && !st.done[pkey(s, pl[q])] && tank(st) > st.fuel) return false;
+    }
+    return true;
+  }
+  /* Adrift: no way back to a dock on what is in the tank, or none you know
+     of. Not the end - someone will come for you - but it costs half of
+     whatever you had not yet sold, so it is a choice rather than a rescue:
+     you can always push on and hope for a giant to skim. */
+  function adrift(st){
+    if(isDock(st, st.at) || st.pending !== null) return false;
+    var h = homeward(st);
+    return !h || h.fuel > st.fuel;
+  }
+  function towTo(st){
+    var s = star(st, st.at), best = null, bd = Infinity;
+    [G(st).home].concat(st.outposts).forEach(function(i){
+      var d = dist(s, star(st, i));
+      if(d < bd){ bd = d; best = i; }
+    });
+    return best;
+  }
+  function tow(st){
+    if(!adrift(st)) return null;
+    var to = towTo(st);
+    var lost = Math.floor(st.data / 2);
+    st.data -= lost;
+    pass(st, Math.ceil(dist(star(st, st.at), star(st, to)) / 2));
+    st.tows++;
+    st.trail.push(-1);
+    var said = arrive(st, to, null);
+    return { to:to, lost:lost, said:said };
+  }
+
+  /* ---------------------------------------------------------------------
+     MILESTONES
+     --------------------------------------------------------------------- */
+  function count(o){ return Object.keys(o).length; }
+  function codexHas(st, prefix){
+    return Object.keys(st.codex).some(function(k){ return k.indexOf(prefix) === 0; });
+  }
+  function upgrades(st){ var n = 0; for(var k in st.up) n += st.up[k]; return n; }
+  var CODEX_TOTAL = CLASS_ORDER.length + WORLD_ORDER.length + LIFE.length + MINERALS.length +
+                    RELICS.length + ANOMALIES.length + 1;
+
+  var GOALS = [
+    { id:"land",    text:"Make landfall",            note:"Land on a world and survey it",       pays:40,   met:function(s){ return s.lands >= 1; } },
+    { id:"five",    text:"Five systems",             note:"Visit five star systems",             pays:60,   met:function(s){ return count(s.visited) >= 5; } },
+    { id:"sell",    text:"Paid for it",              note:"Sell data at a dock",                 pays:40,   met:function(s){ return s.earned > 0; } },
+    { id:"life",    text:"Not alone",                note:"Find something living",               pays:100,  met:function(s){ return codexHas(s, "l:"); } },
+    { id:"fit",     text:"Refit",                    note:"Fit a ship upgrade",                  pays:80,   met:function(s){ return upgrades(s) >= 1; } },
+    { id:"post",    text:"A light in the dark",      note:"Build an outpost",                    pays:150,  met:function(s){ return s.outposts.length >= 1; } },
+    { id:"tf",      text:"Twenty-five systems",      note:"Visit twenty-five star systems",      pays:200,  met:function(s){ return count(s.visited) >= 25; } },
+    { id:"c20",     text:"Collector",                note:"Twenty entries in the codex",         pays:250,  met:function(s){ return count(s.codex) >= 20; } },
+    { id:"relic",   text:"Someone was here",         note:"Find a relic",                        pays:300,  met:function(s){ return codexHas(s, "r:"); } },
+    { id:"far60",   text:"Long way from home",       note:"Sixty light years from Hearth",       pays:300,  met:function(s){ return s.far >= 60; } },
+    { id:"five-a",  text:"Curious",                  note:"Look into five anomalies",            pays:250,  met:function(s){ return s.events >= 5; } },
+    { id:"garden",  text:"Paradise",                 note:"Survey a garden world",               pays:300,  met:function(s){ return !!s.codex["p:garden"]; } },
+    { id:"three",   text:"Chain of lights",          note:"Build three outposts",                pays:500,  met:function(s){ return s.outposts.length >= 3; } },
+    { id:"sf",      text:"Seventy-five systems",     note:"Visit seventy-five star systems",     pays:700,  met:function(s){ return count(s.visited) >= 75; } },
+    { id:"far100",  text:"Deep field",               note:"A hundred light years from Hearth",   pays:800,  met:function(s){ return s.far >= 100; } },
+    { id:"bh",      text:"Event horizon",            note:"See a black hole",                    pays:600,  met:function(s){ return !!s.codex["s:BH"]; } },
+    { id:"c45",     text:"Naturalist",               note:"Forty-five entries in the codex",     pays:1000, met:function(s){ return count(s.codex) >= 45; } },
+    { id:"heart",   text:"The Heart",                note:"Reach the middle of the galaxy",      pays:3000, met:function(s){ return s.heart; } },
+    { id:"ohf",     text:"A hundred and fifty",      note:"Visit 150 star systems",              pays:2000, met:function(s){ return count(s.visited) >= 150; } },
+    { id:"all",     text:"Nothing left unnamed",     note:"Complete the codex",                  pays:5000, met:function(s){ return count(s.codex) >= CODEX_TOTAL; } }
+  ];
+  function claimGoals(st, log){
+    var paid = 0;
+    GOALS.forEach(function(g){
+      if(st.goals[g.id] || !g.met(st)) return;
+      st.goals[g.id] = true;
+      st.cash += g.pays;
+      paid += g.pays;
+      if(log) log(g.text + " - " + num(g.pays) + " credits");
+    });
+    return paid;
+  }
+  function num(n){ return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
+
+  /* ---------------------------------------------------------------------
+     PAINTING WORLDS
+
+     Every world is painted pixel by pixel from its own number: a sphere,
+     a noise field wrapped round it, and a rule per kind of world for
+     turning height into colour. Lit from the upper left, with air on the
+     ones that have any.
+     --------------------------------------------------------------------- */
+  function lattice(seed){
+    return function(x, y, z){
+      var n = (Math.imul(x, 73856093) ^ Math.imul(y, 19349663) ^ Math.imul(z, 83492791) ^ seed) | 0;
+      n = Math.imul(n ^ (n >>> 13), 0x5BD1E995);
+      n ^= n >>> 15;
+      return (n >>> 0) / 4294967296;
+    };
+  }
+  function makeNoise(seed){
+    var L = lattice(seed);
+    function sm(t){ return t * t * (3 - 2 * t); }
+    function noise(x, y, z){
+      var xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+      var xf = sm(x - xi), yf = sm(y - yi), zf = sm(z - zi);
+      function l(a, b, t){ return a + (b - a) * t; }
+      return l(
+        l(l(L(xi, yi, zi), L(xi + 1, yi, zi), xf), l(L(xi, yi + 1, zi), L(xi + 1, yi + 1, zi), xf), yf),
+        l(l(L(xi, yi, zi + 1), L(xi + 1, yi, zi + 1), xf), l(L(xi, yi + 1, zi + 1), L(xi + 1, yi + 1, zi + 1), xf), yf),
+        zf);
+    }
+    return function fbm(x, y, z, oct){
+      var a = 0.5, f = 1, sum = 0, norm = 0;
+      for(var o = 0; o < (oct || 4); o++){
+        sum += a * noise(x * f, y * f, z * f);
+        norm += a; a *= 0.5; f *= 2.03;
+      }
+      return sum / norm;
+    };
+  }
+  function mix(a, b, t){
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+  }
+  function sstep(a, b, x){ var t = (x - a) / (b - a); t = t < 0 ? 0 : t > 1 ? 1 : t; return t * t * (3 - 2 * t); }
+  function hex(c){ return [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)]; }
+
+  var GAS_PALETTES = [
+    ["#C9A77C", "#EAD9B8", "#9C6B45"], ["#D8C58F", "#F1E6C2", "#B38E55"],
+    ["#B56A4E", "#E3B38E", "#7D3F2E"], ["#A7B7C9", "#E3E9EF", "#6E829A"]
+  ];
+  var ICEGIANT_PALETTES = [["#6FB7C9", "#A6DCE4", "#4C8FA8"], ["#4E78C8", "#88A9E6", "#3656A0"]];
+  var ATMOS = { ocean:[120,170,255], garden:[140,200,255], toxic:[230,210,120], gas:[230,210,180],
+                ringed:[240,225,190], icegiant:[150,220,240], twilight:[200,200,230] };
+
+  /* The colour of one point on the surface, before light. `n` and `m` are
+     two independent noise readings there; `u` is the point itself. */
+  function surface(p, fbm, u, rs){
+    var x = u[0], y = u[1], z = u[2];
+    var n = fbm(x * 2.2 + 5, y * 2.2, z * 2.2, 5);
+    var m = fbm(x * 4.5, y * 4.5 + 9, z * 4.5, 3);
+    var lat = y, c, glow = null;
+    switch(p.type){
+      case "ocean":
+      case "garden": {
+        var sea = p.type === "garden" ? 0.49 : 0.56;
+        if(n > sea){
+          c = p.type === "garden" ? mix([70,140,66], [150,160,90], (n - sea) * 4 + m * 0.3)
+                                  : mix([96,128,72], [150,126,86], (n - sea) * 5);
+        } else c = mix([18,44,104], [42,112,170], sstep(sea - 0.16, sea, n));
+        c = mix(c, [236,242,248], 0.9 * sstep(0.74, 0.86, Math.abs(lat) + (m - 0.5) * 0.3));
+        var cl = fbm(x * 3 + 11, y * 5, z * 3, 4);
+        if(cl > 0.55) c = mix(c, [245,248,252], (cl - 0.55) * 3.2);
+        break;
+      }
+      case "desert":
+        c = mix(rs.a, rs.b, n * 1.4 - 0.2);
+        c = mix(c, [255,235,200], (Math.sin(lat * 22 + n * 10) * 0.5 + 0.5) * 0.12);
+        break;
+      case "ice": {
+        c = mix([228,238,246], [160,196,226], n * 1.6 - 0.35);
+        var rid = 1 - Math.abs(m * 2 - 1);
+        if(rid > 0.9) c = mix(c, [96,140,196], (rid - 0.9) * 8);
+        break;
+      }
+      case "lava": {
+        c = mix([40,32,32], [78,60,54], n);
+        var rd = 1 - Math.abs(fbm(x * 3.2, y * 3.2, z * 3.2 + 4, 4) * 2 - 1);
+        if(rd > 0.9){ glow = mix([255,90,30], [255,210,90], (rd - 0.9) * 9); }
+        break;
+      }
+      case "barren": {
+        c = mix(rs.a, rs.b, n * 1.5 - 0.25);
+        for(var q = 0; q < rs.craters.length; q++){
+          var cr = rs.craters[q];
+          var d = Math.hypot(x - cr[0], y - cr[1], z - cr[2]);
+          if(d < cr[3]){
+            var t = d / cr[3];
+            c = mix(c, t > 0.82 ? [200,196,190] : [60,58,56], t > 0.82 ? 0.16 * (1 - t) / 0.18 : 0.28 * (1 - t));
+          }
+        }
+        break;
+      }
+      case "toxic":
+        c = mix([214,196,96], [140,146,58], Math.sin(lat * 7 + n * 6) * 0.5 + 0.5);
+        c = mix(c, [236,220,150], (m - 0.5) * 1.2);
+        break;
+      case "twilight": {
+        var side = x * 0.9 + (n - 0.5) * 0.5;
+        if(side < -0.12) c = mix([212,132,74], [150,82,48], n);
+        else if(side > 0.16) c = mix([206,220,236], [150,170,200], m);
+        else c = mix([70,120,70], [120,150,90], m);
+        break;
+      }
+      case "crystal": {
+        var qn = Math.floor(n * 7) / 7, qm = Math.floor(m * 5) / 5;
+        c = mix(rs.a, rs.b, qn * 1.6 - 0.3);
+        c = mix(c, [255,255,255], qm * 0.35);
+        break;
+      }
+      default: {
+        // giants: bands, bent by turbulence, and sometimes a storm
+        var pal = rs.pal;
+        var t2 = lat * rs.bands + (n - 0.5) * rs.turb;
+        var v = Math.sin(t2 * Math.PI) * 0.5 + 0.5, w = Math.sin(t2 * Math.PI * 2.3 + 1) * 0.5 + 0.5;
+        c = mix(mix(pal[0], pal[1], v), pal[2], w * 0.55);
+        if(rs.spot){
+          var ds = Math.hypot((x - rs.spot[0]) / 1.8, y - rs.spot[1], z - rs.spot[2]);
+          if(ds < 0.16) c = mix(c, rs.spotCol, (1 - ds / 0.16) * 0.9);
+        }
+      }
+    }
+    return { c:c, glow:glow };
+  }
+
+  function worldLook(p){
+    var r = rngFrom(p.seed ^ 0xABCDEF);
+    var rs = {};
+    if(p.type === "desert"){ rs.a = mix([210,164,104], [196,120,80], r()); rs.b = mix([150,96,56], [120,80,60], r()); }
+    if(p.type === "barren"){
+      var g = 0.7 + r() * 0.5;
+      rs.a = [134 * g, 128 * g, 120 * g]; rs.b = [84 * g, 80 * g, 78 * g];
+      rs.craters = [];
+      for(var i = 0; i < 9; i++){
+        var th = r() * Math.PI * 2, ph = Math.acos(r() * 2 - 1);
+        rs.craters.push([Math.sin(ph) * Math.cos(th), Math.cos(ph), Math.sin(ph) * Math.sin(th), 0.1 + r() * 0.22]);
+      }
+    }
+    if(p.type === "crystal"){
+      rs.a = mix([150,90,210], [80,190,200], r()); rs.b = mix([60,40,120], [40,90,110], r());
+    }
+    if(WORLDS[p.type].fuel){
+      var pals = p.type === "icegiant" ? ICEGIANT_PALETTES : GAS_PALETTES;
+      rs.pal = pals[Math.floor(r() * pals.length)].map(hex);
+      if(p.type === "ringed") rs.pal = GAS_PALETTES[1].map(hex);
+      rs.bands = 3 + r() * 5; rs.turb = 0.4 + r() * 1.2;
+      if(r() < 0.5){ rs.spot = [0.35 - r() * 0.3, 0.2 + r() * 0.3, 0.85]; rs.spotCol = [190, 100, 70]; }
+      rs.tilt = (r() - 0.5) * 0.6;
+    }
+    // a twilight world keeps one face to its star, so it is never turned
+    rs.spin = p.type === "twilight" ? 0 : r() * Math.PI * 2;
+    return rs;
+  }
+
+  var ART = {};
+  /* One world, painted into a square `px` pixels across. Kept, because a
+     list of worlds is repainted every time you tap one. */
+  function worldArt(p, px, fill){
+    var key = p.seed + ":" + px + ":" + (fill || 0);
+    if(ART[key]) return ART[key];
+    var cv = document.createElement("canvas");
+    cv.width = cv.height = px;
+    var cx = cv.getContext("2d");
+    var rs = worldLook(p), fbm = makeNoise(p.seed | 0);
+    var ringed = p.type === "ringed";
+    var scale = fill || (ringed ? 0.5 : 0.6 + p.size * 0.12);
+    var R = px / 2 * Math.min(scale, 0.96), c0 = px / 2;
+    var S = Math.ceil(R * 2 + 6), off = Math.floor(c0 - S / 2);
+    var img = cx.createImageData(S, S), d = img.data;
+    var L = [-0.55, -0.45, 0.7], Ln = Math.hypot(L[0], L[1], L[2]);
+    L = [L[0] / Ln, L[1] / Ln, L[2] / Ln];
+    var atm = ATMOS[p.type];
+    var cs = Math.cos(rs.spin), sn = Math.sin(rs.spin);
+    for(var py = 0; py < S; py++){
+      for(var px2 = 0; px2 < S; px2++){
+        var nx = (off + px2 + 0.5 - c0) / R, ny = (off + py + 0.5 - c0) / R;
+        var d2 = nx * nx + ny * ny, o = (py * S + px2) * 4;
+        if(d2 > 1){
+          if(atm && d2 < 1.14){
+            var h = (1.14 - d2) / 0.14, lit = Math.max(0, -nx * 0.6 - ny * 0.5 + 0.4);
+            d[o] = atm[0]; d[o + 1] = atm[1]; d[o + 2] = atm[2]; d[o + 3] = 255 * h * h * 0.5 * lit;
+          }
+          continue;
+        }
+        var nz = Math.sqrt(1 - d2);
+        // turn the globe on its axis so no two worlds show the same face
+        var u = [nx * cs + nz * sn, ny, -nx * sn + nz * cs];
+        var sf = surface(p, fbm, u, rs);
+        var diff = Math.max(0, nx * L[0] + ny * L[1] + nz * L[2]);
+        var shade = 0.06 + 0.94 * Math.pow(diff, 0.85);
+        var col = [sf.c[0] * shade, sf.c[1] * shade, sf.c[2] * shade];
+        if(sf.glow) col = mix(col, sf.glow, 0.85);
+        if(atm){
+          var rim = Math.pow(1 - nz, 2.5) * (0.25 + diff * 0.9);
+          col = mix(col, atm, rim * 0.8);
+        }
+        var edge = Math.min(1, (1 - Math.sqrt(d2)) * R * 1.2);
+        d[o] = col[0]; d[o + 1] = col[1]; d[o + 2] = col[2]; d[o + 3] = 255 * edge;
+      }
+    }
+    var tmp = document.createElement("canvas");
+    tmp.width = tmp.height = S;
+    tmp.getContext("2d").putImageData(img, 0, 0);
+    function ring(front){
+      cx.save();
+      cx.translate(c0, c0);
+      cx.rotate(rs.tilt || -0.3);
+      [[1.45, 0.16, 5], [1.62, 0.12, 3], [1.78, 0.2, 7], [1.95, 0.1, 2]].forEach(function(b){
+        cx.beginPath();
+        cx.ellipse(0, 0, R * b[0], R * b[0] * 0.3, 0, front ? 0 : Math.PI, front ? Math.PI : Math.PI * 2);
+        cx.strokeStyle = "rgba(226,212,178," + (b[1] * 2.4) + ")";
+        cx.lineWidth = b[2] * px / 120;
+        cx.stroke();
+      });
+      cx.restore();
+    }
+    if(ringed) ring(false);
+    cx.drawImage(tmp, off, off);
+    if(ringed) ring(true);
+    ART[key] = cv;
+    return cv;
+  }
+
+  /* =====================================================================
+     Everything above is the galaxy. Everything below is the screen.
+     ===================================================================== */
+  function el(id){ return document.getElementById(id); }
+
+  var KEY = "arcade.wayfarer.v1";
+  var st = null;
+  var view = null;            // which sheet is standing in for the map
+  var canvas = el("map"), ctx = canvas.getContext("2d");
+  var cam = { x:0, y:0, s:6 };
+  var anim = null;            // the ship between two stars
+  var said = "";
+
+  function save(){
+    try{
+      st.cam = { x:cam.x, y:cam.y, s:cam.s };
+      localStorage.setItem(KEY, JSON.stringify(st));
+    }catch(e){}
+  }
+  function load(){
+    try{
+      var raw = localStorage.getItem(KEY);
+      if(!raw) return null;
+      var o = JSON.parse(raw);
+      if(!o || typeof o.seed !== "number" || typeof o.at !== "number") return null;
+      var g = galaxy(o.seed);
+      if(!g.stars[o.at]) return null;
+      o.outposts = (o.outposts || []).filter(function(i){ return !!g.stars[i]; });
+      o.up = o.up || { drive:0, tank:0, scanner:0, sensor:0, scoop:0 };
+      ["visited","seen","done","codex","goals","anom"].forEach(function(k){ o[k] = o[k] || {}; });
+      o.trail = o.trail || [o.at];
+      if(o.pending === undefined) o.pending = null;
+      if(o.target === undefined) o.target = null;
+      return o;
+    }catch(e){ return null; }
+  }
+
+  function say(text){ said = text || ""; el("msg").textContent = said; }
+
+  /* ---------------------------------------------------------------------
+     THE CHART
+     --------------------------------------------------------------------- */
+  function dpr(){ return Math.min(window.devicePixelRatio || 1, 2); }
+  function cssSize(){ return { w: canvas.width / dpr(), h: canvas.height / dpr() }; }
+  function resize(){
+    var box = el("maprow").getBoundingClientRect();
+    var w = Math.max(200, Math.round(box.width)), h = Math.max(160, Math.round(box.height));
+    canvas.width = Math.round(w * dpr());
+    canvas.height = Math.round(h * dpr());
+    ctx.setTransform(dpr(), 0, 0, dpr(), 0, 0);
+    draw();
+  }
+  function clampCam(){
+    var w = cssSize().w;
+    cam.s = Math.max(w / 360, Math.min(w / 10, cam.s));
+    cam.x = Math.max(-G_R - 20, Math.min(G_R + 20, cam.x));
+    cam.y = Math.max(-G_R - 20, Math.min(G_R + 20, cam.y));
+  }
+  function toScreen(x, y){
+    var z = cssSize();
+    return { x:(x - cam.x) * cam.s + z.w / 2, y:(y - cam.y) * cam.s + z.h / 2 };
+  }
+  function toWorld(x, y){
+    var z = cssSize();
+    return { x:(x - z.w / 2) / cam.s + cam.x, y:(y - z.h / 2) / cam.s + cam.y };
+  }
+
+  /* The glow of the whole galaxy, seen or not: every star as a faint
+     smudge, and the Heart as a warm one. It gives away the shape of the
+     arms long before you know what is in them - which is the point. You
+     can see where you want to go; you just cannot see what is there. */
+  var HAZE = { seed:null, cv:null }, HZ = 170;
+  function haze(){
+    if(HAZE.seed === st.seed) return HAZE.cv;
+    var px = 1400, k = px / (HZ * 2);
+    var cv = document.createElement("canvas");
+    cv.width = cv.height = px;
+    var c = cv.getContext("2d");
+    var core = c.createRadialGradient(px / 2, px / 2, 0, px / 2, px / 2, 60 * k);
+    core.addColorStop(0, "rgba(255,196,130,.30)");
+    core.addColorStop(0.4, "rgba(230,160,110,.10)");
+    core.addColorStop(1, "rgba(0,0,0,0)");
+    c.fillStyle = core;
+    c.fillRect(0, 0, px, px);
+    G(st).stars.forEach(function(s){
+      var x = (s.x + HZ) * k, y = (s.y + HZ) * k, r = 10 * k;
+      var gr = c.createRadialGradient(x, y, 0, x, y, r);
+      gr.addColorStop(0, "rgba(150,170,225,.06)");
+      gr.addColorStop(1, "rgba(150,170,225,0)");
+      c.fillStyle = gr;
+      c.fillRect(x - r, y - r, r * 2, r * 2);
+    });
+    // dust: the stars too faint and far to matter, so the dark is not empty
+    var r = rngFrom(hash(st.seed, 3, 3));
+    for(var i = 0; i < 2600; i++){
+      var rad = G_R * 1.05 * Math.sqrt(r()), ang = r() * Math.PI * 2;
+      c.fillStyle = "rgba(210,220,255," + (0.12 + r() * 0.3) + ")";
+      c.fillRect((Math.cos(ang) * rad + HZ) * k, (Math.sin(ang) * rad + HZ) * k, 1.2, 1.2);
+    }
+    HAZE = { seed:st.seed, cv:cv };
+    return cv;
+  }
+
+  function shipPos(){
+    var here = star(st, st.at);
+    if(!anim) return { x:here.x, y:here.y };
+    var t = Math.min(1, (performance.now() - anim.t0) / anim.ms);
+    t = t * t * (3 - 2 * t);
+    return { x:anim.from.x + (anim.to.x - anim.from.x) * t, y:anim.from.y + (anim.to.y - anim.from.y) * t };
+  }
+
+  var planned = null;         // the route to the target, as last worked out
+  function plan(){
+    planned = null;
+    if(st.target === null || st.target === undefined) return null;
+    planned = route(st, st.target);
+    return planned;
+  }
+
+  function draw(){
+    if(!st || view) return;
+    var z = cssSize(), w = z.w, h = z.h;
+    ctx.fillStyle = "#070B10";
+    ctx.fillRect(0, 0, w, h);
+    var hz = haze(), a = toScreen(-HZ, -HZ);
+    ctx.drawImage(hz, a.x, a.y, HZ * 2 * cam.s, HZ * 2 * cam.s);
+
+    var stars = G(st).stars, ship = shipPos(), R = range(st);
+    var sp = toScreen(ship.x, ship.y);
+
+    // where you have been: a faint wake
+    ctx.strokeStyle = "rgba(79,168,139,.22)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    var pen = false;
+    st.trail.forEach(function(i){
+      if(i < 0){ pen = false; return; }
+      var p = toScreen(stars[i].x, stars[i].y);
+      if(pen) ctx.lineTo(p.x, p.y); else ctx.moveTo(p.x, p.y);
+      pen = true;
+    });
+    ctx.stroke();
+
+    // how far one jump reaches
+    ctx.setLineDash([3, 5]);
+    ctx.strokeStyle = "rgba(224,164,88,.35)";
+    ctx.beginPath();
+    ctx.arc(sp.x, sp.y, R * cam.s, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // the course to wherever you are heading
+    if(planned && planned.path.length > 1 && !anim){
+      ctx.strokeStyle = "rgba(224,164,88,.8)";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      planned.path.forEach(function(i, n){
+        var p = toScreen(stars[i].x, stars[i].y);
+        if(n) ctx.lineTo(p.x, p.y); else ctx.moveTo(p.x, p.y);
+      });
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    var here = stars[st.at], zoomed = cam.s > 4;
+    stars.forEach(function(s){
+      if(!st.seen[s.i]) return;
+      var p = toScreen(s.x, s.y);
+      if(p.x < -20 || p.y < -20 || p.x > w + 20 || p.y > h + 20) return;
+      var c = CLASSES[s.cls], rr = c.dot * Math.max(0.7, Math.min(1.5, cam.s / 6));
+      var inReach = dist(here, s) <= R;
+      if(s.heart){
+        ctx.fillStyle = "#000";
+        ctx.strokeStyle = "#E8A060";
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        return;
+      }
+      if(zoomed && (s.cls === "O" || s.cls === "B" || s.cls === "A")){
+        var gl = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, rr * 4);
+        gl.addColorStop(0, c.col + "55"); gl.addColorStop(1, c.col + "00");
+        ctx.fillStyle = gl;
+        ctx.fillRect(p.x - rr * 4, p.y - rr * 4, rr * 8, rr * 8);
+      }
+      ctx.globalAlpha = inReach || st.visited[s.i] ? 1 : 0.55;
+      ctx.fillStyle = c.col;
+      ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+      if(st.visited[s.i] && !isDock(st, s.i) && cam.s >= 3){
+        ctx.strokeStyle = "rgba(108,122,135,.8)";
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(p.x, p.y, rr + 3, 0, Math.PI * 2); ctx.stroke();
+      }
+      if(isDock(st, s.i)){
+        ctx.strokeStyle = "#4FA88B";
+        ctx.lineWidth = 1.5;
+        var d = rr + 5;
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y - d); ctx.lineTo(p.x + d, p.y); ctx.lineTo(p.x, p.y + d); ctx.lineTo(p.x - d, p.y);
+        ctx.closePath(); ctx.stroke();
+      }
+    });
+
+    if(st.target !== null && st.target !== undefined){
+      var tp = toScreen(stars[st.target].x, stars[st.target].y);
+      ctx.strokeStyle = "#E0A458";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(tp.x, tp.y, 9, 0, Math.PI * 2); ctx.stroke();
+    }
+
+    // the ship: a small arrowhead pointing the way it last went
+    var dir = -Math.PI / 2;
+    if(anim) dir = Math.atan2(anim.to.y - anim.from.y, anim.to.x - anim.from.x);
+    else if(st.trail.length > 1){
+      var prev = st.trail[st.trail.length - 2];
+      if(prev >= 0 && prev !== st.at) dir = Math.atan2(here.y - stars[prev].y, here.x - stars[prev].x);
+    }
+    ctx.save();
+    ctx.translate(sp.x, sp.y);
+    ctx.rotate(dir);
+    ctx.fillStyle = "#E0A458";
+    ctx.beginPath();
+    ctx.moveTo(9, 0); ctx.lineTo(-5, -5); ctx.lineTo(-2, 0); ctx.lineTo(-5, 5);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+
+    drawLabels(w, h);
+  }
+
+  /* Names: the ones that matter always, the rest as there is room. Placed
+     in order of importance, and a name that would land on another is left
+     out rather than printed over it. */
+  function drawLabels(w, h){
+    var stars = G(st).stars, boxes = [];
+    ctx.font = "11px -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif";
+    ctx.textBaseline = "middle";
+    function put(s, col){
+      var p = toScreen(s.x, s.y);
+      if(p.x < 0 || p.y < 0 || p.x > w || p.y > h) return;
+      var t = s.name, tw = ctx.measureText(t).width;
+      var b = { x:p.x + 8, y:p.y - 7, w:tw, h:13 };
+      if(b.x + tw > w - 4) b.x = p.x - 8 - tw;
+      for(var i = 0; i < boxes.length; i++){
+        var o = boxes[i];
+        if(b.x < o.x + o.w && o.x < b.x + b.w && b.y < o.y + o.h && o.y < b.y + b.h) return;
+      }
+      boxes.push(b);
+      ctx.fillStyle = col;
+      ctx.fillText(t, b.x, p.y);
+    }
+    var first = [st.at];
+    if(st.target !== null && st.target !== undefined) first.push(st.target);
+    first.push(G(st).home, 0);
+    // zoomed right out, outposts are a cluster of diamonds; their names are noise
+    if(cam.s >= 3) first = first.concat(st.outposts);
+    first.forEach(function(i, n){
+      if(!st.seen[i]) return;
+      put(stars[i], n === 0 ? "#E6EBEF" : i === st.target ? "#E0A458" : isDock(st, i) ? "#4FA88B" : "#AFBAC4");
+    });
+    if(cam.s >= 7){
+      stars.forEach(function(s){ if(st.visited[s.i]) put(s, "rgba(175,186,196,.75)"); });
+    }
+    if(cam.s >= 11){
+      stars.forEach(function(s){ if(st.seen[s.i] && !st.visited[s.i]) put(s, "rgba(108,122,135,.9)"); });
+    }
+  }
+
+  var queued = false;
+  function redraw(){
+    if(queued) return;
+    queued = true;
+    requestAnimationFrame(function(){ queued = false; draw(); });
+  }
+
+  function centreOn(i, keepZoom){
+    var s = star(st, i);
+    cam.x = s.x; cam.y = s.y;
+    if(!keepZoom) cam.s = cssSize().w / 34;
+    clampCam();
+  }
+
+  /* ---------------------------------------------------------------------
+     TOUCH
+
+     One finger drags the chart, two pinch it, and a tap that did not move
+     picks a star. Pointer events, so a mouse and a trackpad do the same.
+     --------------------------------------------------------------------- */
+  var ptrs = {}, gesture = null;
+  function local(e){
+    var b = canvas.getBoundingClientRect();
+    return { x:e.clientX - b.left, y:e.clientY - b.top };
+  }
+  function startGesture(moved){
+    var ids = Object.keys(ptrs);
+    if(ids.length === 1){
+      gesture = { kind:"pan", p0:ptrs[ids[0]], c0:{ x:cam.x, y:cam.y }, moved:!!moved };
+    } else if(ids.length >= 2){
+      var a = ptrs[ids[0]], b = ptrs[ids[1]];
+      var mid = { x:(a.x + b.x) / 2, y:(a.y + b.y) / 2 };
+      gesture = { kind:"pinch", d0:Math.max(10, Math.hypot(a.x - b.x, a.y - b.y)), s0:cam.s,
+                  wm:toWorld(mid.x, mid.y) };
+    } else gesture = null;
+  }
+  canvas.addEventListener("pointerdown", function(e){
+    try{ canvas.setPointerCapture(e.pointerId); }catch(err){}
+    ptrs[e.pointerId] = local(e);
+    startGesture(Object.keys(ptrs).length > 1);
+  });
+  canvas.addEventListener("pointermove", function(e){
+    if(!ptrs[e.pointerId]) return;
+    ptrs[e.pointerId] = local(e);
+    if(!gesture) return;
+    if(gesture.kind === "pan"){
+      var p = ptrs[e.pointerId], dx = p.x - gesture.p0.x, dy = p.y - gesture.p0.y;
+      if(Math.abs(dx) + Math.abs(dy) > 7) gesture.moved = true;
+      if(!gesture.moved) return;
+      cam.x = gesture.c0.x - dx / cam.s;
+      cam.y = gesture.c0.y - dy / cam.s;
+    } else {
+      var ids = Object.keys(ptrs), a = ptrs[ids[0]], b = ptrs[ids[1]];
+      var d = Math.hypot(a.x - b.x, a.y - b.y), z = cssSize();
+      cam.s = gesture.s0 * d / gesture.d0;
+      clampCam();
+      var mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      cam.x = gesture.wm.x - (mx - z.w / 2) / cam.s;
+      cam.y = gesture.wm.y - (my - z.h / 2) / cam.s;
+    }
+    clampCam();
+    redraw();
+  });
+  function lift(e){
+    if(!ptrs[e.pointerId]) return;
+    var p = ptrs[e.pointerId];
+    delete ptrs[e.pointerId];
+    if(gesture && gesture.kind === "pan" && !gesture.moved && e.type === "pointerup") tap(p.x, p.y);
+    startGesture(true);
+    save();
+  }
+  canvas.addEventListener("pointerup", lift);
+  canvas.addEventListener("pointercancel", lift);
+  canvas.addEventListener("wheel", function(e){
+    e.preventDefault();
+    var p = local(e), wm = toWorld(p.x, p.y), z = cssSize();
+    cam.s *= Math.exp(-e.deltaY * 0.0015);
+    clampCam();
+    cam.x = wm.x - (p.x - z.w / 2) / cam.s;
+    cam.y = wm.y - (p.y - z.h / 2) / cam.s;
+    clampCam();
+    redraw();
+  }, { passive:false });
+
+  function zoomBy(f){ cam.s *= f; clampCam(); redraw(); save(); }
+  el("zin").addEventListener("click", function(){ zoomBy(1.5); });
+  el("zout").addEventListener("click", function(){ zoomBy(1 / 1.5); });
+  el("zhome").addEventListener("click", function(){ centreOn(st.at, true); redraw(); save(); });
+
+  function tap(x, y){
+    if(anim) return;
+    var best = null, bd = 24;
+    G(st).stars.forEach(function(s){
+      if(!st.seen[s.i]) return;
+      var p = toScreen(s.x, s.y), d = Math.hypot(p.x - x, p.y - y);
+      if(d < bd){ bd = d; best = s.i; }
+    });
+    if(best === null){ st.target = null; plan(); syncChrome(); return; }
+    if(best === st.at){ open({ kind:"system", sel:-1 }); return; }
+    st.target = best;
+    plan();
+    say(describe(best));
+    syncChrome();
+    save();
+  }
+
+  /* What a tap on a star tells you: its kind, how far, and whether you
+     have been. */
+  function describe(i){
+    var s = star(st, i), c = CLASSES[s.cls];
+    var bits = [s.name, c.name, dist(star(st, st.at), s).toFixed(1) + " ly"];
+    if(s.home) bits.push("home");
+    else if(isDock(st, i)) bits.push("your outpost");
+    else if(st.visited[i]){
+      var pl = planetsOf(G(st), s), left = pl.filter(function(p){ return !st.done[pkey(s, p)]; }).length;
+      bits.push(left ? left + " to survey" : "surveyed");
+    } else bits.push("unexplored");
+    return bits.join(" · ");
+  }
+
+  /* ---------------------------------------------------------------------
+     GOING PLACES
+     --------------------------------------------------------------------- */
+  function goNext(){
+    if(anim) return;
+    if(st.pending !== null){ open({ kind:"anom" }); return; }
+    if(st.target === null || st.target === undefined){
+      if(adrift(st)) callTow();
+      return;
+    }
+    var r = plan();
+    if(!r || r.path.length < 2) return;
+    var next = r.path[1];
+    var c = canJump(st, next);
+    if(!c.ok){ say(c.why + "."); return; }
+    var from = star(st, st.at), to = star(st, next);
+    var lines = [];
+    jump(st, next, function(t){ lines.push(t); });
+    anim = { from:{ x:from.x, y:from.y }, to:{ x:to.x, y:to.y }, t0:performance.now(), ms:520 };
+    follow(to);
+    claimGoals(st, function(t){ lines.push(t); });
+    say([to.name + "."].concat(lines).join(" "));
+    save();
+    syncChrome();
+    (function frame(){
+      draw();
+      if(performance.now() - anim.t0 < anim.ms) requestAnimationFrame(frame);
+      else {
+        anim = null;
+        plan();
+        syncChrome();
+        if(st.pending !== null) open({ kind:"anom" });
+      }
+    })();
+  }
+
+  /* Keep the ship on the chart: if the next star is near the edge, slide
+     the view so it sits comfortably inside again. */
+  function follow(to){
+    var z = cssSize(), p = toScreen(to.x, to.y), m = Math.min(z.w, z.h) * 0.22;
+    if(p.x > m && p.y > m && p.x < z.w - m && p.y < z.h - m) return;
+    var from = { x:cam.x, y:cam.y }, t0 = performance.now();
+    (function glide(){
+      var t = Math.min(1, (performance.now() - t0) / 520);
+      t = t * t * (3 - 2 * t);
+      cam.x = from.x + (to.x - from.x) * t;
+      cam.y = from.y + (to.y - from.y) * t;
+      clampCam();
+      redraw();
+      if(t < 1) requestAnimationFrame(glide);
+    })();
+  }
+
+  function callTow(){
+    var to = towTo(st), lost = Math.floor(st.data / 2);
+    if(!window.confirm("Call a tow to " + star(st, to).name + "? It costs half your unsold data (" + num(lost) + ").")) return;
+    var r = tow(st);
+    if(!r) return;
+    st.target = null;
+    plan();
+    centreOn(st.at, true);
+    var lines = ["Towed to " + star(st, r.to).name + "."].concat(r.said);
+    claimGoals(st, function(t){ lines.push(t); });
+    say(lines.join(" "));
+    save();
+    syncChrome();
+  }
+
+  /* ---------------------------------------------------------------------
+     SHEETS
+     --------------------------------------------------------------------- */
+  function open(v){ view = v; syncChrome(); }
+  function close(){ view = null; syncChrome(); }
+
+  function node(tag, cls, html){
+    var d = document.createElement(tag);
+    if(cls) d.className = cls;
+    if(html !== undefined) d.innerHTML = html;
+    return d;
+  }
+  function tag(text, kind){ return '<span class="tag"' + (kind ? ' data-' + kind + '="true"' : "") + ">" + text + "</span>"; }
+  function artCanvas(css, paint){
+    var cv = document.createElement("canvas"), k = dpr();
+    cv.width = Math.round(css * k); cv.height = Math.round(css * k);
+    cv.className = "art";
+    paint(cv.getContext("2d"), cv.width);
+    return cv;
+  }
+  function starArt(c, px, cls, x, y, big){
+    var col = CLASSES[cls].col;
+    x = x === undefined ? px / 2 : x; y = y === undefined ? px / 2 : y;
+    var R = big || px * 0.18;
+    if(cls === "BH"){
+      c.save();
+      c.translate(x, y); c.scale(1, 0.38);
+      var disc = c.createRadialGradient(0, 0, R * 0.9, 0, 0, R * 2.6);
+      disc.addColorStop(0, "rgba(255,190,110,.95)"); disc.addColorStop(0.5, "rgba(220,110,50,.5)"); disc.addColorStop(1, "rgba(120,40,20,0)");
+      c.fillStyle = disc;
+      c.beginPath(); c.arc(0, 0, R * 2.6, 0, Math.PI * 2); c.fill();
+      c.restore();
+      c.fillStyle = "#000";
+      c.beginPath(); c.arc(x, y, R, 0, Math.PI * 2); c.fill();
+      c.strokeStyle = "rgba(255,200,140,.8)"; c.lineWidth = Math.max(1, R * 0.08);
+      c.stroke();
+      return;
+    }
+    var g = c.createRadialGradient(x, y, 0, x, y, R * 2.6);
+    g.addColorStop(0, "#FFFFFF"); g.addColorStop(0.25, col); g.addColorStop(0.45, col + "66"); g.addColorStop(1, col + "00");
+    c.fillStyle = g;
+    c.beginPath(); c.arc(x, y, R * 2.6, 0, Math.PI * 2); c.fill();
+    if(cls === "PS"){
+      c.strokeStyle = col + "AA"; c.lineWidth = Math.max(1, R * 0.12);
+      c.beginPath(); c.moveTo(x - R * 3, y + R * 1.8); c.lineTo(x + R * 3, y - R * 1.8); c.stroke();
+    }
+  }
+  function speckle(c, w, h, seed){
+    var r = rngFrom(seed);
+    for(var i = 0; i < 90; i++){
+      c.fillStyle = "rgba(220,230,255," + (0.15 + r() * 0.5) + ")";
+      c.fillRect(r() * w, r() * h, r() < 0.9 ? 1 : 2, 1);
+    }
+  }
+
+  function paintSheet(){
+    var body = el("sheet-body"), keep = el("sheet").scrollTop;
+    body.innerHTML = "";
+    if(!view) return;
+    if(view.kind === "system") paintSystem(body);
+    else if(view.kind === "ship") paintShip(body);
+    else if(view.kind === "codex") paintCodex(body);
+    else if(view.kind === "goals") paintGoals(body);
+    else if(view.kind === "anom") paintAnom(body);
+    el("sheet").scrollTop = view.top ? 0 : keep;
+    view.top = false;
+  }
+
+  function hints(s, p){
+    var t = [];
+    var sizes = ["", "Small", "Medium", "Large"];
+    if(landable(p)) t.push(tag(sizes[p.size]));
+    if(p.life >= 0) t.push(tag(landable(p) ? "Life signs" : "Cloud life", "good"));
+    if(p.min >= 0) t.push(tag("Minerals"));
+    if(p.relic >= 0 && (st.up.scanner >= 2 || st.done[pkey(s, p)])) t.push(tag("Strange readings", "hot"));
+    return t.join("");
+  }
+  function findsOf(p){
+    var f = [];
+    if(p.life >= 0) f.push("<b>" + LIFE[p.life].name + "</b>");
+    if(p.min >= 0) f.push("<b>" + MINERALS[p.min].name + "</b>");
+    if(p.relic >= 0) f.push("<i>" + RELICS[p.relic].name + "</i>");
+    return f.length ? f.join(" · ") : "Nothing but " + WORLDS[p.type].name.toLowerCase();
+  }
+
+  function paintHero(body, s, pl){
+    var box = node("div", "hero");
+    var cv = document.createElement("canvas");
+    box.appendChild(cv);
+    var cap = node("div", "cap");
+    box.appendChild(cap);
+    body.appendChild(box);
+    var W = Math.max(200, body.getBoundingClientRect().width || 320), H = 170, k = dpr();
+    cv.width = Math.round(W * k); cv.height = Math.round(H * k);
+    var c = cv.getContext("2d");
+    c.fillStyle = "#070B10"; c.fillRect(0, 0, cv.width, cv.height);
+    speckle(c, cv.width, cv.height, hash(st.seed, s.i, 55));
+    var p = view.sel >= 0 ? pl[view.sel] : null;
+    if(!p){
+      starArt(c, cv.height, s.cls, cv.width / 2, cv.height * 0.45, cv.height * 0.14);
+      cap.innerHTML = "<b>" + s.name + "</b><span>" + CLASSES[s.cls].name + ". " + CLASSES[s.cls].desc + "</span>";
+      return;
+    }
+    starArt(c, cv.height, s.cls, -cv.height * 0.05, -cv.height * 0.05, cv.height * 0.12);
+    var size = Math.round(cv.height * 0.9);
+    c.drawImage(worldArt(p, size, p.type === "ringed" ? 0.5 : 0.6 + p.size * 0.1), cv.width - size - cv.height * 0.04, (cv.height - size) / 2);
+    cap.setAttribute("data-side", "true");
+    var w = WORLDS[p.type];
+    cap.innerHTML = "<b>" + planetName(s, p) + "</b><span>" + w.name + ". " + w.desc + "</span>";
+  }
+
+  function paintSystem(body){
+    var s = star(st, st.at), pl = planetsOf(G(st), s);
+    el("sheet-title").textContent = s.name;
+    el("sheet-sub").textContent = CLASSES[s.cls].name + " · " + (pl.length === 1 ? "1 world" : pl.length + " worlds");
+    paintHero(body, s, pl);
+
+    var sc = node("div", "card");
+    if(view.sel < 0) sc.setAttribute("aria-pressed", "true");
+    sc.appendChild(artCanvas(56, function(c, px){ starArt(c, px, s.cls); }));
+    var tags = [];
+    if(s.home) tags.push(tag("Home", "good"));
+    else if(isDock(st, s.i)) tags.push(tag("Outpost", "good"));
+    if(SCOOP[st.up.scoop] && CLASSES[s.cls].scoop) tags.push(tag("Scoop +" + SCOOP[st.up.scoop]));
+    if(!CLASSES[s.cls].scoop) tags.push(tag("Cannot scoop"));
+    sc.appendChild(node("div", "body", '<div class="nm">' + s.name + '</div><div class="short">' + CLASSES[s.cls].name +
+                                     '</div><div class="tags">' + tags.join("") + "</div>"));
+    sc.addEventListener("click", function(){ view.sel = -1; paintSheet(); });
+    body.appendChild(sc);
+
+    if(!pl.length) body.appendChild(node("p", "empty", s.heart ? "Nothing orbits the Heart. Nothing could." : "No worlds here, only the star."));
+    pl.forEach(function(p){
+      var d = node("div", "card"), key = pkey(s, p), done = !!st.done[key];
+      if(view.sel === p.k) d.setAttribute("aria-pressed", "true");
+      d.appendChild(artCanvas(56, function(c, px){ c.drawImage(worldArt(p, px), 0, 0); }));
+      var inner = '<div class="nm">' + planetName(s, p) + '</div><div class="short">' + WORLDS[p.type].name + "</div>";
+      inner += done ? '<ul class="finds"><li>' + findsOf(p) + "</li></ul>" : '<div class="tags">' + hints(s, p) + "</div>";
+      d.appendChild(node("div", "body", inner));
+      var b = document.createElement("button");
+      b.className = "act";
+      if(landable(p)){
+        if(done){ b.textContent = "Surveyed"; b.setAttribute("data-done", "true"); b.disabled = true; }
+        else {
+          b.textContent = "Land · " + landCost(p) + " fuel";
+          b.disabled = st.fuel < landCost(p) || st.pending !== null;
+          b.addEventListener("click", function(e){ e.stopPropagation(); doLand(p.k); });
+        }
+      } else {
+        if(done){ b.textContent = "Skimmed"; b.setAttribute("data-done", "true"); b.disabled = true; }
+        else {
+          var room = Math.min(WORLDS[p.type].fuel, tank(st) - st.fuel);
+          b.textContent = room > 0 ? "Skim +" + room + " fuel" : "Skim";
+          b.disabled = st.pending !== null;
+          b.addEventListener("click", function(e){ e.stopPropagation(); doSkim(p.k); });
+        }
+      }
+      d.appendChild(b);
+      d.addEventListener("click", function(){ view.sel = p.k; paintSheet(); });
+      body.appendChild(d);
+    });
+
+    if(isDock(st, s.i)){
+      body.appendChild(node("p", "note", (s.home ? "Home" : "Your outpost") +
+        ": fuel, a buyer for your data, and a yard to fit upgrades. Your docks earn " +
+        num(daily(st)) + " credits a day between them."));
+    } else if(!s.heart){
+      var ob = node("div", "card");
+      var cb = canBuild(st), cost = outpostCost(st);
+      ob.appendChild(artCanvas(56, function(c, px){
+        c.strokeStyle = "#4FA88B"; c.lineWidth = px * 0.05;
+        c.beginPath(); c.moveTo(px / 2, px * 0.2); c.lineTo(px * 0.8, px / 2); c.lineTo(px / 2, px * 0.8); c.lineTo(px * 0.2, px / 2);
+        c.closePath(); c.stroke();
+      }));
+      ob.appendChild(node("div", "body", '<div class="nm">Build an outpost</div><div class="short">Refuels you, buys data, fits upgrades, lights up ' +
+        OUTPOST_SIGHT + " ly round it and earns about " + num(outpostDaily(st, s.i)) + " credits a day.</div>"));
+      var bb = document.createElement("button");
+      bb.className = "act";
+      bb.textContent = num(cost);
+      bb.disabled = !cb.ok;
+      bb.addEventListener("click", function(e){
+        e.stopPropagation();
+        var r = build(st);
+        if(!r) return;
+        say(["Outpost built at " + s.name + "."].concat(r).join(" "));
+        after();
+      });
+      ob.appendChild(bb);
+      body.appendChild(ob);
+    }
+  }
+
+  function doLand(k){
+    var s = star(st, st.at), p = planetsOf(G(st), s)[k];
+    var r = land(st, k);
+    if(!r) return;
+    view.sel = k;
+    say(planetName(s, p) + ": " + r.finds.map(function(f){
+      return f.name + (f.fresh ? " (new)" : "") + " " + num(f.v);
+    }).join(", ") + ".");
+    after();
+  }
+  function doSkim(k){
+    var s = star(st, st.at), p = planetsOf(G(st), s)[k];
+    var r = skim(st, k);
+    if(!r) return;
+    view.sel = k;
+    var bits = r.finds.map(function(f){ return f.name + (f.fresh ? " (new)" : "") + " " + num(f.v); });
+    say(planetName(s, p) + ": +" + r.fuel + " fuel. " + bits.join(", ") + ".");
+    after();
+  }
+
+  function paintShip(body){
+    el("sheet-title").textContent = "Ship";
+    var docked = isDock(st, st.at);
+    el("sheet-sub").textContent = docked ? "Docked" : "In flight";
+    body.appendChild(node("p", "note", "Carrying " + num(st.data) + " in unsold data. " +
+      (docked ? "Fit anything you can afford." : "Upgrades are fitted at a dock.") +
+      " Docks earn " + num(daily(st)) + " credits a day."));
+    UPGRADES.forEach(function(u){
+      var lvl = st.up[u.key], cost = upgradeCost(st, u.key);
+      var d = node("div", "card");
+      var pips = "";
+      for(var i = 1; i <= 4; i++) pips += '<span data-on="' + (lvl >= i) + '"></span>';
+      function fmt(v){ return u.unit === "×" ? v + "×" : v + u.unit; }
+      var now = cost === null ? fmt(u.vals[lvl]) + ", fully fitted" : fmt(u.vals[lvl]) + " → " + fmt(u.vals[lvl + 1]);
+      d.appendChild(node("div", "body", '<div class="nm">' + u.name + '</div><div class="short">' + now + "</div>" +
+        '<div class="short">' + u.what + '</div><div class="pips">' + pips + "</div>"));
+      if(cost !== null){
+        var b = document.createElement("button");
+        b.className = "act";
+        b.textContent = num(cost);
+        b.disabled = !docked || st.cash < cost;
+        b.addEventListener("click", function(){
+          if(!buy(st, u.key)) return;
+          say(u.name + " upgraded.");
+          plan();
+          after();
+        });
+        d.appendChild(b);
+      }
+      body.appendChild(d);
+    });
+    body.appendChild(node("p", "note", count(st.visited) + " systems visited · " + st.jumps + " jumps · " +
+      st.lands + " landings · " + num(st.earned) + " earned from data"));
+  }
+
+  function paintCodex(body){
+    el("sheet-title").textContent = "Codex";
+    el("sheet-sub").textContent = count(st.codex) + " of " + CODEX_TOTAL;
+    function where(k){
+      var at = st.codex[k];
+      return at ? " · first seen at " + star(st, at - 1).name : "";
+    }
+    function shelf(title, items){
+      var got = items.filter(function(it){ return st.codex[it.key]; }).length;
+      var h = node("div", "grouphead", "<span>" + title + "</span><span>" + got + " / " + items.length + "</span>");
+      body.appendChild(h);
+      body.appendChild(node("div", "bar", '<i style="width:' + Math.round(got / items.length * 100) + '%"></i>'));
+      items.forEach(function(it){
+        var known = !!st.codex[it.key];
+        var e = node("div", "entry");
+        if(!known) e.setAttribute("data-unknown", "true");
+        e.innerHTML = known ? it.name + "<small>" + it.desc + where(it.key) + "</small>" : "Not yet found" + (it.hint ? "<small>" + it.hint + "</small>" : "");
+        body.appendChild(e);
+      });
+    }
+    shelf("Stars", CLASS_ORDER.map(function(c){ return { key:"s:" + c, name:CLASSES[c].name, desc:CLASSES[c].desc }; }));
+    shelf("Worlds", WORLD_ORDER.map(function(t){ return { key:"p:" + t, name:WORLDS[t].name, desc:WORLDS[t].desc }; }));
+    shelf("Life", LIFE.map(function(x, i){ return { key:"l:" + i, name:x.name, desc:x.desc,
+      hint:"On " + x.on.map(function(t){ return WORLDS[t].name.toLowerCase(); }).join(" or ") + "s" }; }));
+    shelf("Minerals", MINERALS.map(function(x, i){ return { key:"m:" + i, name:x.name, desc:x.desc,
+      hint:"On " + x.on.map(function(t){ return WORLDS[t].name.toLowerCase(); }).join(" or ") + "s" }; }));
+    shelf("Relics", RELICS.map(function(x, i){ return { key:"r:" + i, name:x.name, desc:x.desc, hint:"Commoner towards the core" }; }));
+    shelf("Phenomena", ANOMALIES.map(function(a){ return { key:"x:" + a.id, name:a.name, desc:a.desc }; })
+      .concat([{ key:"x:heart", name:HEART.name, desc:HEART.desc, hint:"At the very centre" }]));
+  }
+
+  function paintGoals(body){
+    el("sheet-title").textContent = "Goals";
+    var done = GOALS.filter(function(g){ return st.goals[g.id]; }).length;
+    el("sheet-sub").textContent = done + " of " + GOALS.length;
+    GOALS.forEach(function(g){
+      var d = node("div", "goal");
+      if(st.goals[g.id]) d.setAttribute("data-done", "true");
+      d.innerHTML = '<span class="tick"></span><span class="nm">' + g.text + "<small>" + g.note + "</small></span>" +
+                    '<span class="amt">' + num(g.pays) + "</span>";
+      body.appendChild(d);
+    });
+    body.appendChild(node("p", "note", "Furthest from Hearth: " + st.far + " ly · day " + num(st.day)));
+  }
+
+  function paintAnom(body){
+    var i = view.at !== undefined ? view.at : st.pending;
+    if(i === null || i === undefined){ close(); return; }
+    var s = star(st, i), a = ANOMALIES[s.anom];
+    el("sheet-title").textContent = view.res && !view.res.left ? a.name : "Something here";
+    el("sheet-sub").textContent = s.name;
+    var box = node("div", "story");
+    box.appendChild(node("p", "", a.text));
+    if(view.res){
+      var r = view.res, gains = [];
+      if(r.fuel) gains.push((r.fuel > 0 ? "+" : "") + r.fuel + " fuel");
+      if(r.data) gains.push("+" + num(r.data) + " data");
+      if(r.chart !== null && r.chart !== undefined) gains.push("Charted " + star(st, r.chart).name + ", " + dist(s, star(st, r.chart)).toFixed(0) + " ly away");
+      if(r.fold !== null && r.fold !== undefined) gains.push("Now at " + star(st, r.fold).name);
+      box.appendChild(node("p", "then", r.text + (gains.length ? " " + gains.join(" · ") + "." : "")));
+      body.appendChild(box);
+      return;
+    }
+    body.appendChild(box);
+    var row = node("div", "choice");
+    var go = node("button", "", a.go);
+    go.setAttribute("data-primary", "true");
+    var no = node("button", "", "Leave it");
+    function choose(yes){
+      var r = answer(st, yes);
+      view.res = r;
+      view.at = i;
+      if(r && r.fold !== null && r.fold !== undefined){ centreOn(st.at, true); }
+      plan();
+      if(r) say(r.left ? "You leave it be." : r.text);
+      after();
+    }
+    go.addEventListener("click", function(){ choose(true); });
+    no.addEventListener("click", function(){ choose(false); });
+    row.appendChild(go); row.appendChild(no);
+    body.appendChild(row);
+  }
+
+  /* ---------------------------------------------------------------------
+     CHROME
+     --------------------------------------------------------------------- */
+  function syncStats(){
+    el("cash").innerHTML = num(st.cash) + '<span class="lbl">Credits</span>';
+    el("fuel").innerHTML = st.fuel + "/" + tank(st) + '<span class="lbl">Fuel</span>';
+    el("where").textContent = "Day " + num(st.day) + " · " + star(st, st.at).name;
+  }
+
+  function syncGo(){
+    var b = el("go");
+    b.hidden = true; b.disabled = false;
+    if(view || anim) return;
+    if(st.pending !== null){ b.hidden = false; b.textContent = "Something here · take a look"; return; }
+    if(st.target !== null && st.target !== undefined && st.target !== st.at){
+      b.hidden = false;
+      var t = star(st, st.target), r = planned;
+      if(!r){ b.textContent = "No known way to " + t.name; b.disabled = true; return; }
+      var next = star(st, r.path[1]), c = canJump(st, r.path[1]);
+      if(r.path.length === 2) b.textContent = "Jump to " + t.name + " · " + c.cost + " fuel";
+      else b.textContent = "Towards " + t.name + ": " + next.name + " · " + c.cost + " fuel (" + (r.path.length - 1) + " jumps, " + r.fuel + " fuel)";
+      if(!c.ok) b.disabled = true;
+      return;
+    }
+    if(adrift(st)){
+      b.hidden = false;
+      b.textContent = "Call a tow to " + star(st, towTo(st)).name + " · costs " + num(Math.floor(st.data / 2)) + " data";
+    }
+  }
+
+  function clockText(){
+    if(isDock(st, st.at)) return "Docked · " + (st.data ? num(st.data) + " unsold" : "tanks full");
+    var h = homeward(st), bits = [num(st.data) + " unsold"];
+    if(!h) bits.push("no known way to a dock");
+    else if(h.fuel > st.fuel) bits.push("dock " + h.fuel + " fuel away · not enough");
+    else bits.push("dock " + (h.path.length - 1) + (h.path.length === 2 ? " jump, " : " jumps, ") + h.fuel + " fuel");
+    return bits.join(" · ");
+  }
+
+  function syncChrome(){
+    var inSheet = !!view;
+    el("maprow").hidden = inSheet;
+    el("sheet").hidden = !inSheet;
+    el("howto").hidden = inSheet || st.jumps > 3;
+    el("back-to-map").hidden = !inSheet;
+    el("system").hidden = inSheet;
+    el("ship").hidden = inSheet && view.kind === "ship";
+    el("codex").hidden = inSheet && view.kind === "codex";
+    el("goals").hidden = inSheet && view.kind === "goals";
+    syncStats();
+    var cl = el("clockline");
+    cl.textContent = clockText();
+    cl.setAttribute("data-low", String(adrift(st)));
+    syncGo();
+    if(inSheet) paintSheet();
+    else resize();
+  }
+
+  function after(){
+    claimGoals(st, function(t){ say(said + " " + t); });
+    save();
+    syncChrome();
+  }
+
+  el("go").addEventListener("click", goNext);
+  el("back-to-map").addEventListener("click", function(){
+    if(view && view.kind === "anom" && view.res && view.res.fold !== undefined && view.res.fold !== null) centreOn(st.at, true);
+    close();
+  });
+  el("system").addEventListener("click", function(){ open({ kind:"system", sel:-1, top:true }); });
+  el("ship").addEventListener("click", function(){ open({ kind:"ship", top:true }); });
+  el("codex").addEventListener("click", function(){ open({ kind:"codex", top:true }); });
+  el("goals").addEventListener("click", function(){ open({ kind:"goals", top:true }); });
+  el("restart").addEventListener("click", function(){
+    if(!window.confirm("Leave this galaxy for a new one? Everything here is lost.")) return;
+    st = newGame();
+    view = null;
+    centreOn(st.at);
+    say("A new galaxy. Hearth is home; the Heart is a long way in.");
+    after();
+  });
+
+  window.addEventListener("resize", function(){ if(!view) resize(); });
+  window.addEventListener("orientationchange", function(){ setTimeout(function(){ if(!view) resize(); }, 120); });
+  document.addEventListener("visibilitychange", function(){ if(document.hidden && st) save(); });
+
+  st = load();
+  if(st && st.cam){ cam = { x:st.cam.x, y:st.cam.y, s:st.cam.s }; }
+  if(!st){
+    st = newGame();
+    say("Hearth is home. Tap a star to plot a course; the Heart is a long way in.");
+    resize();
+    centreOn(st.at);
+  }
+  plan();
+  after();
+  if(st.pending !== null) open({ kind:"anom" });
+
+  window.__wayfarer = {
+    get st(){ return st; }, set st(v){ st = v; },
+    galaxy:galaxy, planetsOf:planetsOf, jump:jump, land:land, answer:answer, route:route,
+    goTo:function(i){ st.target = i; plan(); goNext(); }, cam:cam, redraw:function(){ syncChrome(); }
+  };
+})();
+</script>
+</body>
+</html>
