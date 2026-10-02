@@ -138,7 +138,7 @@
     <button id="goals">Goals</button>
   </div>
 
-  <p class="howto" id="howto">Tap an airport to see who wants to fly. An hour passes every minute, whether you are watching or not.</p>
+  <p class="howto" id="howto">Tap an airport to see who wants to fly: a circle is a strip, a square a city, a star a hub. An hour passes every minute, whether you are watching or not.</p>
 </div>
 
 <script src="./sw-boot.js"></script>
@@ -1199,12 +1199,12 @@
       var mine = owns(st, c.id), offer = !mine && portOffered(st, c.id);
       var r = mine ? 3 + c.cls : 2 + c.cls * 0.6;
       ctx.beginPath();
-      ctx.arc(q.x, q.y, r, 0, Math.PI * 2);
+      portShape(ctx, q.x, q.y, r, c.cls);
       if(mine){ ctx.fillStyle = "#4FA88B"; ctx.fill(); }
       else if(offer){ ctx.strokeStyle = "#54646F"; ctx.lineWidth = 1.2; ctx.stroke(); }
       else { ctx.fillStyle = "rgba(108,122,135,.30)"; ctx.fill(); }
       if(mine || offer) hit.push({ id: c.id, x: q.x, y: q.y, r: Math.max(15, r + 9) });
-      if(mine) labels.push({ c: c, x: q.x, y: q.y - r - 5, n: jobsAt(st, c.id).length });
+      if(mine) labels.push({ c: c, x: q.x, y: q.y - r * (c.cls === 3 ? 1.45 : 1) - 5, n: jobsAt(st, c.id).length });
     });
 
     /* Names, but only where they will be read. Drawn unconditionally they
@@ -1245,6 +1245,29 @@
       ctx.closePath(); ctx.fill();
       ctx.restore();
     });
+  }
+
+  /* Each class its own shape, so a hub is a hub at a glance rather than a
+     slightly bigger dot: a strip is a circle, a city airport a square, a
+     hub a star. Sized so each covers about the same ground as the circle
+     it replaced. */
+  function portPoints(x, y, r, cls){
+    var pts = [], i, a;
+    if(cls === 2){
+      var h = r * 0.9;
+      return [[x - h, y - h], [x + h, y - h], [x + h, y + h], [x - h, y + h]];
+    }
+    for(i = 0; i < 10; i++){
+      a = -Math.PI / 2 + i * Math.PI / 5;
+      var rr = i % 2 ? r * 0.62 : r * 1.45;
+      pts.push([x + Math.cos(a) * rr, y + Math.sin(a) * rr]);
+    }
+    return pts;
+  }
+  function portShape(c, x, y, r, cls){
+    if(cls === 1){ c.arc(x, y, r, 0, Math.PI * 2); return; }
+    portPoints(x, y, r, cls).forEach(function(p, i){ if(i) c.lineTo(p[0], p[1]); else c.moveTo(p[0], p[1]); });
+    c.closePath();
   }
 
   function tapMap(x, y){
@@ -1573,15 +1596,17 @@
     return bits.join("");
   }
 
-  /* A class as a picture: the bigger the ring, the bigger the party it can
-     hand you and the bigger the aircraft it will take. */
+  /* A class as a picture, in the same shape the map uses for it: the
+     bigger the mark, the bigger the party it can hand you and the bigger
+     the aircraft it will take. */
   function portArt(cls){
-    var r = 5 + cls * 3.8;
+    var r = 5 + cls * 3.2, fill = cls === 3 ? "#8FB7FF" : cls === 2 ? "#4FA88B" : "#9AA7B2";
+    var mark = cls === 1 ? '<circle cx="34" cy="23" r="' + r + '"' :
+      '<polygon points="' + portPoints(34, 23, r, cls).map(function(p){ return p[0].toFixed(1) + "," + p[1].toFixed(1); }).join(" ") + '"';
     return '<svg viewBox="0 0 68 46" class="art" aria-hidden="true">' +
-           '<circle cx="34" cy="23" r="' + (r + 5) + '" fill="none" stroke="#2C3945" stroke-width="1"/>' +
-           '<circle cx="34" cy="23" r="' + r + '" fill="' + (cls === 3 ? "#8FB7FF" : cls === 2 ? "#4FA88B" : "#9AA7B2") +
-           '" opacity=".85"/>' +
-           '<text x="34" y="27" text-anchor="middle" font-size="12" fill="#151C24">' + cls + "</text></svg>";
+           '<circle cx="34" cy="23" r="' + (cls === 3 ? 22 : r + 6) + '" fill="none" stroke="#2C3945" stroke-width="1"/>' +
+           mark + ' fill="' + fill + '" opacity=".85"/>' +
+           '<text x="34" y="' + (cls === 3 ? 26.5 : 27) + '" text-anchor="middle" font-size="' + (cls === 3 ? 10 : 12) + '" fill="#151C24">' + cls + "</text></svg>";
   }
 
   function tag(label, value){
