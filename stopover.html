@@ -477,9 +477,27 @@
      Puddlejumpers beat any airliner ever built - they cost less per seat and
      nothing on the board ever needed a bigger one. */
   var JOB_TOP = { 1: 3, 2: 8, 3: 18 };
-  function jobSize(city, cargo, rng){
-    var n = 1 + Math.floor(rng() * JOB_TOP[city.cls]);
-    return cargo ? Math.max(1, Math.round(n * 1.15)) : n;   // freight travels in lumps
+  /* The biggest party anything could carry on this route: the largest
+     aircraft that can land at both ends and make the distance. A hub used
+     to send eighteen people to a grass strip that nothing bigger than six
+     seats can use - a job that could never be flown. Where nothing that
+     lands at both ends has the legs, it is the largest that could do it in
+     hops. */
+  function jobCap(fromId, toId){
+    var cls = Math.min(CITY[fromId].cls, CITY[toId].cls), km = dist(fromId, toId);
+    var direct = 0, hops = 0;
+    MODELS.forEach(function(m){
+      if(m.cls > cls) return;
+      hops = Math.max(hops, m.seats);
+      if(m.range >= km) direct = Math.max(direct, m.seats);
+    });
+    return direct || hops;
+  }
+  function jobSize(fromId, toId, cargo, rng){
+    var cap = jobCap(fromId, toId);
+    var n = 1 + Math.floor(rng() * Math.min(JOB_TOP[CITY[fromId].cls], cap));
+    // freight travels in lumps, but still has to fit
+    return cargo ? Math.min(cap, Math.max(1, Math.round(n * 1.15))) : n;
   }
   function jobsAt(st, id){ return st.jobs[id] || (st.jobs[id] = []); }
 
@@ -487,6 +505,20 @@
      fly, because a board full of places you cannot serve is just noise -
      but not always, because the occasional unservable name is how you
      notice a city worth opening. */
+  /* A hub pulls far more traffic than a strip - which is what makes one
+     worth the price of twenty of the other. Weighted 1 : 3 : 6 by class, so
+     a city airport draws three times a strip's travellers and a hub six. */
+  var PULL = { 1: 1, 2: 3, 3: 6 };
+  function pickWeighted(ids, rng){
+    var sum = 0;
+    ids.forEach(function(id){ sum += PULL[CITY[id].cls]; });
+    var x = rng() * sum;
+    for(var i = 0; i < ids.length; i++){
+      x -= PULL[CITY[ids[i]].cls];
+      if(x < 0) return ids[i];
+    }
+    return ids[ids.length - 1];
+  }
   function pickDestination(st, fromId, rng){
     var mine = st.ports.filter(function(id){ return id !== fromId; });
     if(!mine.length) return null;
@@ -495,16 +527,9 @@
       var reach = CITIES.filter(function(c){
         return !owns(st, c.id) && dist(fromId, c.id) < 4000;
       });
-      if(reach.length) return reach[Math.floor(rng() * reach.length)].id;
+      if(reach.length) return pickWeighted(reach.map(function(c){ return c.id; }), rng);
     }
-    // A hub pulls more traffic than a strip, which is what makes one worth
-    // the price of twenty of the other.
-    var pool = [];
-    mine.forEach(function(id){
-      var n = CITY[id].cls;
-      for(var i = 0; i < n; i++) pool.push(id);
-    });
-    return pool[Math.floor(rng() * pool.length)];
+    return pickWeighted(mine, rng);
   }
 
   function makeJob(st, fromId, rng){
@@ -515,7 +540,7 @@
       id: st.nextId++,
       from: fromId, to: to,
       kind: cargo ? "cargo" : "pax",
-      seats: jobSize(CITY[fromId], cargo, rng),
+      seats: jobSize(fromId, to, cargo, rng),
       until: st.min + patience(rng),
       // A little spread so two identical-looking jobs are not identical,
       // and so a good board is something you can actually spot.
@@ -944,6 +969,16 @@
       o.fleet = o.fleet.filter(function(p){ return MODEL[p.model]; });
       if(!o.ports.length || !o.fleet.length) return null;
       o.jobs = o.jobs || {};
+      /* Boards saved before parties were sized to the route can hold a
+         group nothing could carry. Trim them to what fits, and the fee
+         with them. */
+      Object.keys(o.jobs).forEach(function(at){
+        o.jobs[at] = (o.jobs[at] || []).filter(function(j){ return CITY[j.from] && CITY[j.to]; });
+        o.jobs[at].forEach(function(j){
+          var cap = jobCap(j.from, j.to);
+          if(j.seats > cap){ j.seats = cap; j.fee = jobFee(j, dist(j.from, j.to)); }
+        });
+      });
       o.done = o.done || {};
       // a save from before the clock ran, or one written by a phone whose
       // clock has since gone backwards, starts from now rather than owing
@@ -1719,7 +1754,10 @@
   }
 
   function after(){
-    claimGoals(st, say);
+    claimGoals(st, function(t){
+      var now = el("msg").textContent;
+      say(now ? now + ". " + t : t);
+    });
     save();
     syncChrome();
   }
