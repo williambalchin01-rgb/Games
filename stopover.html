@@ -17,7 +17,12 @@
      flex stack and the map is the one thing in it that grows. */
   #gameview{flex:1;display:flex;flex-direction:column;min-height:0;gap:8px}
   .maprow{flex:1;min-height:0;position:relative}
-  canvas{display:block;width:100%;height:100%;border-radius:8px;touch-action:manipulation;background:#0D151D}
+  canvas{display:block;width:100%;height:100%;border-radius:8px;touch-action:none;background:#0D151D}
+  .zoom{position:absolute;right:8px;top:8px;display:flex;flex-direction:column;gap:6px}
+  .zoom button{
+    width:34px;height:34px;border-radius:8px;border:1px solid var(--line);
+    background:rgba(21,28,36,.82);color:var(--muted);font-size:17px;line-height:1;
+  }
 
   .actions{display:flex;gap:8px}
   .actions button{
@@ -120,7 +125,14 @@
     <span class="big" id="fleetn">0<span class="lbl">Fleet</span></span>
   </div>
 
-  <div class="maprow" id="maprow"><canvas id="map"></canvas></div>
+  <div class="maprow" id="maprow">
+    <canvas id="map"></canvas>
+    <div class="zoom">
+      <button id="zin" aria-label="Zoom in">+</button>
+      <button id="zout" aria-label="Zoom out">&minus;</button>
+      <button id="zfit" aria-label="Show the whole network">&#10530;</button>
+    </div>
+  </div>
 
   <div class="sheet" id="sheet" data-aside hidden>
     <div class="sheethead"><h2 id="sheet-title"></h2><span class="sub" id="sheet-sub"></span></div>
@@ -1046,6 +1058,13 @@
     var pad = 20;
     var scale = Math.min((w - pad * 2) / spanX, (h - pad * 2) / spanY);
     var cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    /* Pinched or dragged: the view is yours until you ask for the whole
+       network back. Zoom is relative to the fitted view, so it never goes
+       further out than everything you fly to. */
+    if(cam){
+      scale *= cam.z;
+      cx = cam.cx; cy = cam.cy;
+    }
     function at(id){
       var c = CITY[id];
       return at.ll(c.lat, c.lon);
@@ -1057,6 +1076,8 @@
       return { x: w / 2 + (lon - cx) * scale, y: h / 2 + (mercY(lat) - cy) * scale };
     };
     at.scale = scale;
+    at.cx = cx; at.cy = cy;
+    at.back = function(x, y){ return { x: (x - w / 2) / scale + cx, y: (y - h / 2) / scale + cy }; };
     return at;
   }
 
@@ -1161,38 +1182,38 @@
     drawGrid(ctx, at, w, h);
 
     /* The network you have built, under everything: which of your airports
-       can actually reach which. Without it the map is a scatter of dots
-       rather than an airline. */
-    var reach = 0;
-    st.fleet.forEach(function(p){ reach = Math.max(reach, MODEL[p.model].range); });
-    ctx.strokeStyle = "rgba(79,168,139,.16)";
+       can reach which. Drawn as the fewest lines that still connect
+       everything a single aircraft could hop between - nearest neighbours
+       first - rather than each airport to its three nearest, which at forty
+       airports was a hundred and twenty lines crossing every name on the
+       map. */
+    ctx.strokeStyle = "rgba(79,168,139,.14)";
     ctx.lineWidth = 1;
-    /* Each airport to its three nearest, rather than every pair in range.
-       Every pair is a thousand lines at fifty airports and reads as a wash
-       of green; three apiece draws the shape of the network and stops. */
-    st.ports.forEach(function(from){
-      st.ports.filter(function(to){ return to !== from && dist(from, to) <= reach; })
-        .sort(function(a, b){ return dist(from, a) - dist(from, b); })
-        .slice(0, 3)
-        .forEach(function(to){
-          var pa = at(from), pb = at(to);
-          ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y); ctx.stroke();
-        });
+    network().forEach(function(e){
+      var pa = at(e[0]), pb = at(e[1]);
+      ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y); ctx.stroke();
     });
 
-    // routes in the air, drawn under the dots
+    // where each aeroplane is, and the part of its leg still to fly
+    var now = Date.now(), planes = [];
     st.fleet.forEach(function(p){
       if(!p.leg) return;
       var a = at(p.leg.from), b = at(p.leg.to);
-      ctx.strokeStyle = "rgba(79,168,139,.28)";
-      ctx.lineWidth = 1.2;
-      ctx.setLineDash([4, 4]);
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-      ctx.setLineDash([]);
+      var t = (st.min + partMin(st, now) - p.leg.left) / Math.max(1, p.leg.arrive - p.leg.left);
+      t = Math.max(0, Math.min(1, t));
+      planes.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, b: b,
+                    ang: Math.atan2(b.y - a.y, b.x - a.x) });
     });
+    ctx.strokeStyle = "rgba(224,164,88,.22)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 4]);
+    planes.forEach(function(q){
+      ctx.beginPath(); ctx.moveTo(q.x, q.y); ctx.lineTo(q.b.x, q.b.y); ctx.stroke();
+    });
+    ctx.setLineDash([]);
 
     // every city inside the frame, so the map reads as a place
-    var labels = [];
+    var marks = [], blocks = [];
     CITIES.forEach(function(c){
       var q = at(c.id);
       if(q.x < -20 || q.x > w + 20 || q.y < -20 || q.y > h + 20) return;
@@ -1203,49 +1224,234 @@
       if(mine){ ctx.fillStyle = "#4FA88B"; ctx.fill(); }
       else if(offer){ ctx.strokeStyle = "#54646F"; ctx.lineWidth = 1.2; ctx.stroke(); }
       else { ctx.fillStyle = "rgba(108,122,135,.30)"; ctx.fill(); }
-      if(mine || offer) hit.push({ id: c.id, x: q.x, y: q.y, r: Math.max(15, r + 9) });
-      if(mine) labels.push({ c: c, x: q.x, y: q.y - r * (c.cls === 3 ? 1.45 : 1) - 5, n: jobsAt(st, c.id).length });
+      var ext = r * (c.cls === 3 ? 1.45 : 1);
+      if(mine || offer){
+        hit.push({ id: c.id, x: q.x, y: q.y, r: Math.max(15, r + 9) });
+        blocks.push({ x0: q.x - ext, x1: q.x + ext, y0: q.y - ext, y1: q.y + ext, id: c.id });
+      }
+      if(mine) marks.push({ c: c, x: q.x, y: q.y, ext: ext, n: jobsAt(st, c.id).length });
     });
 
-    /* Names, but only where they will be read. Drawn unconditionally they
-       piled on top of one another the moment the airline had a dozen
-       airports and the map became a smear. Busiest first, and anything that
-       would land on a name already down is left off - the dot is still there
-       and still tappable. */
-    ctx.font = "10px -apple-system,system-ui,sans-serif";
-    ctx.textAlign = "center";
-    var taken = [];
-    labels.sort(function(a, b){ return b.n - a.n; }).forEach(function(L){
-      var text = L.c.name + (L.n ? "  " + L.n : "");
-      var half = ctx.measureText(text).width / 2 + 2;
-      var box = { x0: L.x - half, x1: L.x + half, y0: L.y - 9, y1: L.y + 2 };
-      var clash = taken.some(function(t){
-        return !(box.x1 < t.x0 || box.x0 > t.x1 || box.y1 < t.y0 || box.y0 > t.y1);
-      });
-      if(clash) return;
-      taken.push(box);
-      ctx.fillStyle = L.n ? "#E6EBEF" : "#6C7A87";
-      ctx.fillText(text, L.x, L.y);
-    });
-
-    // aeroplanes last, on top of everything
-    st.fleet.forEach(function(p){
-      if(!p.leg) return;
-      var a = at(p.leg.from), b = at(p.leg.to);
-      var t = (st.min + partMin(st, Date.now()) - p.leg.left) /
-              Math.max(1, p.leg.arrive - p.leg.left);
-      t = Math.max(0, Math.min(1, t));
-      var x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
+    // aeroplanes over the airports
+    planes.forEach(function(q){
       ctx.save();
-      ctx.translate(x, y);
-      ctx.rotate(Math.atan2(b.y - a.y, b.x - a.x));
+      ctx.translate(q.x, q.y);
+      ctx.rotate(q.ang);
       ctx.fillStyle = "#E0A458";
       ctx.beginPath();
       ctx.moveTo(6, 0); ctx.lineTo(-4, 3.4); ctx.lineTo(-2, 0); ctx.lineTo(-4, -3.4);
       ctx.closePath(); ctx.fill();
       ctx.restore();
+      blocks.push({ x0: q.x - 6, x1: q.x + 6, y0: q.y - 6, y1: q.y + 6 });
     });
+
+    /* Names, where they will be read. Hubs first, then the busiest; each
+       tries above its airport, then below, right and left, and takes the
+       first place that covers no other airport, aeroplane, count or name.
+       One that fits nowhere is left off - the airport is still there and
+       still tappable, and zooming in makes room. */
+    ctx.font = "10px -apple-system,system-ui,sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    ctx.lineJoin = "round";
+    var taken = blocks.slice();
+    // nothing printed under the zoom buttons
+    taken.push({ x0: w - 50, x1: w, y0: 0, y1: 132 });
+    function clear(b, self){
+      if(b.x0 < 2 || b.x1 > w - 2 || b.y0 < 2 || b.y1 > h - 2) return false;
+      for(var i = 0; i < taken.length; i++){
+        var t = taken[i];
+        if(self && t.id === self) continue;     // a count may sit on its own airport
+        if(b.x1 > t.x0 && b.x0 < t.x1 && b.y1 > t.y0 && b.y0 < t.y1) return false;
+      }
+      return true;
+    }
+    marks.sort(function(a, b){ return (b.c.cls - a.c.cls) || (b.n - a.n); }).forEach(function(m){
+      var tw = ctx.measureText(m.c.name).width, g = m.ext + 3;
+      var spots = [
+        { x: m.x, y: m.y - g - 2, al: "center" },
+        { x: m.x, y: m.y + g + 9, al: "center" },
+        { x: m.x + g + 1, y: m.y + 3.5, al: "left" },
+        { x: m.x - g - 1, y: m.y + 3.5, al: "right" }
+      ];
+      for(var i = 0; i < spots.length; i++){
+        var sp = spots[i];
+        var x0 = sp.al === "center" ? sp.x - tw / 2 : sp.al === "left" ? sp.x : sp.x - tw;
+        var box = { x0: x0 - 1, x1: x0 + tw + 1, y0: sp.y - 9, y1: sp.y + 2 };
+        if(!clear(box)) continue;
+        taken.push(box);
+        ctx.textAlign = sp.al;
+        ctx.strokeStyle = "rgba(13,21,29,.85)";
+        ctx.lineWidth = 3;
+        ctx.strokeText(m.c.name, sp.x, sp.y);
+        ctx.fillStyle = m.n ? "#E6EBEF" : "#8A97A3";
+        ctx.fillText(m.c.name, sp.x, sp.y);
+        return;
+      }
+    });
+    ctx.textAlign = "center";
+
+    /* Who is waiting, as a small count on the airport itself rather than a
+       number trailing the name - where it read as part of the name, or as
+       belonging to the airport next door. Put down after the names, and
+       only where it covers nothing: a name matters more than a count, and
+       the count is one tap away. */
+    ctx.font = "600 9px -apple-system,system-ui,sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    marks.forEach(function(m){
+      if(!m.n) return;
+      var o = m.ext * 0.8 + 3, bx, by, bb = null;
+      // top right of the airport if it is free, else any other corner
+      [[1, -1], [-1, -1], [1, 1], [-1, 1]].some(function(c){
+        bx = m.x + c[0] * o; by = m.y + c[1] * o;
+        var b = { x0: bx - 6, x1: bx + 6, y0: by - 6, y1: by + 6 };
+        if(!clear(b, m.c.id)) return false;
+        bb = b;
+        return true;
+      });
+      if(!bb) return;
+      taken.push(bb);
+      ctx.fillStyle = "#151C24";
+      ctx.beginPath(); ctx.arc(bx, by, 6.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "#E6EBEF";
+      ctx.beginPath(); ctx.arc(bx, by, 5.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "#151C24";
+      ctx.fillText(m.n > 9 ? "9+" : String(m.n), bx, by + 0.5);
+    });
+
+    ctx.textBaseline = "alphabetic";
   }
+
+  /* The fewest lines that join every pair of your airports a single
+     aircraft of yours could hop between: Prim's tree over the airports,
+     using only legs within your longest range. Kept until the network
+     changes, since it is asked for every second. */
+  var NET = { key: null, edges: [] };
+  function network(){
+    var reach = 0;
+    st.fleet.forEach(function(p){ reach = Math.max(reach, MODEL[p.model].range); });
+    var key = st.ports.join(",") + "|" + reach;
+    if(NET.key === key) return NET.edges;
+    var ids = st.ports.slice(), inTree = {}, edges = [], best = {}, from = {};
+    while(ids.length){
+      var seed = ids.shift();
+      if(inTree[seed]) continue;
+      inTree[seed] = true;
+      var frontier = [seed];
+      for(;;){
+        frontier.forEach(function(a){
+          st.ports.forEach(function(b){
+            if(inTree[b]) return;
+            var d = dist(a, b);
+            if(d <= reach && (best[b] === undefined || d < best[b])){ best[b] = d; from[b] = a; }
+          });
+        });
+        var next = null;
+        st.ports.forEach(function(b){
+          if(!inTree[b] && best[b] !== undefined && (next === null || best[b] < best[next])) next = b;
+        });
+        if(next === null) break;
+        inTree[next] = true;
+        edges.push([from[next], next]);
+        frontier = [next];
+      }
+    }
+    NET = { key: key, edges: edges };
+    return edges;
+  }
+
+  /* ---------------------------------------------------------------------
+     MOVING ROUND THE MAP
+
+     One finger drags, two pinch, the buttons step, and the square puts the
+     whole network back in view. A tap that did not move opens the
+     airport under it.
+     --------------------------------------------------------------------- */
+  var cam = null, ptrs = {}, gesture = null;
+  function fitted(){ return projector(cssSize().w, cssSize().h); }
+  function camFrom(at){ return { z: cam ? cam.z : 1, cx: at.cx, cy: at.cy }; }
+  function clampCam(){
+    if(!cam) return;
+    if(cam.z <= 1.001){ cam = null; return; }
+    cam.z = Math.min(cam.z, 60);
+    cam.cx = Math.max(-180, Math.min(180, cam.cx));
+    cam.cy = Math.max(-190, Math.min(190, cam.cy));
+  }
+  function zoomAt(f, x, y){
+    var at = fitted(), keep = at.back(x, y);
+    var base = at.scale / (cam ? cam.z : 1);
+    cam = camFrom(at);
+    cam.z *= f;
+    var sc = base * cam.z, z = cssSize();
+    cam.cx = keep.x - (x - z.w / 2) / sc;
+    cam.cy = keep.y - (y - z.h / 2) / sc;
+    clampCam();
+  }
+  function local(e){
+    var b = canvas.getBoundingClientRect();
+    return { x: e.clientX - b.left, y: e.clientY - b.top };
+  }
+  function startGesture(moved){
+    var ids = Object.keys(ptrs);
+    if(ids.length === 1){
+      gesture = { kind: "pan", p0: ptrs[ids[0]], at0: fitted(), moved: !!moved };
+    } else if(ids.length >= 2){
+      var a = ptrs[ids[0]], b = ptrs[ids[1]];
+      gesture = { kind: "pinch", d0: Math.max(10, Math.hypot(a.x - b.x, a.y - b.y)),
+                  mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, at0: fitted(), z0: cam ? cam.z : 1 };
+    } else gesture = null;
+  }
+  canvas.addEventListener("pointerdown", function(e){
+    try{ canvas.setPointerCapture(e.pointerId); }catch(err){}
+    ptrs[e.pointerId] = local(e);
+    startGesture(Object.keys(ptrs).length > 1);
+  });
+  canvas.addEventListener("pointermove", function(e){
+    if(!ptrs[e.pointerId] || !gesture) return;
+    ptrs[e.pointerId] = local(e);
+    var at0 = gesture.at0;
+    if(gesture.kind === "pan"){
+      var p = ptrs[e.pointerId], dx = p.x - gesture.p0.x, dy = p.y - gesture.p0.y;
+      if(Math.abs(dx) + Math.abs(dy) > 7) gesture.moved = true;
+      if(!gesture.moved) return;
+      cam = { z: cam ? cam.z : 1, cx: at0.cx - dx / at0.scale, cy: at0.cy - dy / at0.scale };
+      // dragging the fitted view still moves it; it only snaps back from a pinch
+      if(cam.z <= 1.001) cam.z = 1.0011;
+    } else {
+      var ids = Object.keys(ptrs), a = ptrs[ids[0]], b = ptrs[ids[1]];
+      var d = Math.hypot(a.x - b.x, a.y - b.y), z = cssSize();
+      var keep = at0.back(gesture.mid.x, gesture.mid.y), base = at0.scale / gesture.z0;
+      var nz = gesture.z0 * d / gesture.d0, mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      cam = { z: nz, cx: keep.x - (mx - z.w / 2) / (base * nz), cy: keep.y - (my - z.h / 2) / (base * nz) };
+    }
+    clampCam();
+    draw();
+  });
+  function lift(e){
+    if(!ptrs[e.pointerId]) return;
+    var p = ptrs[e.pointerId];
+    delete ptrs[e.pointerId];
+    if(gesture && gesture.kind === "pan" && !gesture.moved && e.type === "pointerup") tapMap(p.x, p.y);
+    startGesture(true);
+    if(!Object.keys(ptrs).length){ st.cam = cam; save(); }
+  }
+  canvas.addEventListener("pointerup", lift);
+  canvas.addEventListener("pointercancel", lift);
+  canvas.addEventListener("wheel", function(e){
+    e.preventDefault();
+    var p = local(e);
+    zoomAt(Math.exp(-e.deltaY * 0.0015), p.x, p.y);
+    draw();
+  }, { passive: false });
+  function step(f){
+    var z = cssSize();
+    zoomAt(f, z.w / 2, z.h / 2);
+    st.cam = cam; save(); draw();
+  }
+  el("zin").addEventListener("click", function(){ step(1.6); });
+  el("zout").addEventListener("click", function(){ step(1 / 1.6); });
+  el("zfit").addEventListener("click", function(){ cam = null; st.cam = null; save(); draw(); });
 
   /* Each class its own shape, so a hub is a hub at a glance rather than a
      slightly bigger dot: a strip is a circle, a city airport a square, a
@@ -1278,10 +1484,6 @@
     });
     if(best) open({ kind: "city", id: best.id });
   }
-  canvas.addEventListener("click", function(e){
-    var box = canvas.getBoundingClientRect();
-    tapMap(e.clientX - box.left, e.clientY - box.top);
-  });
 
   /* ---------------------------------------------------------------------
      SHEETS
@@ -1839,6 +2041,7 @@
     if(!window.confirm("Sell up and start a new airline?")) return;
     st = newGame();
     st.at = Date.now();
+    cam = null;
     view = null;
     say("A Puddlejumper, three airfields and " + money(st.cash) + ".");
     after();
@@ -1850,6 +2053,7 @@
   });
 
   st = load() || newGame();
+  cam = st.cam || null;
   /* Whatever happened while the app was shut, up to a day of it, happens
      now - so you open it to aeroplanes that have landed and boards that
      have filled rather than to the moment you left. */
