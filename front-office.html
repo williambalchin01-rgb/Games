@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#151C24">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Arcade">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<link rel="icon" href="./icon-192.png">
+<title>Front Office</title>
+<link rel="stylesheet" href="./app.css">
+<style>
+  #app{flex:1;display:flex;flex-direction:column;gap:10px;min-height:0}
+  .tabs{display:flex;gap:6px}
+  .tabs button{flex:1;padding:10px 4px;font-size:12.5px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)}
+  .tabs button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px}
+  .panel h3{margin:0 0 8px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:400}
+  .row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--line);font-size:13.5px}
+  .row:last-child{border-bottom:none}
+  .row small{color:var(--muted);font-size:11.5px}
+  .big{font-size:20px;font-weight:300}
+  .btn{width:100%;padding:13px;border:1px solid var(--accent);color:var(--accent);border-radius:var(--radius);background:var(--surface);font-size:14px}
+  .btn.alt{border-color:var(--line);color:var(--ink)}
+  .choice{display:flex;gap:6px;flex-wrap:wrap}
+  .choice button{padding:8px 12px;border:1px solid var(--line);border-radius:20px;font-size:12.5px}
+  .choice button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
+  .slider{padding:6px 0}
+  .slider label{display:flex;justify-content:space-between;font-size:13px}
+  .slider label b{font-weight:400;color:var(--sel);font-variant-numeric:tabular-nums}
+  input[type=range]{width:100%;accent-color:#4FA88B}
+  .advice{border-left:3px solid var(--sel);padding:6px 10px;margin:6px 0;font-size:13px;background:rgba(224,164,88,.06)}
+  .advice small{display:block;color:var(--muted);margin-top:3px}
+  .avail{font-size:11px;padding:2px 7px;border-radius:10px;border:1px solid var(--line)}
+  .avail[data-a="likely"]{color:var(--accent);border-color:rgba(79,168,139,.5)}
+  .avail[data-a="doubtful"]{color:var(--sel);border-color:rgba(224,164,88,.5)}
+  .avail[data-a="unlikely"]{color:#E0574A;border-color:rgba(224,87,74,.5)}
+  .scroll{flex:1;overflow-y:auto;min-height:0;display:flex;flex-direction:column;gap:10px;-webkit-overflow-scrolling:touch}
+  .score{display:flex;justify-content:space-between;align-items:center;font-variant-numeric:tabular-nums}
+  .score .t{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+  .score .n{font-size:30px;font-weight:200}
+  .clock{text-align:center;font-size:12px;color:var(--muted);letter-spacing:.1em}
+  #field{width:100%;height:190px;display:block;border-radius:8px;background:#1B2A22}
+  .feed{flex:1;overflow-y:auto;min-height:0;font-size:13px;display:flex;flex-direction:column-reverse;gap:4px}
+  .feed div{padding:6px 8px;border-radius:6px;background:var(--surface)}
+  .feed div[data-hl="true"]{border-left:3px solid var(--sel)}
+  .speed{display:flex;gap:6px}
+  .speed button{flex:1;padding:9px;border:1px solid var(--line);border-radius:var(--radius);font-size:12.5px}
+  .speed button[aria-pressed="true"]{border-color:var(--sel);color:var(--sel)}
+  .post{font-size:12.5px;padding:8px 10px;border-radius:8px;background:var(--surface);border:1px solid var(--line)}
+  .post b{font-weight:500}
+  .post small{color:var(--muted)}
+  .note{font-size:12px;color:var(--muted);text-align:center;margin:0}
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="./index.html">&larr; Arcade</a>
+  <button class="chip" id="restart">New club</button>
+</header>
+<div id="app"></div>
+<script src="./sw-boot.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  /* A first look: one tier-seven area league, a squad, the game plan in
+     numbers, a scouting report with coordinator advice, and a live match
+     whose big plays are animated. The real Gridiron engine and the rest of
+     the pyramid come later - see docs/front-office.md. */
+
+  var AREAS = {
+    "Scotland & North East": ["Aberdeen","Dundee","Durham","Edinburgh","Glasgow","Newcastle","Stirling","Sunderland"],
+    "North West": ["Blackpool","Bolton","Carlisle","Chester","Lancaster","Liverpool","Manchester","Preston"],
+    "Yorkshire": ["Bradford","Doncaster","Harrogate","Hull","Leeds","Sheffield","Wakefield","York"],
+    "Midlands": ["Birmingham","Coventry","Derby","Leicester","Lincoln","Northampton","Nottingham","Wolverhampton"],
+    "Wales & South West": ["Bath","Bristol","Cardiff","Exeter","Gloucester","Plymouth","Swansea","Taunton"],
+    "London & South East": ["Brighton","Canterbury","Croydon","Guildford","Oxford","Reading","Southampton","Watford"]
+  };
+  var NICK = ["Bulldogs","Ravens","Knights","Raiders","Hornets","Spartans","Wolves","Titans","Stallions","Phoenix","Blitz","Rams","Vikings","Hurricanes","Lions","Warriors"];
+  var FIRST = ["Tom","Jack","Harry","Callum","Liam","Ryan","Owen","Josh","Dan","Sam","Kieran","Ben","Luke","Jamie","Aaron","Connor","Marcus","Ellis","Kofi","Theo","Reece","Nathan","Zak","Rhys"];
+  var LAST = ["Smith","Jones","Taylor","Brown","Walker","Wright","Hughes","Evans","Patel","Okafor","Murphy","Hall","Clarke","Mensah","Byrne","Shaw","Reid","Lloyd","Bennett","Doyle","Carter","Price","Fraser","Kaur"];
+  var POS = [["QB",2],["RB",3],["WR",4],["TE",2],["OL",7],["DL",5],["LB",4],["CB",4],["S",2],["K",1]];
+
+  function rnd(a, b){ return a + Math.random() * (b - a); }
+  function ri(a, b){ return Math.floor(rnd(a, b + 1)); }
+  function pickOne(a){ return a[Math.floor(Math.random() * a.length)]; }
+  function clamp(x, a, b){ return Math.max(a, Math.min(b, x)); }
+  function el(id){ return document.getElementById(id); }
+  function h(tag, attrs, html){
+    var d = document.createElement(tag);
+    for(var k in attrs || {}) d.setAttribute(k, attrs[k]);
+    if(html !== undefined) d.innerHTML = html;
+    return d;
+  }
+
+  function makePlayers(base){
+    var list = [];
+    POS.forEach(function(p){
+      for(var i = 0; i < p[1]; i++){
+        list.push({ name: pickOne(FIRST) + " " + pickOne(LAST), pos: p[0],
+          ovr: clamp(Math.round(base + rnd(-9, 9) - i * 3), 25, 80),
+          commit: Math.round(rnd(45, 98)), job: pickOne(["Sat shifts","Sun shifts","Office hours","Student","Night shifts"]) });
+      }
+    });
+    return list;
+  }
+  function makeStyle(){
+    return { run: ri(30, 70), deep: ri(10, 40), blitz: ri(10, 45), man: ri(25, 75), box: ri(10, 50) };
+  }
+  function teamRating(players, unit){
+    var off = ["QB","RB","WR","TE","OL"], def = ["DL","LB","CB","S"];
+    var use = players.filter(function(p){ return (unit === "off" ? off : def).indexOf(p.pos) >= 0 && !p.out; });
+    if(!use.length) return 30;
+    return use.reduce(function(s, p){ return s + p.ovr; }, 0) / use.length;
+  }
+
+  /* --------------------------------------------------------------------
+     STATE
+     -------------------------------------------------------------------- */
+  var KEY = "arcade.frontoffice.v1", st = null, tab = "week", match = null;
+  function save(){ try{ localStorage.setItem(KEY, JSON.stringify(st)); }catch(e){} }
+  function load(){ try{ return JSON.parse(localStorage.getItem(KEY)); }catch(e){ return null; } }
+
+  function newClub(area, town){
+    var towns = AREAS[area].filter(function(t){ return t !== town; });
+    var nicks = NICK.slice().sort(function(){ return Math.random() - 0.5; });
+    var clubs = [{ name: town + " " + nicks[0], mine: true, base: 46, style: { run: 50, deep: 25, blitz: 25, man: 50, box: 25 } }];
+    towns.slice(0, 7).forEach(function(t, i){
+      clubs.push({ name: t + " " + nicks[i + 1], base: ri(40, 54), style: makeStyle() });
+    });
+    clubs.forEach(function(c){ c.w = 0; c.l = 0; c.pf = 0; c.pa = 0; });
+    var fixtures = [];
+    for(var r = 0; r < 7; r++){
+      var round = [], order = [0].concat(rotate([1,2,3,4,5,6,7], r));
+      for(var k = 0; k < 4; k++) round.push(r % 2 ? [order[7 - k], order[k]] : [order[k], order[7 - k]]);
+      fixtures.push(round);
+    }
+    return {
+      area: area, town: town, clubs: clubs, fixtures: fixtures, week: 0, cash: 650, fans: 40,
+      players: makePlayers(46), plan: { run: 50, deep: 25, fourth: 30, blitz: 25, man: 50, box: 25 },
+      day: "Sat", oc: { name: "Gary Pike", rating: 52 }, dc: { name: "Sue Adeyemi", rating: 58 },
+      feed: [{ who: "Local Gazette", text: "A new American football club is starting up in " + town + ". Training on the rec, all welcome." }]
+    };
+  }
+  function rotate(a, n){ n %= a.length; return a.slice(a.length - n).concat(a.slice(0, a.length - n)); }
+
+  function myIndex(){ return 0; }
+  function nextFixture(){
+    if(st.week >= st.fixtures.length) return null;
+    var f = st.fixtures[st.week].filter(function(m){ return m[0] === 0 || m[1] === 0; })[0];
+    return { home: f[0] === 0, opp: f[0] === 0 ? f[1] : f[0] };
+  }
+
+  /* Who is coming: commitment, a clash between the match day and their day
+     job, and the mood after recent results. */
+  function chance(p){
+    var c = p.commit / 100;
+    if(st.day === "Sat" && /Sat/.test(p.job)) c -= 0.35;
+    if(st.day === "Sun" && /Sun/.test(p.job)) c -= 0.35;
+    var me = st.clubs[0];
+    c += (me.w - me.l) * 0.03;
+    return clamp(c, 0.05, 0.98);
+  }
+  function availLabel(p){ var c = chance(p); return c > 0.75 ? "likely" : c > 0.45 ? "doubtful" : "unlikely"; }
+
+  /* --------------------------------------------------------------------
+     SCOUTING AND ADVICE
+     -------------------------------------------------------------------- */
+  function scout(opp){
+    var s = st.clubs[opp].style, noise = function(v){ return clamp(Math.round(v + rnd(-6, 6)), 0, 100); };
+    return { run: noise(s.run), deep: noise(s.deep), blitz: noise(s.blitz), man: noise(s.man), box: noise(s.box) };
+  }
+  function advice(rep){
+    var a = [];
+    // the weaker the coordinator, the more their read drifts
+    var dErr = (100 - st.dc.rating) / 3, oErr = (100 - st.oc.rating) / 3;
+    var box = clamp(Math.round(rep.run * 0.8 - 10 + rnd(-dErr, dErr)), 5, 70);
+    a.push({ who: "DC " + st.dc.name, text: "They run " + rep.run + "% of the time. Stack the box " + box + "% of snaps.", apply: { box: box } });
+    var blitz = clamp(Math.round((100 - rep.run) * 0.5 + rnd(-dErr, dErr)), 5, 60);
+    a.push({ who: "DC " + st.dc.name, text: "Their deep shots are " + rep.deep + "% of passes. " + (rep.deep > 28 ? "Keep a safety deep: blitz " + Math.min(blitz, 25) + "%." : "Get after the quarterback: blitz " + blitz + "%."), apply: { blitz: rep.deep > 28 ? Math.min(blitz, 25) : blitz } });
+    var run = clamp(Math.round(50 + (rep.box < 25 ? 12 : -10) + rnd(-oErr, oErr)), 20, 80);
+    a.push({ who: "OC " + st.oc.name, text: "They stack the box " + rep.box + "% of the time. Run " + run + "% of plays.", apply: { run: run } });
+    var deep = clamp(Math.round(rep.man > 55 ? 35 : 18 + rnd(-oErr, oErr) / 2), 5, 50);
+    a.push({ who: "OC " + st.oc.name, text: "They play man coverage " + rep.man + "% of snaps. " + (rep.man > 55 ? "Take shots deep: " : "Stay short against the zones: ") + deep + "% deep.", apply: { deep: deep } });
+    return a;
+  }
+
+  /* --------------------------------------------------------------------
+     THE MATCH SIM
+     Drive by drive from play-level rolls, driven by each side's plan,
+     ratings and how the plans meet.
+     -------------------------------------------------------------------- */
+  function sideOf(i, players){
+    var c = st.clubs[i];
+    var plan = c.mine ? st.plan : { run: c.style.run, deep: c.style.deep, fourth: 35, blitz: c.style.blitz, man: c.style.man, box: c.style.box };
+    var off = c.mine ? teamRating(players, "off") : c.base + rnd(-3, 3), def = c.mine ? teamRating(players, "def") : c.base + rnd(-3, 3);
+    return { i: i, name: c.name, plan: plan, off: off, def: def };
+  }
+  function play(o, d, down, togo, ball){
+    var p = o.plan, q = d.plan, edge = (o.off - d.def) / 12;
+    var r = { kind: "", yds: 0, to: false, sack: false };
+    if(Math.random() * 100 < p.run){
+      r.kind = "run";
+      var y = rnd(-2, 7) + edge - (q.box / 100) * 3.2 + (Math.random() < 0.07 + edge * 0.02 ? rnd(10, 45) * (1 - q.box / 140) : 0);
+      r.yds = Math.round(y);
+      if(Math.random() < 0.012) r.to = true;
+    } else {
+      var deep = Math.random() * 100 < p.deep, blitz = Math.random() * 100 < q.blitz;
+      r.kind = deep ? "deep" : "pass";
+      if(blitz && Math.random() < 0.18 - edge * 0.02){ r.sack = true; r.yds = -ri(4, 9); return r; }
+      var comp = (deep ? 0.38 : 0.66) + edge * 0.04 - (q.man / 100) * (deep ? -0.04 : 0.06) + (blitz ? (deep ? 0.08 : 0.05) : 0);
+      if(Math.random() < (deep ? 0.06 : 0.025)){ r.to = true; r.kind = "int"; return r; }
+      if(Math.random() < comp){
+        r.yds = Math.round(deep ? rnd(16, 45) : rnd(3, 12) + (Math.random() < 0.1 ? rnd(8, 30) : 0) + edge);
+        if(blitz && Math.random() < 0.25) r.yds += ri(8, 25);
+      } else { r.kind = "inc"; r.yds = 0; }
+    }
+    return r;
+  }
+  function drive(o, d, start, clock){
+    var ball = start, down = 1, togo = 10, plays = 0, hl = [], time = 0, out = null;
+    while(!out){
+      var r = play(o, d, down, togo, ball);
+      plays++; time += r.kind === "inc" ? 8 : 34;
+      var gainEnd = ball + r.yds;
+      var sig = null;
+      if(r.to) sig = r.kind === "int" ? "int" : "fumble";
+      else if(r.sack && down >= 3) sig = "sack";
+      else if(r.yds >= 20) sig = r.kind === "run" ? "bigrun" : "bigpass";
+      if(r.to){ out = { res: r.kind === "int" ? "Interception" : "Fumble", pts: 0, at: 100 - Math.max(1, Math.min(99, gainEnd)) }; }
+      else {
+        ball = clamp(gainEnd, 1, 100);
+        if(ball >= 100){ out = { res: "Touchdown", pts: 7, at: 25 }; sig = "td"; ball = 100; }
+        else {
+          togo -= r.yds;
+          if(togo <= 0){ down = 1; togo = Math.min(10, 100 - ball); }
+          else if(down === 4){ out = { res: "Turnover on downs", pts: 0, at: 100 - ball }; sig = sig || "fourth"; }
+          else {
+            down++;
+            if(down === 4){
+              var go = (o.plan.fourth > 50 && togo <= 3 && ball > 45) || (ball > 60 && togo <= 1 && o.plan.fourth > 20);
+              if(!go){
+                if(ball >= 62){
+                  var dist = 100 - ball + 17, ok = Math.random() < clamp(1.25 - dist / 60, 0.15, 0.95);
+                  out = { res: ok ? "Field goal (" + dist + " yds)" : "Missed field goal", pts: ok ? 3 : 0, at: ok ? 25 : 100 - ball };
+                  if(dist >= 40 && ok) sig = "fg";
+                } else out = { res: "Punt", pts: 0, at: clamp(100 - (ball + ri(30, 45)), 5, 40) };
+              }
+            }
+          }
+        }
+      }
+      if(sig) hl.push({ type: sig, kind: r.kind, yds: r.yds, ball: clamp(gainEnd - r.yds, 1, 99), o: o, d: d });
+      if(clock - time <= 0 && !out) out = { res: "End of half", pts: 0, at: 25 };
+    }
+    return { plays: plays, yds: Math.max(0, Math.round(ball - start)), time: time, res: out, hl: hl };
+  }
+
+  function startMatch(){
+    var f = nextFixture();
+    // who actually turned up
+    st.players.forEach(function(p){ p.out = Math.random() > chance(p); });
+    var came = st.players.filter(function(p){ return !p.out; }).length;
+    var me = sideOf(0, st.players), them = sideOf(f.opp, null);
+    var home = f.home ? me : them, away = f.home ? them : me;
+    match = { home: home, away: away, hs: 0, as: 0, half: 1, clock: 1800, poss: Math.random() < 0.5 ? home : away,
+              ball: 25, feed: [], queue: [], speed: 1, done: false, came: came, stats: { hl: 0 } };
+    match.feed.push({ t: came + " of " + st.players.length + " players turned up." + (came < 26 ? " Some will play both ways." : "") });
+    tab = "match";
+    render();
+    tick();
+  }
+
+  // About six minutes at 1x: roughly 24 drives at ~11s plus the highlights.
+  var DRIVE_MS = 11000, HL_MS = 5200;
+  var timer = null;
+  function tick(){
+    clearTimeout(timer);
+    if(!match || match.done) return;
+    if(match.queue.length){
+      var hl = match.queue.shift();
+      showHighlight(hl);
+      timer = setTimeout(tick, HL_MS / match.speed);
+      return;
+    }
+    var o = match.poss, d = o === match.home ? match.away : match.home;
+    var dr = drive(o, d, match.ball, match.clock);
+    match.clock -= dr.time;
+    if(o === match.home) match.hs += dr.res.pts; else match.as += dr.res.pts;
+    match.feed.push({ t: short(o.name) + ": " + dr.plays + " plays, " + dr.yds + " yds - " + dr.res.res + ".  " + match.hs + "-" + match.as, hl: dr.hl.length > 0 });
+    // the biggest moment of the drive gets shown
+    if(dr.hl.length){
+      var best = dr.hl.sort(function(a, b){ return weight(b) - weight(a); })[0];
+      match.queue.push(best);
+    }
+    match.poss = d;
+    match.ball = dr.res.at;
+    if(match.clock <= 0){
+      if(match.half === 1){
+        match.half = 2; match.clock = 1800; match.ball = 25;
+        match.poss = match.poss === match.home ? match.away : match.home;
+        match.feed.push({ t: "Half time. " + match.hs + "-" + match.as + ". Adjust the plan if you like." });
+        match.paused = true;
+        renderMatch();
+        return;
+      }
+      endMatch();
+      return;
+    }
+    renderMatch();
+    timer = setTimeout(tick, (match.queue.length ? 900 : DRIVE_MS) / match.speed);
+  }
+  function weight(h){ return { td: 5, int: 4, fumble: 4, fourth: 3, sack: 2.5, bigpass: 2, bigrun: 2, fg: 1.5 }[h.type] || 1; }
+  function short(n){ return n.split(" ")[0]; }
+
+  function endMatch(){
+    match.done = true;
+    var me = match.home.i === 0 ? "home" : "away";
+    var mine = me === "home" ? match.hs : match.as, theirs = me === "home" ? match.as : match.hs;
+    var opp = st.clubs[me === "home" ? match.away.i : match.home.i];
+    // record every fixture of the week, simming the others quickly
+    st.fixtures[st.week].forEach(function(m){
+      var a = st.clubs[m[0]], b = st.clubs[m[1]], sa, sb;
+      if(m[0] === 0 || m[1] === 0){ sa = m[0] === 0 ? mine : theirs; sb = m[0] === 0 ? theirs : mine; }
+      else { sa = Math.max(0, Math.round(rnd(3, 30) + (a.base - b.base) / 2)); sb = Math.max(0, Math.round(rnd(3, 30) + (b.base - a.base) / 2)); if(sa === sb) sa += 3; }
+      a.pf += sa; a.pa += sb; b.pf += sb; b.pa += sa;
+      if(sa > sb){ a.w++; b.l++; } else { b.w++; a.l++; }
+    });
+    var won = mine > theirs;
+    st.cash += 40 + Math.round(st.fans * 0.8);
+    st.fans = Math.max(10, st.fans + (won ? ri(6, 14) : ri(-3, 4)));
+    st.feed.unshift({ who: won ? "Fan page" : "Local Gazette", text: won ? "WHAT A WIN. " + mine + "-" + theirs + " over " + opp.name + "! Who's coming next week?" : "Defeat for " + st.clubs[0].name + ", " + theirs + "-" + mine + " against " + opp.name + ". Only " + match.came + " players made it." });
+    if(Math.random() < 0.5) st.feed.unshift({ who: "@gridiron_" + st.town.toLowerCase(), text: won ? "That defence though. Coordinator deserves a pint." : "Run the ball more. Simple." });
+    st.week++;
+    st.players.forEach(function(p){ p.out = false; });
+    save();
+    match.feed.push({ t: "Full time. " + match.hs + "-" + match.as + "." });
+    renderMatch();
+  }
+
+  /* --------------------------------------------------------------------
+     HIGHLIGHTS: the play, drawn
+     -------------------------------------------------------------------- */
+  var anim = null;
+  function showHighlight(hl){
+    match.stats.hl++;
+    var names = { td: "TOUCHDOWN", int: "INTERCEPTED", fumble: "FUMBLE", fourth: "Stopped on fourth down", sack: "SACK", bigpass: "Big completion", bigrun: "Breakaway run", fg: "Long field goal" };
+    match.feed.push({ t: "▶ " + names[hl.type] + " - " + short(hl.o.name) + (hl.yds ? ", " + Math.abs(hl.yds) + " yds" : ""), hl: true });
+    renderMatch();
+    var cv = el("field"); if(!cv) return;
+    var dpr = Math.min(window.devicePixelRatio || 1, 2), W = cv.clientWidth, H = cv.clientHeight;
+    cv.width = W * dpr; cv.height = H * dpr;
+    var c = cv.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    var los = hl.ball, span = 40, x0 = clamp(los - 12, 0, 100 - span);
+    function X(yd){ return (yd - x0) / span * W; }
+    function Y(f){ return H * (0.08 + f * 0.84); }
+    // the offence: line, quarterback, back, receivers; the defence opposite
+    var off = [], def = [], i;
+    for(i = 0; i < 5; i++) off.push({ x: los - 0.6, y: 0.38 + i * 0.06, role: "ol" });
+    off.push({ x: los - 5, y: 0.5, role: "qb" }, { x: los - 7, y: 0.5, role: "rb" }, { x: los - 0.8, y: 0.06, role: "wr" }, { x: los - 0.8, y: 0.94, role: "wr" }, { x: los - 1.5, y: 0.8, role: "wr" }, { x: los - 0.6, y: 0.68, role: "te" });
+    for(i = 0; i < 4; i++) def.push({ x: los + 1, y: 0.41 + i * 0.06, role: "dl" });
+    def.push({ x: los + 5, y: 0.35, role: "lb" }, { x: los + 5, y: 0.65, role: "lb" }, { x: los + 4.5, y: 0.5, role: "lb" }, { x: los + 6, y: 0.06, role: "cb" }, { x: los + 6, y: 0.94, role: "cb" }, { x: los + 13, y: 0.3, role: "s" }, { x: los + 13, y: 0.7, role: "s" });
+    off.forEach(function(p){ p.x0 = p.x; p.y0 = p.y; });
+    def.forEach(function(p){ p.x0 = p.x; p.y0 = p.y; });
+    var gain = hl.type === "td" ? 100 - los : hl.type === "sack" ? hl.yds : hl.yds;
+    var carrier = hl.kind === "run" ? off[6] : hl.type === "sack" ? off[5] : off[7];
+    var throwAt = 0.35, t0 = performance.now(), dur = (HL_MS - 700) / match.speed;
+    cancelAnimationFrame(anim);
+    (function frame(){
+      var t = Math.min(1, (performance.now() - t0) / dur);
+      var e = t * t * (3 - 2 * t);
+      // movement
+      off.forEach(function(p){
+        if(p.role === "ol"){ p.x = p.x0 - 1.2 * e; }
+        if(p.role === "qb"){ p.x = p.x0 - (hl.kind === "run" ? 0 : 2.5) * Math.min(1, t / throwAt); }
+        if(p.role === "wr" || p.role === "te"){ p.x = p.x0 + 14 * e; p.y = p.y0 + (0.5 - p.y0) * 0.35 * e; }
+      });
+      if(hl.type === "sack"){ carrier.x = carrier.x0 - 2.5 * Math.min(1, t / 0.4) + Math.min(0, gain + 2.5) * Math.max(0, (t - 0.4) / 0.6); }
+      else if(hl.kind === "run"){ carrier.x = carrier.x0 + (gain + 7) * e; carrier.y = carrier.y0 + Math.sin(e * 3) * 0.12; }
+      else { carrier.x = carrier.x0 + Math.max(14 * e, (gain + 1) * e); carrier.y = carrier.y0 + (0.5 - carrier.y0) * 0.5 * e; }
+      var ballX = carrier.x, ballY = carrier.y;
+      if(hl.kind !== "run" && hl.type !== "sack" && t < throwAt){ ballX = off[5].x; ballY = off[5].y; }
+      else if(hl.kind !== "run" && hl.type !== "sack" && t < throwAt + 0.2){
+        var k = (t - throwAt) / 0.2; ballX = off[5].x + (carrier.x - off[5].x) * k; ballY = off[5].y + (carrier.y - off[5].y) * k;
+      }
+      var target = hl.type === "int" ? { x: ballX, y: ballY } : carrier;
+      def.forEach(function(p, n){
+        var tx = target.x, ty = target.y, sp = n < 4 ? 0.9 : 0.75;
+        if(hl.type === "sack" && n === 1){ sp = 1.6; }
+        p.x = p.x0 + (tx - p.x0) * e * sp * (gain > 25 && n > 3 ? 0.7 : 1);
+        p.y = p.y0 + (ty - p.y0) * e * sp;
+      });
+      // pitch
+      c.fillStyle = "#1B2A22"; c.fillRect(0, 0, W, H);
+      c.strokeStyle = "rgba(255,255,255,.14)"; c.lineWidth = 1;
+      for(var yd = Math.ceil(x0 / 5) * 5; yd <= x0 + span; yd += 5){ c.beginPath(); c.moveTo(X(yd), 0); c.lineTo(X(yd), H); c.stroke(); }
+      if(x0 + span >= 100){ c.fillStyle = "rgba(79,168,139,.18)"; c.fillRect(X(100), 0, W - X(100), H); }
+      c.strokeStyle = "rgba(90,150,230,.7)"; c.beginPath(); c.moveTo(X(los), 0); c.lineTo(X(los), H); c.stroke();
+      function dot(p, col){ c.fillStyle = col; c.beginPath(); c.arc(X(p.x), Y(p.y), 5.2, 0, Math.PI * 2); c.fill(); }
+      def.forEach(function(p){ dot(p, "#E0574A"); });
+      off.forEach(function(p){ dot(p, "#4FA88B"); });
+      c.fillStyle = "#C98A4B"; c.beginPath(); c.ellipse(X(ballX), Y(ballY) - 1, 3.6, 2.4, 0, 0, Math.PI * 2); c.fill();
+      c.fillStyle = "#E6EBEF"; c.font = "600 12px -apple-system,system-ui,sans-serif";
+      c.fillText(names[hl.type], 10, 18);
+      if(t < 1) anim = requestAnimationFrame(frame);
+    })();
+  }
+
+  /* --------------------------------------------------------------------
+     SCREENS
+     -------------------------------------------------------------------- */
+  function render(){
+    var app = el("app"); app.innerHTML = "";
+    if(!st){ renderSetup(app); return; }
+    if(tab === "match" && match){ renderMatch(); return; }
+    var me = st.clubs[0];
+    var top = h("div", { "class": "statline" }, '<span class="big">' + me.w + "-" + me.l + '<span class="lbl">Record</span></span>' +
+      '<span class="mid">Tier 7 · ' + st.area + '</span><span class="big">£' + st.cash + '<span class="lbl">Bank</span></span>');
+    app.appendChild(top);
+    var tabs = h("div", { "class": "tabs" });
+    [["week","Week"],["squad","Squad"],["plan","Plan"],["table","Table"],["feed","Feed"]].forEach(function(t){
+      var b = h("button", { "aria-pressed": String(tab === t[0]) }, t[1]);
+      b.onclick = function(){ tab = t[0]; render(); };
+      tabs.appendChild(b);
+    });
+    app.appendChild(tabs);
+    var body = h("div", { "class": "scroll" });
+    app.appendChild(body);
+    ({ week: renderWeek, squad: renderSquad, plan: renderPlan, table: renderTable, feed: renderFeed })[tab](body);
+  }
+
+  function renderSetup(app){
+    var chosen = { area: null, town: null };
+    app.appendChild(h("p", { "class": "eyebrow" }, "Found your club"));
+    var p1 = h("div", { "class": "panel" }, "<h3>Region</h3>");
+    var areas = h("div", { "class": "choice" });
+    var p2 = h("div", { "class": "panel" }, "<h3>Town</h3>");
+    var towns = h("div", { "class": "choice" }, '<span class="note">Pick a region first</span>');
+    var go = h("button", { "class": "btn", disabled: "" }, "Found the club");
+    Object.keys(AREAS).forEach(function(a){
+      var b = h("button", { "aria-pressed": "false" }, a);
+      b.onclick = function(){
+        chosen.area = a; chosen.town = null; go.disabled = true;
+        [].forEach.call(areas.children, function(x){ x.setAttribute("aria-pressed", String(x === b)); });
+        towns.innerHTML = "";
+        AREAS[a].forEach(function(t){
+          var tb = h("button", { "aria-pressed": "false" }, t);
+          tb.onclick = function(){
+            chosen.town = t; go.disabled = false;
+            [].forEach.call(towns.children, function(x){ x.setAttribute("aria-pressed", String(x === tb)); });
+          };
+          towns.appendChild(tb);
+        });
+      };
+      areas.appendChild(b);
+    });
+    p1.appendChild(areas); p2.appendChild(towns);
+    app.appendChild(p1); app.appendChild(p2); app.appendChild(go);
+    app.appendChild(h("p", { "class": "note" }, "You own the club. Start in an area league on a council pitch; promotion is the only way up."));
+    go.onclick = function(){ st = newClub(chosen.area, chosen.town); tab = "week"; save(); render(); };
+  }
+
+  function renderWeek(body){
+    var f = nextFixture();
+    if(!f){
+      var me = st.clubs[0], rank = sorted().indexOf(me) + 1;
+      body.appendChild(h("div", { "class": "panel" }, "<h3>Season over</h3><div class=\"big\">" + ord(rank) + " of 8</div><p class=\"note\">" +
+        (rank === 1 ? "Area champions - promoted to the Regional League (coming in a later build)." : "Promotion goes to the area champions.") + "</p>"));
+      return;
+    }
+    var opp = st.clubs[f.opp];
+    body.appendChild(h("div", { "class": "panel" }, "<h3>Week " + (st.week + 1) + " of 7</h3><div class=\"big\">" + (f.home ? "vs " : "at ") + opp.name + "</div>" +
+      "<small style=\"color:var(--muted)\">" + opp.w + "-" + opp.l + " this season</small>"));
+    var dayP = h("div", { "class": "panel" }, "<h3>Match day</h3>");
+    var days = h("div", { "class": "choice" });
+    ["Sat","Sun"].forEach(function(d){
+      var b = h("button", { "aria-pressed": String(st.day === d) }, d === "Sat" ? "Saturday 2pm" : "Sunday 11am");
+      b.onclick = function(){ st.day = d; save(); render(); };
+      days.appendChild(b);
+    });
+    dayP.appendChild(days);
+    var counts = { likely: 0, doubtful: 0, unlikely: 0 };
+    st.players.forEach(function(p){ counts[availLabel(p)]++; });
+    dayP.appendChild(h("p", { "class": "note", style: "text-align:left;margin-top:8px" },
+      counts.likely + " likely · " + counts.doubtful + " doubtful · " + counts.unlikely + " unlikely to turn up"));
+    body.appendChild(dayP);
+    var rep = scout(f.opp);
+    var sc = h("div", { "class": "panel" }, "<h3>Scouting: " + opp.name + "</h3>" +
+      row("Run / pass", rep.run + "% / " + (100 - rep.run) + "%") + row("Deep pass share", rep.deep + "%") +
+      row("Blitz rate", rep.blitz + "%") + row("Man coverage", rep.man + "%") + row("Stacked box", rep.box + "%"));
+    body.appendChild(sc);
+    var go = h("button", { "class": "btn" }, "Kick off");
+    go.onclick = startMatch;
+    body.appendChild(go);
+  }
+  function row(a, b){ return '<div class="row"><span>' + a + "</span><span>" + b + "</span></div>"; }
+  function ord(n){ return n + (n === 1 ? "st" : n === 2 ? "nd" : n === 3 ? "rd" : "th"); }
+
+  function renderSquad(body){
+    var p = h("div", { "class": "panel" }, "<h3>Squad · " + st.players.length + " players</h3>");
+    st.players.forEach(function(pl){
+      var a = availLabel(pl);
+      p.appendChild(h("div", { "class": "row" }, "<span>" + pl.pos + " &nbsp;" + pl.name + "<br><small>" + pl.job + "</small></span>" +
+        '<span><span class="avail" data-a="' + a + '">' + a + "</span> &nbsp;" + pl.ovr + "</span>"));
+    });
+    body.appendChild(p);
+    var s = h("div", { "class": "panel" }, "<h3>Staff</h3>" + row("Offensive coordinator", st.oc.name + " · " + st.oc.rating) + row("Defensive coordinator", st.dc.name + " · " + st.dc.rating));
+    body.appendChild(s);
+  }
+
+  function sliders(body, keys, labels){
+    keys.forEach(function(k, i){
+      var w = h("div", { "class": "slider" }, "<label>" + labels[i] + " <b>" + st.plan[k] + "%</b></label>");
+      var r = h("input", { type: "range", min: "0", max: "100", step: "5", value: String(st.plan[k]) });
+      r.oninput = function(){ st.plan[k] = +r.value; w.querySelector("b").textContent = r.value + "%"; save(); };
+      w.appendChild(r); body.appendChild(w);
+    });
+  }
+  function renderPlan(body){
+    var o = h("div", { "class": "panel" }, "<h3>Offence</h3>");
+    sliders(o, ["run","deep","fourth"], ["Run plays","Deep passes (of passes)","4th-down aggression"]);
+    var d = h("div", { "class": "panel" }, "<h3>Defence</h3>");
+    sliders(d, ["blitz","man","box"], ["Blitz","Man coverage","Stack the box"]);
+    body.appendChild(o); body.appendChild(d);
+    var f = nextFixture();
+    if(f){
+      var adv = h("div", { "class": "panel" }, "<h3>Coordinators on " + st.clubs[f.opp].name + "</h3>");
+      advice(scout(f.opp)).forEach(function(a){
+        var box = h("div", { "class": "advice" }, a.text + "<small>" + a.who + "</small>");
+        var b = h("button", { "class": "chip", style: "margin-top:6px" }, "Apply");
+        b.onclick = function(){ for(var k in a.apply) st.plan[k] = Math.round(a.apply[k] / 5) * 5; save(); render(); };
+        box.appendChild(b); adv.appendChild(box);
+      });
+      adv.appendChild(h("p", { "class": "note" }, "A coordinator's rating decides how sharp their read is."));
+      body.appendChild(adv);
+    }
+  }
+
+  function sorted(){ return st.clubs.slice().sort(function(a, b){ return (b.w - a.w) || ((b.pf - b.pa) - (a.pf - a.pa)); }); }
+  function renderTable(body){
+    var p = h("div", { "class": "panel" }, "<h3>" + st.area + " League</h3>");
+    sorted().forEach(function(c, i){
+      p.appendChild(h("div", { "class": "row" + (c.mine ? " mine" : "") }, "<span" + (c.mine ? ' style="color:var(--accent)"' : "") + ">" + (i + 1) + ". " + c.name + "</span><span>" + c.w + "-" + c.l + " &nbsp;<small>" + (c.pf - c.pa >= 0 ? "+" : "") + (c.pf - c.pa) + "</small></span>"));
+    });
+    body.appendChild(p);
+    body.appendChild(h("p", { "class": "note" }, "Champions are promoted to the Regional League."));
+  }
+  function renderFeed(body){
+    body.appendChild(h("p", { "class": "eyebrow" }, st.fans + " followers"));
+    st.feed.slice(0, 30).forEach(function(f){ body.appendChild(h("div", { "class": "post" }, "<b>" + f.who + "</b><br>" + f.text)); });
+  }
+
+  function renderMatch(){
+    if(tab !== "match" || !match) return;
+    var app = el("app");
+    if(!el("field")){
+      app.innerHTML = "";
+      app.appendChild(h("div", { "class": "score", id: "score" }));
+      app.appendChild(h("div", { "class": "clock", id: "clock" }));
+      app.appendChild(h("canvas", { id: "field" }));
+      var sp = h("div", { "class": "speed", id: "speed" });
+      app.appendChild(sp);
+      app.appendChild(h("div", { "class": "feed", id: "feed" }));
+      app.appendChild(h("div", { id: "after" }));
+      var c = el("field"), d = Math.min(window.devicePixelRatio || 1, 2);
+      c.width = c.clientWidth * d; c.height = c.clientHeight * d;
+      var x = c.getContext("2d"); x.scale(d, d); x.fillStyle = "#1B2A22"; x.fillRect(0, 0, c.clientWidth, c.clientHeight);
+      x.fillStyle = "rgba(230,235,239,.5)"; x.font = "12px -apple-system,system-ui,sans-serif"; x.fillText("Highlights play here", 12, 20);
+    }
+    el("score").innerHTML = '<div><div class="t">' + short(match.home.name) + '</div><div class="n">' + match.hs + '</div></div>' +
+      '<div class="t">' + (match.done ? "Full time" : match.half === 1 ? "1st half" : "2nd half") + '</div>' +
+      '<div style="text-align:right"><div class="t">' + short(match.away.name) + '</div><div class="n">' + match.as + "</div></div>";
+    var m = Math.max(0, Math.floor(match.clock / 60)), s = Math.max(0, Math.round(match.clock % 60));
+    el("clock").textContent = match.done ? "" : m + ":" + (s < 10 ? "0" : "") + s + " left in the half";
+    // built once and only restyled after, so a tap never lands on a button
+    // that is being replaced underneath it
+    var sp = el("speed");
+    if(!sp.children.length){
+      [1, 2, 4].forEach(function(v){
+        var b = h("button", { "data-v": String(v) }, v + "×");
+        b.onclick = function(){ match.speed = v; renderMatch(); if(!match.paused) tick(); };
+        sp.appendChild(b);
+      });
+      var sk = h("button", { "data-v": "400" }, "Skip to end");
+      sk.onclick = function(){ match.speed = 400; match.queue = []; if(!match.paused) tick(); };
+      sp.appendChild(sk);
+    }
+    sp.hidden = match.done;
+    [].forEach.call(sp.children, function(b){ b.setAttribute("aria-pressed", String(+b.dataset.v === match.speed)); });
+    var feed = el("feed"); feed.innerHTML = "";
+    match.feed.slice().reverse().forEach(function(f){ feed.appendChild(h("div", { "data-hl": String(!!f.hl) }, f.t)); });
+    var after = el("after"); after.innerHTML = "";
+    if(match.paused){
+      var adj = h("button", { "class": "btn alt" }, "Adjust plan");
+      adj.onclick = function(){
+        after.innerHTML = "";
+        var p = h("div", { "class": "panel" });
+        sliders(p, ["run","deep","blitz","box"], ["Run plays","Deep passes","Blitz","Stack the box"]);
+        after.appendChild(p);
+        var g = h("button", { "class": "btn" }, "Second half");
+        g.onclick = resume; after.appendChild(g);
+      };
+      var g2 = h("button", { "class": "btn", style: "margin-top:6px" }, "Second half");
+      g2.onclick = resume;
+      after.appendChild(adj); after.appendChild(g2);
+    }
+    if(match.done){
+      var b = h("button", { "class": "btn" }, "Back to the club");
+      b.onclick = function(){ match = null; tab = "week"; render(); };
+      after.appendChild(b);
+    }
+  }
+  function resume(){
+    match.paused = false;
+    var me = match.home.i === 0 ? match.home : match.away;
+    me.plan = st.plan;
+    el("after").innerHTML = "";
+    renderMatch(); tick();
+  }
+
+  el("restart").onclick = function(){
+    if(!window.confirm("Fold this club and found a new one?")) return;
+    clearTimeout(timer); match = null; st = null; try{ localStorage.removeItem(KEY); }catch(e){}
+    render();
+  };
+
+  st = load();
+  render();
+  window.__fo = { get st(){ return st; }, get match(){ return match; }, startMatch: startMatch };
+})();
+</script>
+</body>
+</html>

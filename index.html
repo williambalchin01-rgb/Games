@@ -182,6 +182,21 @@
     </div>
   </a>
 
+  <a class="game" href="./front-office.html">
+    <svg class="art" viewBox="0 0 52 52" aria-hidden="true">
+      <rect x="6" y="10" width="40" height="32" rx="4" fill="#1B2A22"/>
+      <path d="M16 10 V42 M26 10 V42 M36 10 V42" stroke="rgba(255,255,255,.14)" stroke-width="1.4"/>
+      <rect x="11" y="16" width="14" height="4" rx="2" fill="#4FA88B"/>
+      <rect x="11" y="24" width="22" height="4" rx="2" fill="#E0A458"/>
+      <rect x="11" y="32" width="9" height="4" rx="2" fill="#4FA88B"/>
+    </svg>
+    <div>
+      <h2>Front Office</h2>
+      <p>Own an American football club from a council pitch to the top of Europe. Set the plan in numbers and watch it play out. Early preview.</p>
+      <div class="meta" id="frontoffice-meta"></div>
+    </div>
+  </a>
+
   <a class="game" href="./wayfarer.html">
     <svg class="art" viewBox="0 0 52 52" aria-hidden="true">
       <circle cx="9" cy="10" r="1" fill="#AFBAC4"/>
@@ -343,6 +358,11 @@
     if(so.ports) sb.push(so.ports.length + (so.ports.length === 1 ? " airport" : " airports"));
     if(so.delivered) sb.push(so.delivered + " delivered");
     document.getElementById("stopover-meta").textContent = sb.join("  \u00B7  ");
+  }
+
+  var fo = read("arcade.frontoffice.v1");
+  if(fo && fo.clubs){
+    document.getElementById("frontoffice-meta").textContent = fo.clubs[0].name + "  \u00B7  " + fo.clubs[0].w + "W " + fo.clubs[0].l + "L";
   }
 
   var wf = read("arcade.wayfarer.v1");
