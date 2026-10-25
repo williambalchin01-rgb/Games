@@ -39,26 +39,42 @@ wrong about the real world.
 
 Start in England. Europe opens up at the top.
 
-| Tier | Name (working) | Clubs | Feel |
-|---|---|---|---|
-| 5 | Regional League (North / Midlands / South) | 8 per region | Amateur. Unpaid players, attendance risk, council pitch. |
-| 4 | National League Two | 10 | Amateur with ambition. Expenses paid, first sponsors. |
-| 3 | National League One | 10 | Semi-pro. Part-time contracts, small paying crowds. |
-| 2 | Premier Division | 12 | Professional. Full contracts, imports, real media. |
-| 1 | European Elite League | 16 (Britain, Germany, France, Netherlands, Italy, Spain, Scandinavia, Austria) | The top. Big budgets, the European Cup. |
+Seven tiers, 142 clubs.
 
-- **Season:** regular season of 10–14 weeks depending on tier, then
-  play-offs (top 4).
-- **Promotion / relegation:** champions and play-off winner go up; bottom
-  one (two in bigger tiers) go down. Tier 5 → 4 is by regional
-  champion plus a play-off between regions.
-- **Cups:** a national cup open to tiers 2–5 (giant-killing runs are a
+| Tier | League (working names) | Clubs | Games | Feel |
+|---|---|---|---|---|
+| 7 | Area Leagues — six areas: Scotland & North East, North West, Yorkshire, Midlands, Wales & South West, London & South East | 6 × 8 | 7 | Park football. Unpaid, a shared council pitch, whoever turns up plays. Where you start. |
+| 6 | Regional Leagues — North, Midlands, South | 3 × 10 | 9 | Amateur. Proper kit, first local sponsor, still subs-funded. |
+| 5 | National League Two | 12 | 11 | Amateur with ambition. Expenses paid, small gate. |
+| 4 | National League One | 12 | 11 | Semi-pro. Part-time contracts, paying crowds. |
+| 3 | Championship | 12 | 11 | Semi-pro turning pro. First full-time players and staff. |
+| 2 | Premier Division | 12 | 11 | Professional. Full contracts, US imports, TV coverage. |
+| 1 | European Elite League | 16 (two each from Britain, Germany, France, Netherlands, Italy, Spain, Scandinavia, Austria) | 15 | The top. Big budgets, the European Cup. |
+
+Seasons are a single round-robin (everyone plays everyone once, home or
+away alternating), then a top-four play-off.
+
+**Movement between tiers** (counts balance, so every league stays full):
+
+| Between | Up | Down |
+|---|---|---|
+| 7 → 6 | Six area champions (two into each region) | Bottom two in each region (six) |
+| 6 → 5 | Three regional champions | Bottom three |
+| 5 → 4 | Champion and play-off winner | Bottom two |
+| 4 → 3 | Champion and play-off winner | Bottom two |
+| 3 → 2 | Champion and play-off winner | Bottom two |
+| 2 → 1 | Premier champion | The lower-placed British Elite club |
+
+Other countries' pyramids are simulated only as far as they feed their own
+Elite places; the British pyramid is played in full.
+
+- **Cups:** a national cup open to tiers 2–7 (giant-killing runs are a
   money and fan boost); the **European Cup** for top Elite clubs.
 - **You choose your starting region and town**, and found the club
   there. The town sets the starting conditions: local player pool, rival
   clubs nearby, pitch options, sponsor prospects.
 - **Promotion is the only way up.** There is no shortcut; the climb from
-  tier 5 to the Elite League takes at least four promotions, so four
+  tier 7 to the Elite League takes at least six promotions, so six
   seasons at the very best and usually many more.
 
 ---
@@ -117,7 +133,8 @@ Squad sizes: ~30 at amateur, rising to 50+ at the top.
 
 ## 5. Turning up
 
-At tiers 5–4 nobody is paid, so attendance is a real mechanic.
+At tiers 7–5 nobody is paid, so attendance is a real mechanic. It is
+worst at tier 7 and eases as the club grows.
 
 - Each player has a turn-up chance per session and per match, built from
   commitment, morale, day-job clash with the chosen day, distance, and
@@ -128,7 +145,7 @@ At tiers 5–4 nobody is paid, so attendance is a real mechanic.
   Short a QB? The emergency option is whoever played QB at school.
 - Levers: pick better days, raise morale, pay expenses (costs money),
   recruit committed players over talented flaky ones.
-- From tier 3 contracts make attendance near-certain; the mechanic
+- From tier 4 contracts make attendance near-certain; the mechanic
   becomes injuries, suspensions and illness instead.
 
 ---
@@ -142,9 +159,9 @@ clubs, can be sacked.
 |---|---|
 | **Offensive coordinator** | Executes your offensive plan (better = fewer busted plays), develops offensive players, quality of offensive advice. Style: run-first / balanced / air raid — adds a small bonus when your plan matches it. |
 | **Defensive coordinator** | Same for defence. Style: aggressive (blitz) / bend-don't-break / coverage. |
-| **Special teams coach** | Kicking, returns, coverage units (unlocked tier 3). |
+| **Special teams coach** | Kicking, returns, coverage units (unlocked tier 5). |
 | **Head of scouting** | Accuracy of opponent tendencies and of player potential estimates. |
-| **Physio / S&C** | Injury rate and recovery time (unlocked tier 4). |
+| **Physio / S&C** | Injury rate and recovery time (unlocked tier 6). |
 
 Amateur clubs start with volunteer coordinators (low ratings, free).
 Better staff cost more and only join clubs at a tier they rate.
@@ -282,10 +299,12 @@ rewatch.
 
 | Tier | Income | Costs |
 |---|---|---|
-| 5 | Player subs, raffles, one local sponsor, tiny gate | Pitch hire, kit, insurance, travel |
-| 4 | Small gate, a few sponsors, merchandise table | Expenses for players, better pitch |
-| 3 | Paying crowds, regional sponsors | Part-time wages, staff |
-| 2 | Gate, TV share, shirt sponsor, merchandise | Full wages, imports, facilities |
+| 7 | Player subs, raffles, bucket collections | Pitch hire, kit, insurance |
+| 6 | Subs, one local sponsor, a few spectators | Pitch hire, kit, travel |
+| 5 | Small gate, a few sponsors, merchandise table | Expenses for players, better pitch |
+| 4 | Paying crowds, regional sponsors | Part-time wages, staff |
+| 3 | Bigger crowds, shirt sponsor | First full-time wages, facilities |
+| 2 | Gate, TV share, sponsors, merchandise | Full wages, imports |
 | 1 | All of the above, European prize money | Elite wages and staff |
 
 **Facilities:** pitch (shared council field → own ground → stadium with
@@ -317,7 +336,7 @@ A feed of short posts reacting to what actually happened.
 - **Triggers:** results, big plays (linked to the highlight), signings,
   injuries, no-shows ("only 31 turned up again"), promotions, coordinator
   hires and sackings, money troubles.
-- **Scale:** a handful of local accounts at tier 5; follower counts and
+- **Scale:** a handful of local accounts at tier 7; follower counts and
   volume grow with the club.
 - **Effects:** fan mood nudges attendance and player morale. Read-only
   — no replying.
@@ -355,7 +374,7 @@ Each phase is playable on its own.
 
 1. **Engine:** ratings layer on the Gridiron engine, headless mode,
    statistical sim calibrated against it. Measured, not eyeballed.
-2. **Amateur season:** one tier-5 league, squad, depth chart, game plan
+2. **Amateur season:** one tier-7 area league, squad, depth chart, game plan
    numbers, attendance, live match with highlights, results and table.
 3. **Staff and scouting:** coordinators, scouting reports from the play
    log, recommendations with rating-based accuracy.
