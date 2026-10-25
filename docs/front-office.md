@@ -8,7 +8,10 @@ with the results.
 Status: **designed, not started.** First on the roadmap. Build only on the
 owner's go-ahead.
 
-Working title: *Front Office* (to be confirmed).
+Name: *Front Office* (confirmed for now).
+
+**You are the owner.** You run the football side as well — game plan,
+squad, staff — but nobody can sack you. The club is yours.
 
 ---
 
@@ -51,8 +54,12 @@ Start in England. Europe opens up at the top.
   champion plus a play-off between regions.
 - **Cups:** a national cup open to tiers 2–5 (giant-killing runs are a
   money and fan boost); the **European Cup** for top Elite clubs.
-- You pick your starting club from a short list of tier-5 sides in
-  different towns.
+- **You choose your starting region and town**, and found the club
+  there. The town sets the starting conditions: local player pool, rival
+  clubs nearby, pitch options, sponsor prospects.
+- **Promotion is the only way up.** There is no shortcut; the climb from
+  tier 5 to the Elite League takes at least four promotions, so four
+  seasons at the very best and usually many more.
 
 ---
 
@@ -69,7 +76,9 @@ Each week is one screen with a short list of decisions, then the match.
    how well this week's game plan is executed.
 3. **Availability:** who has said they are coming. At amateur level this is
    uncertain until match day (see §5).
-4. **Depth chart:** starters and backups by position. Auto-fill available.
+4. **Match-day squad and depth chart:** pick who is dressed for the game
+   from those available, then starters and backups by position. Auto-fill
+   available. Only dressed players can play (NFL-style, see §9).
 5. **Game plan** (§7), with scouting report and coordinator advice (§8).
 6. **Admin:** finances, sponsor offers, facility upgrades, signings,
    inbox, social feed.
@@ -234,8 +243,15 @@ near six minutes):
 
 Typical match: 8–15 highlights. Each can be replayed afterwards.
 
+**Substitutions (NFL rules):** substitution is unlimited between plays,
+but only players dressed for the match can come on. So the squad is
+fixed at kick-off; who plays from it is not. The engine rotates backups
+automatically by fatigue and injury using your depth chart.
+
 **Half time:** score, key stats, coordinator notes on how the opponent's
-tendencies are holding up so far, and the game-plan sliders to adjust.
+tendencies are holding up so far, the game-plan sliders, and the depth
+chart — you can promote a backup or bench a struggling starter from
+among the dressed players.
 
 **After the match:** report, box score (passing / rushing / receiving /
 defence / kicking), player grades, injuries, and the highlight reel to
@@ -315,8 +331,9 @@ A feed of short posts reacting to what actually happened.
 - **Milestones** like other Arcade games: first win, first promotion,
   first paid player, own ground, first import, Premier Division, European
   Cup, champions of Europe.
-- **No game over:** missing expectations costs budget and morale, not the save.
-  *(Open question: should you be sackable at pro tiers? See §15.)*
+- **No game over.** You own the club and cannot be sacked. Missing
+  expectations costs fan mood, sponsor interest and player morale, never
+  the save.
 
 ---
 
@@ -347,10 +364,16 @@ Each phase is playable on its own.
 5. **Pro football:** contracts, imports and cap, draft, academy,
    national cup and European Cup.
 
-## 16. Open questions for the owner
+## 16. Decisions made
 
-- Name of the game.
-- Sackable at pro tiers, or always safe?
-- Start in a region you choose, or a random town?
-- Should the half-time screen also allow substitutions / depth changes?
-- How many seasons should the climb to the top roughly take (e.g. 8–12)?
+- Name: *Front Office*.
+- You are the owner; you cannot be sacked.
+- You choose your starting region and town.
+- Substitutions follow NFL practice: match-day squad fixed at kick-off,
+  unlimited changes between plays from it, depth chart editable at half time.
+- The only way up is promotion.
+
+## 17. Still to decide
+
+- Match-day squad size per tier (NFL dresses roughly 47–48 of 53; amateur
+  clubs here will have far fewer available).
