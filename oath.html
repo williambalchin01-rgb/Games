@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#151C24">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Arcade">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<link rel="icon" href="./icon-192.png">
+<title>Iron Oath</title>
+<link rel="stylesheet" href="./app.css">
+<style>
+  #app{flex:1;display:flex;flex-direction:column;gap:8px;min-height:0}
+  .boardrow{position:relative}
+  canvas#board{display:block;margin:0 auto;border-radius:8px;touch-action:manipulation;background:#10161C}
+  .unitbar{display:flex;gap:10px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:8px 10px;min-height:52px;font-size:12.5px}
+  .unitbar .nm{font-size:14px}
+  .unitbar small{color:var(--muted);display:block;margin-top:2px;font-variant-numeric:tabular-nums}
+  .acts{display:flex;gap:6px}
+  .acts button{flex:1;padding:11px 4px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);font-size:12.5px}
+  .acts button[data-on="true"]{border-color:var(--sel);color:var(--sel)}
+  .acts button:disabled{color:var(--line)}
+  .log{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:8px 10px;font-size:12.5px;min-height:62px;max-height:150px;overflow-y:auto}
+  .log .line{margin-bottom:4px}
+  .dice{display:inline-flex;gap:3px;vertical-align:middle;flex-wrap:wrap}
+  .die{width:17px;height:17px;border-radius:4px;font-size:11px;line-height:17px;text-align:center;font-weight:600;background:#2C3945;color:#6C7A87}
+  .die[data-ok="true"]{background:#E6EBEF;color:#151C24}
+  .step{display:flex;align-items:center;gap:6px;margin:3px 0;font-size:12px;color:var(--muted)}
+  .step b{color:var(--ink);font-weight:500;min-width:62px}
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px}
+  .panel h3{margin:0 0 8px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:400}
+  .panel p{margin:0 0 6px;font-size:13.5px;line-height:1.45}
+  .row{display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:13.5px;align-items:center}
+  .row:last-child{border-bottom:none}
+  .row small{color:var(--muted);font-size:11.5px;display:block}
+  .tag{font-size:10px;letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--line);border-radius:20px;padding:2px 7px;color:var(--muted);white-space:nowrap}
+  .tag[data-k="dead"]{color:#E0574A;border-color:rgba(224,87,74,.5)}
+  .tag[data-k="rank"]{color:var(--sel);border-color:rgba(224,164,88,.5)}
+  .btn{width:100%;padding:13px;border:1px solid var(--accent);color:var(--accent);border-radius:var(--radius);background:var(--surface);font-size:14px}
+  .scroll{flex:1;overflow-y:auto;min-height:0;display:flex;flex-direction:column;gap:10px}
+  .banner{text-align:center;padding:18px 10px}
+  .banner h2{margin:0 0 6px;font-weight:300;font-size:24px}
+  .banner p{margin:0;color:var(--muted);font-size:13.5px}
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="./index.html">&larr; Arcade</a>
+  <button class="chip" id="restart">New campaign</button>
+</header>
+<div id="app"></div>
+<script src="./sw-boot.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  /* ---------------------------------------------------------------------
+     THE RULES
+
+     Skirmish rules in the 40k mould: a squad of five against a horde, on a
+     grid, taking turns one model at a time. Every attack goes hit, wound,
+     save, damage, with the dice shown. Ranges and moves are in tiles.
+     --------------------------------------------------------------------- */
+  var COLS = 10, ROWS = 14, ROUNDS = 5;
+
+  var WEAPONS = {
+    bolter:  { name:"Bolt rifle",     range:8,  A:2, S:4, AP:0,  D:1, rapid:true },
+    pistol:  { name:"Bolt pistol",    range:4,  A:1, S:4, AP:0,  D:1, pistol:true },
+    heavy:   { name:"Heavy bolter",   range:10, A:3, S:5, AP:-1, D:2, heavy:true },
+    marksman:{ name:"Marksman rifle", range:12, A:1, S:5, AP:-2, D:3, heavy:true },
+    knife:   { name:"Combat knife",   melee:true, A:3, S:4, AP:0,  D:1 },
+    sword:   { name:"Chainsword",     melee:true, A:4, S:4, AP:-1, D:1 },
+    slugga:  { name:"Slugga",         range:4,  A:1, S:4, AP:0,  D:1, pistol:true },
+    shoota:  { name:"Shoota",         range:6,  A:2, S:4, AP:0,  D:1 },
+    rokkit:  { name:"Rokkit",         range:10, A:1, S:9, AP:-2, D:3, heavy:true },
+    choppa:  { name:"Choppa",         melee:true, A:3, S:4, AP:-1, D:1 },
+    klaw:    { name:"Power klaw",     melee:true, A:3, S:9, AP:-2, D:2, clumsy:true },
+    bigklaw: { name:"Boss klaw",      melee:true, A:5, S:9, AP:-2, D:2, clumsy:true }
+  };
+
+  // M moves, WS/BS hit on that or better, T toughness, W wounds, Sv save
+  var KINDS = {
+    sgt:    { side:"p", name:"Sergeant",      tag:"S", M:3, WS:2, BS:3, T:4, W:3, Sv:3, ranged:"pistol",  melee:"sword" },
+    bro:    { side:"p", name:"Battle-brother",tag:"B", M:3, WS:3, BS:3, T:4, W:2, Sv:3, ranged:"bolter",  melee:"knife" },
+    gunner: { side:"p", name:"Heavy gunner",  tag:"H", M:2, WS:3, BS:3, T:4, W:2, Sv:3, ranged:"heavy",   melee:"knife" },
+    sniper: { side:"p", name:"Marksman",      tag:"M", M:3, WS:3, BS:2, T:4, W:2, Sv:3, ranged:"marksman",melee:"knife" },
+    boy:    { side:"e", name:"Grukk boy",     tag:"b", M:3, WS:3, BS:5, T:5, W:1, Sv:6, ranged:"slugga",  melee:"choppa" },
+    shoot:  { side:"e", name:"Grukk shoota",  tag:"s", M:3, WS:4, BS:5, T:5, W:1, Sv:6, ranged:"shoota",  melee:"choppa" },
+    rokkit: { side:"e", name:"Rokkit grukk",  tag:"r", M:2, WS:4, BS:5, T:5, W:1, Sv:6, ranged:"rokkit",  melee:"choppa" },
+    nob:    { side:"e", name:"Grukk nob",     tag:"N", M:3, WS:3, BS:5, T:5, W:3, Sv:4, ranged:"slugga",  melee:"klaw" },
+    boss:   { side:"e", name:"Big Boss Skarg",tag:"X", M:3, WS:2, BS:5, T:6, W:6, Sv:3, ranged:"slugga",  melee:"bigklaw" }
+  };
+
+  var MISSIONS = [
+    { name:"Landfall",        type:"purge", foes:{ boy:7, shoot:2 },                    brief:"Grukk raiders hold the landing zone. Clear them out." },
+    { name:"The Relay",       type:"hold",  foes:{ boy:7, shoot:3 },                    brief:"Two vox relays must stay in our hands. Hold them at the end of each round from the second." },
+    { name:"Burning Streets", type:"purge", foes:{ boy:8, shoot:3, nob:1 },             brief:"A nob leads this mob. Cut it down and the rest will scatter." },
+    { name:"Rokkit Ridge",    type:"hold",  foes:{ boy:6, shoot:2, rokkit:1, nob:1 },   brief:"A rokkit covers the ridge. Take the relays and keep your heads down." },
+    { name:"The Foundry",     type:"purge", foes:{ boy:7, shoot:2, rokkit:1, nob:1 },   brief:"The foundry turns out their guns. Burn the crews." },
+    { name:"Skarg's Fall",    type:"purge", foes:{ boy:6, shoot:2, rokkit:1, boss:1 }, brief:"Big Boss Skarg himself. Kill him and the warband breaks." }
+  ];
+
+  var NAMES = ["Varn","Castor","Ivo","Darrus","Hale","Orsan","Tarik","Benedek","Lucan","Mattias","Ser","Aldric","Corvin","Kade","Remus","Talon","Voss","Adrel"];
+
+  /* ---------------------------------------------------------------------
+     DICE
+     --------------------------------------------------------------------- */
+  function mulberry(a){
+    return function(){
+      a = (a + 0x6D2B79F5) | 0;
+      var t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  var rng = Math.random;
+  function d6(){ return 1 + Math.floor(rng() * 6); }
+  function woundOn(S, T){
+    if(S >= 2 * T) return 2;
+    if(S > T) return 3;
+    if(S === T) return 4;
+    if(S * 2 <= T) return 6;
+    return 5;
+  }
+
+  /* ---------------------------------------------------------------------
+     THE BOARD
+     --------------------------------------------------------------------- */
+  function idx(x, y){ return y * COLS + x; }
+  function inside(x, y){ return x >= 0 && y >= 0 && x < COLS && y < ROWS; }
+
+  /* Ruins block movement and sight; crates block movement but not sight,
+     and give cover to whoever is behind them. Placed in clusters, mirrored
+     roughly so neither end is all open ground, and checked so the two
+     deployment zones are always joined. */
+  function makeMap(seedRng){
+    for(var tries = 0; tries < 50; tries++){
+      var t = [];
+      for(var i = 0; i < COLS * ROWS; i++) t.push(0);
+      var n = 6 + Math.floor(seedRng() * 3);
+      for(var k = 0; k < n; k++){
+        var x = Math.floor(seedRng() * COLS), y = 3 + Math.floor(seedRng() * (ROWS - 6));
+        var len = 1 + Math.floor(seedRng() * 3), horiz = seedRng() < 0.5;
+        for(var j = 0; j < len; j++){
+          var xx = x + (horiz ? j : 0), yy = y + (horiz ? 0 : j);
+          if(inside(xx, yy) && yy > 2 && yy < ROWS - 3) t[idx(xx, yy)] = 1;
+        }
+      }
+      for(k = 0; k < 9; k++){
+        x = Math.floor(seedRng() * COLS); y = 2 + Math.floor(seedRng() * (ROWS - 4));
+        if(!t[idx(x, y)]) t[idx(x, y)] = 2;
+      }
+      if(joined(t)) return t;
+    }
+    return t;
+  }
+  function joined(t){
+    var seen = {}, q = [];
+    for(var x = 0; x < COLS; x++) if(!t[idx(x, ROWS - 1)]){ seen[idx(x, ROWS - 1)] = 1; q.push([x, ROWS - 1]); }
+    while(q.length){
+      var p = q.shift();
+      if(p[1] === 0) return true;
+      [[1,0],[-1,0],[0,1],[0,-1]].forEach(function(d){
+        var nx = p[0] + d[0], ny = p[1] + d[1];
+        if(inside(nx, ny) && !t[idx(nx, ny)] && !seen[idx(nx, ny)]){ seen[idx(nx, ny)] = 1; q.push([nx, ny]); }
+      });
+    }
+    return false;
+  }
+
+  function unitAt(b, x, y){
+    for(var i = 0; i < b.units.length; i++){
+      var u = b.units[i];
+      if(u.w > 0 && u.x === x && u.y === y) return u;
+    }
+    return null;
+  }
+  function alive(b, side){ return b.units.filter(function(u){ return u.w > 0 && u.side === side; }); }
+  function dist(a, b){ return Math.sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y)); }
+  function adjacent(a, b){ return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)) === 1; }
+  function engaged(b, u){
+    return b.units.some(function(o){ return o.w > 0 && o.side !== u.side && adjacent(o, u); });
+  }
+
+  /* Steps from a tile, eight ways, through open ground only. A diagonal
+     cannot squeeze between two blocked tiles. */
+  function reach(b, u, maxSteps){
+    var out = {}, q = [[u.x, u.y, 0]];
+    out[idx(u.x, u.y)] = { d:0, from:null };
+    while(q.length){
+      var p = q.shift();
+      if(p[2] >= maxSteps) continue;
+      for(var dx = -1; dx <= 1; dx++) for(var dy = -1; dy <= 1; dy++){
+        if(!dx && !dy) continue;
+        var nx = p[0] + dx, ny = p[1] + dy;
+        if(!inside(nx, ny) || b.tiles[idx(nx, ny)] || out[idx(nx, ny)]) continue;
+        if(dx && dy && b.tiles[idx(p[0] + dx, p[1])] && b.tiles[idx(p[0], p[1] + dy)]) continue;
+        if(unitAt(b, nx, ny)) continue;
+        out[idx(nx, ny)] = { d:p[2] + 1, from:idx(p[0], p[1]) };
+        q.push([nx, ny, p[2] + 1]);
+      }
+    }
+    return out;
+  }
+  function pathTo(r, x, y){
+    var path = [], k = idx(x, y);
+    while(k !== null && r[k]){ path.unshift({ x:k % COLS, y:Math.floor(k / COLS) }); k = r[k].from; }
+    return path;
+  }
+
+  /* The tiles a line passes through between two models, centre to centre,
+     endpoints excluded. Supercover, so a line that clips a ruin's corner
+     is blocked by it. */
+  function lineTiles(a, b){
+    var out = [], steps = Math.ceil(Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y)) * 4);
+    var seen = {};
+    for(var i = 1; i < steps; i++){
+      var t = i / steps;
+      var x = Math.round(a.x + (b.x - a.x) * t), y = Math.round(a.y + (b.y - a.y) * t);
+      var k = idx(x, y);
+      if((x === a.x && y === a.y) || (x === b.x && y === b.y) || seen[k]) continue;
+      seen[k] = 1;
+      out.push({ x:x, y:y, k:k });
+    }
+    return out;
+  }
+  function canSee(b, a, t){
+    return !lineTiles(a, t).some(function(p){ return b.tiles[p.k] === 1; });
+  }
+  // a crate in the last two tiles before the target puts it in cover
+  function inCover(b, a, t){
+    return lineTiles(a, t).some(function(p){
+      return b.tiles[p.k] === 2 && Math.max(Math.abs(p.x - t.x), Math.abs(p.y - t.y)) <= 2;
+    });
+  }
+
+  function stat(u, k){ return u[k] !== undefined ? u[k] : KINDS[u.kind][k]; }
+  function weapon(u, kind){ return WEAPONS[KINDS[u.kind][kind]]; }
+  function canShoot(b, u, t){
+    var w = weapon(u, "ranged");
+    if(!w || t.w <= 0 || t.side === u.side) return false;
+    if(engaged(b, u) && !(w.pistol && adjacent(u, t))) return false;
+    return dist(u, t) <= w.range + 0.01 && canSee(b, u, t);
+  }
+
+  /* One attack, all the way through: hit, wound, save, damage. Returns the
+     dice so the screen can show them. */
+  function attack(b, att, def, w, opts){
+    opts = opts || {};
+    var melee = !!w.melee;
+    var A = w.A + (opts.charge ? 1 : 0) + (w.rapid && dist(att, def) <= w.range / 2 ? 1 : 0) + (melee ? (att.bonusA || 0) : 0);
+    var hitNeed = melee ? stat(att, "WS") : stat(att, "BS");
+    if(w.heavy && opts.moved) hitNeed++;
+    if(w.clumsy) hitNeed++;
+    if(opts.overwatch) hitNeed++;
+    hitNeed = Math.max(2, Math.min(6, hitNeed));
+    var woundNeed = woundOn(w.S, stat(def, "T"));
+    var sv = stat(def, "Sv") - w.AP;
+    var cover = !melee && inCover(b, att, def) && !(stat(def, "Sv") <= 3 && w.AP === 0);
+    if(cover) sv--;
+    sv = Math.max(2, sv);
+    var hits = [], wounds = [], saves = [], dmg = 0;
+    for(var i = 0; i < A; i++) hits.push(d6());
+    var nHit = hits.filter(function(r){ return r >= hitNeed; }).length;
+    for(i = 0; i < nHit; i++) wounds.push(d6());
+    var nWound = wounds.filter(function(r){ return r >= woundNeed; }).length;
+    for(i = 0; i < nWound; i++) saves.push(d6());
+    var failed = sv > 6 ? nWound : saves.filter(function(r){ return r < sv; }).length;
+    var before = def.w;
+    for(i = 0; i < failed && def.w > 0; i++){ def.w = Math.max(0, def.w - w.D); }
+    dmg = before - def.w;
+    if(def.w <= 0){
+      def.w = 0;
+      if(att.side === "p") att.kills = (att.kills || 0) + 1;
+    }
+    return { att:att, def:def, w:w, hits:hits, hitNeed:hitNeed, wounds:wounds, woundNeed:woundNeed,
+             saves:saves, sv:sv > 6 ? null : sv, cover:cover, dmg:dmg, slain:def.w <= 0 };
+  }
+
+  /* Melee is both ways: whoever charged strikes first, then the survivor
+     strikes back. */
+  function fight(b, att, def, charge){
+    var out = [attack(b, att, def, weapon(att, "melee"), { charge:charge })];
+    if(def.w > 0) out.push(attack(b, def, att, weapon(def, "melee"), {}));
+    return out;
+  }
+
+  /* ---------------------------------------------------------------------
+     A BATTLE
+     --------------------------------------------------------------------- */
+  function newBattle(roster, mi, seed){
+    var r = mulberry(seed);
+    var m = MISSIONS[mi];
+    var b = { mi:mi, type:m.type, round:1, tiles:makeMap(r), units:[], vp:0, log:[], over:null, turn:"p", ow:{} };
+    var spots = [];
+    for(var x = 0; x < COLS; x++) for(var y = ROWS - 2; y < ROWS; y++) if(!b.tiles[idx(x, y)]) spots.push([x, y]);
+    var fit = roster.filter(function(s){ return !s.dead; });
+    fit.forEach(function(s, i){
+      var p = spots.splice(Math.floor(r() * spots.length), 1)[0];
+      b.units.push({ id:"p" + i, sid:s.id, side:"p", kind:s.kind, name:s.name, x:p[0], y:p[1],
+                     w:KINDS[s.kind].W + (s.bonusW || 0), maxW:KINDS[s.kind].W + (s.bonusW || 0),
+                     BS:KINDS[s.kind].BS - (s.bonusBS || 0), bonusA:s.bonusA || 0, done:false, kills:0 });
+    });
+    spots = [];
+    for(x = 0; x < COLS; x++) for(y = 0; y < 3; y++) if(!b.tiles[idx(x, y)]) spots.push([x, y]);
+    var n = 0;
+    Object.keys(m.foes).forEach(function(k){
+      for(var i = 0; i < m.foes[k]; i++){
+        var p = spots.splice(Math.floor(r() * spots.length), 1)[0];
+        b.units.push({ id:"e" + (n++), side:"e", kind:k, name:KINDS[k].name, x:p[0], y:p[1], w:KINDS[k].W, maxW:KINDS[k].W, done:false });
+      }
+    });
+    if(m.type === "hold"){
+      b.objs = [{ x:2, y:6 }, { x:7, y:8 }];
+      b.objs.forEach(function(o){ b.tiles[idx(o.x, o.y)] = 0; });
+    }
+    return b;
+  }
+
+  function controls(b, o){
+    var mine = 0, theirs = 0;
+    b.units.forEach(function(u){
+      if(u.w <= 0 || Math.max(Math.abs(u.x - o.x), Math.abs(u.y - o.y)) > 1) return;
+      if(u.side === "p") mine++; else theirs += u.kind === "nob" || u.kind === "boss" ? 2 : 1;
+    });
+    return mine > theirs ? "p" : theirs > mine ? "e" : null;
+  }
+
+  function checkEnd(b){
+    if(b.over) return b.over;
+    if(!alive(b, "p").length) b.over = "lost";
+    else if(!alive(b, "e").length) b.over = "won";
+    return b.over;
+  }
+
+  /* The round turns over when every model on both sides has gone. Relays
+     score as it does. */
+  function endRound(b, log){
+    if(b.type === "hold" && b.round >= 2){
+      b.objs.forEach(function(o){ if(controls(b, o) === "p"){ b.vp++; } });
+      log("Round " + b.round + ": you hold " + b.objs.filter(function(o){ return controls(b, o) === "p"; }).length + " relay(s). " + b.vp + " VP.");
+    }
+    if(b.round >= ROUNDS){
+      var target = purgeTarget(b);
+      if(b.type === "hold") b.over = b.vp >= 4 ? "won" : "lost";
+      else b.over = kills(b) >= target && !bossAlive(b) ? "won" : "lost";
+      return;
+    }
+    b.round++;
+    b.ow = {};
+    b.units.forEach(function(u){ u.done = false; u.moved = false; });
+    b.turn = "p";
+  }
+  function kills(b){ return b.units.filter(function(u){ return u.side === "e" && u.w <= 0; }).length; }
+  function purgeTarget(b){
+    return Math.ceil(b.units.filter(function(u){ return u.side === "e"; }).length * 0.75);
+  }
+  function bossAlive(b){ return b.units.some(function(u){ return u.kind === "boss" && u.w > 0; }); }
+
+  /* After either side finishes an activation, whose go is it? Turns
+     alternate while both have models left to activate. */
+  function passTurn(b){
+    var pLeft = alive(b, "p").some(function(u){ return !u.done; });
+    var eLeft = alive(b, "e").some(function(u){ return !u.done; });
+    if(!pLeft && !eLeft) return "round";
+    if(b.turn === "p") b.turn = eLeft ? "e" : "p";
+    else b.turn = pLeft ? "p" : "e";
+    return b.turn;
+  }
+
+  /* Overwatch: a model that held its fire shoots the first enemy to end a
+     move in its sights, at -1 to hit. Once per round. */
+  function overwatch(b, mover, log){
+    var out = [];
+    alive(b, mover.side === "p" ? "e" : "p").forEach(function(u){
+      if(!b.ow[u.id] || mover.w <= 0 || !canShoot(b, u, mover)) return;
+      delete b.ow[u.id];
+      out.push(attack(b, u, mover, weapon(u, "ranged"), { overwatch:true }));
+    });
+    return out;
+  }
+
+  /* ---------------------------------------------------------------------
+     THE GRUKK
+
+     Simple and loud: hit whatever is next to you, charge whatever you can
+     reach, otherwise close in and shoot. Rokkits hang back. In a hold
+     mission they also want the relays.
+     --------------------------------------------------------------------- */
+  function foeOrder(b){
+    var ps = alive(b, "p");
+    return alive(b, "e").filter(function(u){ return !u.done; }).sort(function(a, c){
+      return nearest(ps, a).d - nearest(ps, c).d;
+    });
+  }
+  function nearest(list, u){
+    var best = null, bd = Infinity;
+    list.forEach(function(o){ var d = dist(o, u); if(d < bd){ bd = d; best = o; } });
+    return { u:best, d:bd };
+  }
+  function enemyPlan(b, u){
+    var ps = alive(b, "p");
+    var adj = ps.filter(function(p){ return adjacent(p, u); });
+    if(adj.length) return { act:"fight", target:adj.sort(function(a, c){ return a.w - c.w; })[0] };
+    var r = reach(b, u, KINDS[u.kind].M + 2);
+    if(u.kind !== "rokkit" && u.kind !== "shoot"){
+      var best = null;
+      ps.forEach(function(p){
+        for(var dx = -1; dx <= 1; dx++) for(var dy = -1; dy <= 1; dy++){
+          var x = p.x + dx, y = p.y + dy, k = inside(x, y) ? idx(x, y) : -1;
+          if(k >= 0 && r[k] && (!best || r[k].d < best.d || (r[k].d === best.d && p.w < best.t.w))) best = { d:r[k].d, x:x, y:y, t:p };
+        }
+      });
+      if(best) return { act:"charge", x:best.x, y:best.y, target:best.t };
+    }
+    // where to stand: a relay if it needs taking, else as near the nearest
+    // marine as a move allows - or, for guns, anywhere that has a shot
+    var rm = reach(b, u, KINDS[u.kind].M), goal = nearest(ps, u).u;
+    if(b.type === "hold"){
+      var o = b.objs.filter(function(o){ return controls(b, o) !== "e"; }).sort(function(a, c){ return dist(a, u) - dist(c, u); })[0];
+      if(o && dist(o, u) > 1.5 && u.kind !== "rokkit") goal = o;
+    }
+    var pick = { x:u.x, y:u.y }, pd = Infinity;
+    var w = weapon(u, "ranged");
+    var sniping = u.kind === "rokkit" || u.kind === "shoot";
+    Object.keys(rm).forEach(function(k){
+      k = +k;
+      var spot = { x:k % COLS, y:Math.floor(k / COLS) };
+      var score = dist(spot, goal);
+      if(sniping){
+        var shot = ps.some(function(p){ return dist(spot, p) <= w.range && canSee(b, spot, p); });
+        if(shot) score -= u.kind === "rokkit" ? 100 + rm[k].d * 0.1 : 6;
+      }
+      if(score < pd){ pd = score; pick = spot; }
+    });
+    return { act:"move", x:pick.x, y:pick.y };
+  }
+
+  /* ---------------------------------------------------------------------
+     THE CAMPAIGN
+     --------------------------------------------------------------------- */
+  function newCampaign(){
+    var names = NAMES.slice().sort(function(){ return rng() - 0.5; });
+    var kinds = ["sgt","bro","bro","gunner","sniper"];
+    return { mi:0, battle:null, nextId:5, roster:kinds.map(function(k, i){
+      return { id:i, kind:k, name:(k === "sgt" ? "Sergeant " : "Brother ") + names[i], xp:0, rank:0, missions:0 };
+    }), done:false };
+  }
+  var RANKS = [0, 3, 7, 12];
+  /* Survivors earn experience: a point for living through it, one for each
+     kill. Each rank gives a little more - a wound, a steadier aim, a
+     harder blow. A brother who fell rolls a die: on a 1 he is gone, and a
+     new one takes his place. */
+  function debrief(c, b){
+    var lines = [];
+    c.roster.forEach(function(s){
+      var u = b.units.filter(function(x){ return x.sid === s.id; })[0];
+      if(!u) return;
+      var xp = (u.w > 0 ? 1 : 0) + (u.kills || 0) + (b.over === "won" ? 1 : 0);
+      s.xp += xp; s.missions++;
+      var rank = RANKS.filter(function(r){ return s.xp >= r; }).length - 1;
+      while(s.rank < rank){
+        s.rank++;
+        if(s.rank === 1){ s.bonusW = (s.bonusW || 0) + 1; lines.push(s.name + " promoted: +1 wound."); }
+        if(s.rank === 2){ s.bonusBS = (s.bonusBS || 0) + 1; lines.push(s.name + " promoted: hits more often with his gun."); }
+        if(s.rank === 3){ s.bonusA = (s.bonusA || 0) + 1; lines.push(s.name + " promoted: +1 attack in combat."); }
+      }
+      if(u.w <= 0){
+        var roll = d6();
+        if(roll === 1){ s.dead = true; lines.push(s.name + " fell, and did not rise (rolled a 1)."); }
+        else lines.push(s.name + " fell, but the apothecary saved him (rolled a " + roll + ").");
+      }
+    });
+    // after the second victory, a sixth brother is sent to the squad
+    if(b.over === "won" && c.mi === 1 && c.roster.length < 6){
+      var free = NAMES.filter(function(n){ return !c.roster.some(function(r){ return r.name.indexOf(n) >= 0; }); });
+      var nb = { id:c.nextId++, kind:"bro", name:"Brother " + free[0], xp:0, rank:0, missions:0 };
+      c.roster.push(nb);
+      lines.push(nb.name + " is sent to reinforce the squad.");
+    }
+    c.roster.forEach(function(s, i){
+      if(!s.dead) return;
+      var names = NAMES.filter(function(n){ return !c.roster.some(function(r){ return r.name.indexOf(n) >= 0; }); });
+      var nn = { id:c.nextId++, kind:s.kind, name:(s.kind === "sgt" ? "Sergeant " : "Brother ") + names[Math.floor(rng() * names.length)], xp:0, rank:0, missions:0 };
+      lines.push(nn.name + " joins the squad.");
+      c.roster[i] = nn;
+    });
+    return lines;
+  }
+
+  /* =====================================================================
+     Everything above is the war. Everything below is the screen.
+     ===================================================================== */
+  function el(id){ return document.getElementById(id); }
+  function h(tag, attrs, html){
+    var d = document.createElement(tag);
+    for(var k in attrs || {}) d.setAttribute(k, attrs[k]);
+    if(html !== undefined) d.innerHTML = html;
+    return d;
+  }
+
+  var KEY = "arcade.oath.v1";
+  var camp = null, b = null, sel = null, mode = null, busy = false, lastAtk = [], note = "";
+  var canvas = null, ctx = null, T = 34;
+
+  function save(){ try{ camp.battle = b; localStorage.setItem(KEY, JSON.stringify(camp)); }catch(e){} }
+  function load(){ try{ return JSON.parse(localStorage.getItem(KEY)); }catch(e){ return null; } }
+
+  /* ---------------- drawing ---------------- */
+  function size(){
+    var box = el("app").getBoundingClientRect();
+    var avail = Math.min(box.width, (window.innerHeight - 300) * COLS / ROWS);
+    T = Math.max(24, Math.floor(avail / COLS));
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = COLS * T * dpr; canvas.height = ROWS * T * dpr;
+    canvas.style.width = COLS * T + "px"; canvas.style.height = ROWS * T + "px";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  function cx(x){ return x * T + T / 2; }
+
+  function draw(flash){
+    if(!ctx || !b) return;
+    ctx.fillStyle = "#10161C"; ctx.fillRect(0, 0, COLS * T, ROWS * T);
+    for(var y = 0; y < ROWS; y++) for(var x = 0; x < COLS; x++){
+      var t = b.tiles[idx(x, y)];
+      ctx.fillStyle = (x + y) % 2 ? "#151D24" : "#131A21";
+      if(y >= ROWS - 2) ctx.fillStyle = (x + y) % 2 ? "#172229" : "#152027";
+      ctx.fillRect(x * T, y * T, T, T);
+      if(t === 1){
+        ctx.fillStyle = "#4A535C"; ctx.fillRect(x * T + 1, y * T + 1, T - 2, T - 2);
+        ctx.fillStyle = "#3A424A"; ctx.fillRect(x * T + 4, y * T + T * 0.55, T - 8, T * 0.3);
+      }
+      if(t === 2){
+        ctx.fillStyle = "#6B4F32"; ctx.fillRect(x * T + 5, y * T + 5, T - 10, T - 10);
+        ctx.strokeStyle = "#8A6A45"; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(x * T + 5, y * T + 5); ctx.lineTo(x * T + T - 5, y * T + T - 5); ctx.stroke();
+      }
+    }
+    if(b.objs) b.objs.forEach(function(o){
+      var c = controls(b, o);
+      ctx.strokeStyle = c === "p" ? "#4FA88B" : c === "e" ? "#9BC53D" : "#E0A458";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(o.x * T - T + 3, o.y * T - T + 3, T * 3 - 6, T * 3 - 6);
+      ctx.fillStyle = ctx.strokeStyle;
+      ctx.beginPath(); ctx.moveTo(cx(o.x), o.y * T + 6); ctx.lineTo(o.x * T + T - 7, cx(o.y)); ctx.lineTo(cx(o.x), o.y * T + T - 6); ctx.lineTo(o.x * T + 7, cx(o.y)); ctx.closePath(); ctx.fill();
+    });
+    // what the selected model can do
+    if(sel && sel.w > 0 && !sel.done && b.turn === "p" && !busy){
+      if(!sel.moved){
+        var r = reach(b, sel, engaged(b, sel) ? KINDS[sel.kind].M : KINDS[sel.kind].M);
+        Object.keys(r).forEach(function(k){
+          if(!r[k].d) return;
+          k = +k;
+          ctx.fillStyle = "rgba(79,168,139,.18)";
+          ctx.fillRect((k % COLS) * T + 2, Math.floor(k / COLS) * T + 2, T - 4, T - 4);
+        });
+      }
+      alive(b, "e").forEach(function(e){
+        var s = canShoot(b, sel, e), c = !sel.moved && chargeSpot(sel, e), f = adjacent(sel, e);
+        if(!s && !c && !f) return;
+        ctx.strokeStyle = f ? "#E0574A" : s ? "#E0A458" : "#C77DFF";
+        ctx.lineWidth = 2; ctx.setLineDash(s || f ? [] : [3, 3]);
+        ctx.strokeRect(e.x * T + 2, e.y * T + 2, T - 4, T - 4);
+        ctx.setLineDash([]);
+      });
+    }
+    b.units.forEach(function(u){ if(u.w > 0) drawUnit(u); });
+    if(flash){
+      ctx.strokeStyle = flash.melee ? "#E0574A" : "#FFE3A0"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(cx(flash.a.x), cx(flash.a.y)); ctx.lineTo(cx(flash.d.x), cx(flash.d.y)); ctx.stroke();
+      if(flash.text){
+        ctx.fillStyle = "#E0574A"; ctx.font = "700 14px -apple-system,system-ui,sans-serif"; ctx.textAlign = "center";
+        ctx.fillText(flash.text, cx(flash.d.x), flash.d.y * T - 2);
+      }
+    }
+  }
+  function drawUnit(u){
+    var x = cx(u.x), y = cx(u.y), R = T * (u.kind === "boss" ? 0.44 : u.kind === "nob" ? 0.4 : 0.36);
+    var p = u.side === "p";
+    ctx.globalAlpha = u.done ? 0.55 : 1;
+    ctx.fillStyle = p ? "#2E4A73" : "#4E7A2A";
+    ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI * 2); ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = p ? "#C9B26B" : "#2C3A16";
+    if(sel === u) ctx.strokeStyle = "#FFFFFF";
+    ctx.stroke();
+    ctx.fillStyle = "#E6EBEF"; ctx.font = "600 " + Math.round(T * 0.34) + "px -apple-system,system-ui,sans-serif";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(KINDS[u.kind].tag, x, y + 1);
+    ctx.textBaseline = "alphabetic";
+    if(u.maxW > 1){
+      for(var i = 0; i < u.maxW; i++){
+        ctx.fillStyle = i < u.w ? (p ? "#4FA88B" : "#E0A458") : "#2C3945";
+        ctx.fillRect(x - u.maxW * 2.5 + i * 5, y + R + 1, 4, 3);
+      }
+    }
+    if(b.ow[u.id]){ ctx.strokeStyle = "#E0A458"; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x, y, R + 3, -2.4, -0.7); ctx.stroke(); }
+    ctx.globalAlpha = 1;
+  }
+
+  function chargeSpot(u, e){
+    if(adjacent(u, e)) return null;
+    var r = reach(b, u, KINDS[u.kind].M + 2), best = null;
+    for(var dx = -1; dx <= 1; dx++) for(var dy = -1; dy <= 1; dy++){
+      var x = e.x + dx, y = e.y + dy;
+      if(!inside(x, y)) continue;
+      var k = idx(x, y);
+      if(r[k] && r[k].d > 0 && (!best || r[k].d < best.d)) best = { d:r[k].d, x:x, y:y };
+    }
+    return best;
+  }
+
+  /* ---------------- dice on screen ---------------- */
+  function diceHtml(rolls, need){
+    return '<span class="dice">' + rolls.map(function(r){
+      return '<span class="die" data-ok="' + (need !== null && (need === "fail" ? false : r >= need)) + '">' + r + "</span>";
+    }).join("") + "</span>";
+  }
+  function attackHtml(a){
+    var s = '<div class="line"><b>' + shortName(a.att) + "</b> → " + shortName(a.def) + " · " + a.w.name + (a.cover ? " · target in cover" : "") + "</div>";
+    s += '<div class="step"><b>Hit ' + a.hitNeed + "+</b>" + diceHtml(a.hits, a.hitNeed) + "</div>";
+    if(a.wounds.length) s += '<div class="step"><b>Wound ' + a.woundNeed + "+</b>" + diceHtml(a.wounds, a.woundNeed) + "</div>";
+    if(a.saves.length && a.sv) s += '<div class="step"><b>Save ' + a.sv + "+</b>" + diceHtml(a.saves, a.sv) + "</div>";
+    else if(a.wounds.some(function(r){ return r >= a.woundNeed; })) s += '<div class="step"><b>No save</b></div>';
+    s += '<div class="step"><b>' + (a.slain ? "Slain" : a.dmg ? a.dmg + " damage" : "No damage") + "</b></div>";
+    return s;
+  }
+  function shortName(u){ return u.side === "p" ? u.name.replace(/^(Sergeant|Brother) /, "") : KINDS[u.kind].name; }
+
+  /* ---------------- animation ---------------- */
+  function walk(u, path, done){
+    var i = 1;
+    (function step(){
+      if(i >= path.length){ done(); return; }
+      u.x = path[i].x; u.y = path[i].y; i++;
+      draw();
+      setTimeout(step, 70);
+    })();
+  }
+  function showAttacks(list, done){
+    if(!list.length){ done(); return; }
+    lastAtk = lastAtk.concat(list);
+    var i = 0;
+    (function next(){
+      if(i >= list.length){ done(); return; }
+      var a = list[i++];
+      draw({ a:a.att, d:a.def, melee:a.w.melee, text:a.slain ? "✕" : a.dmg ? "-" + a.dmg : "" });
+      renderLog();
+      setTimeout(function(){ draw(); next(); }, 650);
+    })();
+  }
+
+  /* ---------------- the player's go ---------------- */
+  function tap(x, y){
+    if(busy || !b || b.over || b.turn !== "p") return;
+    var u = unitAt(b, x, y);
+    if(u && u.side === "p"){
+      if(sel && sel !== u && (sel.moved) && !sel.done){ note = "Finish " + shortName(sel) + "'s activation first."; renderBattle(); return; }
+      if(u.done){ note = shortName(u) + " has already gone this round."; sel = u; renderBattle(); return; }
+      sel = u; note = ""; renderBattle(); return;
+    }
+    if(!sel || sel.done) return;
+    if(u && u.side === "e"){
+      if(adjacent(sel, u)){ doFight(u, false); return; }
+      if(canShoot(b, sel, u)){ doShoot(u); return; }
+      var c = !sel.moved && chargeSpot(sel, u);
+      if(c){ doCharge(u, c); return; }
+      note = "Out of reach."; renderBattle(); return;
+    }
+    if(!sel.moved){
+      var r = reach(b, sel, KINDS[sel.kind].M);
+      var k = idx(x, y);
+      if(r[k] && r[k].d > 0){
+        var wasEngaged = engaged(b, sel);
+        busy = true; lastAtk = [];
+        walk(sel, pathTo(r, x, y), function(){
+          sel.moved = true;
+          var ow = overwatch(b, sel, function(){});
+          showAttacks(ow, function(){
+            busy = false;
+            if(sel.w <= 0 || wasEngaged){ finishActivation(); return; }
+            if(checkEnd(b)){ renderBattle(); return; }
+            renderBattle();
+          });
+        });
+      }
+    }
+  }
+  function doShoot(t){
+    busy = true; lastAtk = [];
+    var a = attack(b, sel, t, weapon(sel, "ranged"), { moved:sel.moved });
+    showAttacks([a], finishActivation);
+  }
+  function doFight(t, charge){
+    busy = true; lastAtk = [];
+    showAttacks(fight(b, sel, t, charge), finishActivation);
+  }
+  function doCharge(t, spot){
+    busy = true; lastAtk = [];
+    var r = reach(b, sel, KINDS[sel.kind].M + 2);
+    walk(sel, pathTo(r, spot.x, spot.y), function(){
+      var ow = overwatch(b, sel, function(){});
+      showAttacks(ow, function(){
+        if(sel.w <= 0){ finishActivation(); return; }
+        showAttacks(fight(b, sel, t, true), finishActivation);
+      });
+    });
+  }
+  function holdFire(){
+    if(!sel || sel.done || busy) return;
+    if(engaged(b, sel)){ note = "Too close to hold fire."; renderBattle(); return; }
+    b.ow[sel.id] = true; lastAtk = [];
+    note = shortName(sel) + " is on overwatch.";
+    finishActivation();
+  }
+  function finishActivation(){
+    busy = false;
+    if(sel){ sel.done = true; }
+    sel = null;
+    advance();
+  }
+
+  /* ---------------- whose go next ---------------- */
+  function advance(){
+    if(checkEnd(b)){ save(); renderBattle(); return; }
+    var next = passTurn(b);
+    if(next === "round"){
+      endRound(b, function(t){ note = t; });
+      save();
+      if(b.over){ renderBattle(); return; }
+      renderBattle();
+      return;
+    }
+    save();
+    renderBattle();
+    if(next === "e") setTimeout(enemyGo, 350);
+  }
+  function enemyGo(){
+    var u = foeOrder(b)[0];
+    if(!u){ advance(); return; }
+    busy = true; lastAtk = [];
+    var plan = enemyPlan(b, u);
+    function done(){ u.done = true; busy = false; advance(); }
+    if(plan.act === "fight"){ showAttacks(fight(b, u, plan.target, false), done); return; }
+    var r = reach(b, u, KINDS[u.kind].M + (plan.act === "charge" ? 2 : 0));
+    var path = pathTo(r, plan.x, plan.y);
+    walk(u, path, function(){
+      var ow = path.length > 1 ? overwatch(b, u, function(){}) : [];
+      showAttacks(ow, function(){
+        if(u.w <= 0){ done(); return; }
+        if(plan.act === "charge"){ showAttacks(fight(b, u, plan.target, true), done); return; }
+        // shoot whatever is in its sights, weakest first
+        var targets = alive(b, "p").filter(function(p){ return canShoot(b, u, p); }).sort(function(a, c){ return a.w - c.w; });
+        if(targets.length) showAttacks([attack(b, u, targets[0], weapon(u, "ranged"), { moved:path.length > 1 })], done);
+        else done();
+      });
+    });
+  }
+
+  /* ---------------- screens ---------------- */
+  function render(){
+    var app = el("app"); app.innerHTML = ""; canvas = null; ctx = null;
+    if(!camp){ camp = newCampaign(); save(); }
+    if(camp.done){ renderVictory(app); return; }
+    if(b){ renderBattleShell(app); return; }
+    renderBriefing(app);
+  }
+
+  function renderBriefing(app){
+    var m = MISSIONS[camp.mi];
+    app.appendChild(h("div", { "class":"statline" }, '<span class="big">' + (camp.mi + 1) + '<span class="lbl">of ' + MISSIONS.length + '</span></span><span class="mid">The Iron Oath</span><span class="big">' + camp.roster.length + '<span class="lbl">Squad</span></span>'));
+    var s = h("div", { "class":"scroll" });
+    app.appendChild(s);
+    var p = h("div", { "class":"panel" }, "<h3>Mission " + (camp.mi + 1) + " · " + (m.type === "hold" ? "Hold the relays" : "Purge") + "</h3>" +
+      "<p style=\"font-size:18px;font-weight:300\">" + m.name + "</p><p>" + m.brief + "</p>" +
+      "<p style=\"color:var(--muted);font-size:12.5px\">" + (m.type === "hold" ? "Score a VP for each relay you control at the end of rounds 2 to 5. Four VP wins." : "Kill three-quarters of them in five rounds" + (m.foes.boss ? " - and the Big Boss must die." : ".")) + "</p>");
+    s.appendChild(p);
+    var r = h("div", { "class":"panel" }, "<h3>The squad</h3>");
+    camp.roster.forEach(function(sq){
+      var k = KINDS[sq.kind], w = WEAPONS[k.ranged];
+      r.appendChild(h("div", { "class":"row" }, "<span>" + sq.name + "<small>" + k.name + " · " + w.name + " · W" + (k.W + (sq.bonusW || 0)) + " BS" + (k.BS - (sq.bonusBS || 0)) + "+ · " + sq.xp + " xp</small></span>" +
+        (sq.rank ? '<span class="tag" data-k="rank">Rank ' + sq.rank + "</span>" : "")));
+    });
+    s.appendChild(r);
+    if(camp.debrief && camp.debrief.length){
+      s.appendChild(h("div", { "class":"panel" }, "<h3>After the last mission</h3>" + camp.debrief.map(function(l){ return "<p>" + l + "</p>"; }).join("")));
+    }
+    var go = h("button", { "class":"btn" }, "Deploy");
+    go.onclick = function(){ b = newBattle(camp.roster, camp.mi, Math.floor(Math.random() * 1e9)); sel = null; note = "Your go. Tap a brother to pick him."; lastAtk = []; save(); render(); };
+    s.appendChild(go);
+    s.appendChild(h("p", { "class":"howto" }, "Tap a brother, then a green tile to move, an amber-ringed foe to shoot, a red one to fight or a dashed one to charge. Then the Grukk take a go. Turns alternate one model at a time."));
+  }
+
+  function renderBattleShell(app){
+    app.appendChild(h("div", { "class":"statline", id:"stats" }));
+    var row = h("div", { "class":"boardrow" });
+    canvas = h("canvas", { id:"board" });
+    row.appendChild(canvas);
+    app.appendChild(row);
+    ctx = canvas.getContext("2d");
+    app.appendChild(h("div", { "class":"unitbar", id:"unitbar" }));
+    var acts = h("div", { "class":"acts", id:"acts" });
+    app.appendChild(acts);
+    app.appendChild(h("div", { "class":"log", id:"log" }));
+    canvas.addEventListener("click", function(e){
+      var r = canvas.getBoundingClientRect();
+      tap(Math.floor((e.clientX - r.left) / T), Math.floor((e.clientY - r.top) / T));
+    });
+    size();
+    renderBattle();
+    if(b.turn === "e" && !b.over) setTimeout(enemyGo, 400);
+  }
+
+  function renderBattle(){
+    if(!canvas) return;
+    var m = MISSIONS[b.mi];
+    var score = b.type === "hold" ? b.vp + '<span class="lbl">VP</span>' : kills(b) + "/" + purgeTarget(b) + '<span class="lbl">Kills</span>';
+    el("stats").innerHTML = '<span class="big">' + b.round + '<span class="lbl">of ' + ROUNDS + '</span></span><span class="mid">' + m.name + " · " + (b.turn === "p" ? "your go" : "the Grukk") + '</span><span class="big">' + score + "</span>";
+    var bar = el("unitbar");
+    if(sel){
+      var k = KINDS[sel.kind], w = weapon(sel, "ranged"), mw = weapon(sel, "melee");
+      bar.innerHTML = "<div><div class=\"nm\">" + sel.name + "</div><small>W " + sel.w + "/" + sel.maxW + " · M" + k.M + " · BS" + stat(sel, "BS") + "+ · WS" + k.WS + "+ · T" + k.T + " · Sv" + k.Sv + "+</small>" +
+        "<small>" + w.name + ": range " + w.range + ", A" + w.A + ", S" + w.S + ", AP" + w.AP + ", D" + w.D + (w.rapid ? ", rapid fire" : "") + (w.heavy ? ", heavy" : "") + " · " + mw.name + ": A" + mw.A + ", S" + mw.S + ", AP" + mw.AP + "</small></div>";
+    } else bar.innerHTML = "<div><small>" + (note || (b.turn === "p" ? "Tap a brother who has not gone yet." : "The Grukk are moving…")) + "</small></div>";
+    if(sel && note) bar.innerHTML += "";
+    var acts = el("acts"); acts.innerHTML = "";
+    if(b.over){
+      var won = b.over === "won";
+      acts.appendChild(h("div", { "class":"banner", style:"flex:1" }, "<h2>" + (won ? "Victory" : "Defeat") + "</h2><p>" + (won ? "The Grukk are broken here." : "The squad falls back to fight again.") + "</p>"));
+      var nb = h("button", {}, "Debrief");
+      nb.onclick = function(){
+        camp.debrief = debrief(camp, b);
+        if(won) camp.mi++;
+        if(camp.mi >= MISSIONS.length) camp.done = true;
+        b = null; save(); render();
+      };
+      acts.appendChild(nb);
+    } else if(b.turn === "p"){
+      var ow = h("button", {}, "Overwatch");
+      ow.disabled = !sel || sel.done || busy;
+      ow.onclick = holdFire;
+      var end = h("button", {}, sel && sel.moved ? "Done" : "Hold position");
+      end.disabled = !sel || sel.done || busy;
+      end.onclick = function(){ if(sel && !sel.done && !busy){ lastAtk = []; finishActivation(); } };
+      acts.appendChild(ow); acts.appendChild(end);
+    }
+    renderLog();
+    draw();
+  }
+  function renderLog(){
+    var l = el("log"); if(!l) return;
+    if(lastAtk.length) l.innerHTML = lastAtk.slice(-2).map(attackHtml).join("");
+    else l.innerHTML = '<div class="line" style="color:var(--muted)">' + (sel && note ? note : "Dice appear here.") + "</div>";
+  }
+
+  function renderVictory(app){
+    app.appendChild(h("div", { "class":"banner" }, "<h2>Skarg is dead</h2><p>The warband is broken and the oath is kept. The squad's names go on the roll of honour.</p>"));
+    var r = h("div", { "class":"panel" }, "<h3>Roll of honour</h3>");
+    camp.roster.forEach(function(s){ r.appendChild(h("div", { "class":"row" }, "<span>" + s.name + "<small>" + KINDS[s.kind].name + " · " + s.missions + " missions</small></span><span>" + s.xp + " xp</span>")); });
+    app.appendChild(r);
+    var b2 = h("button", { "class":"btn" }, "A new oath");
+    b2.onclick = function(){ camp = newCampaign(); b = null; save(); render(); };
+    app.appendChild(b2);
+  }
+
+  el("restart").onclick = function(){
+    if(!window.confirm("Abandon this campaign and start a new one?")) return;
+    camp = newCampaign(); b = null; sel = null; save(); render();
+  };
+  window.addEventListener("resize", function(){ if(canvas){ size(); draw(); } });
+
+  camp = load();
+  if(camp){ b = camp.battle || null; }
+  render();
+
+  window.__oath = { get camp(){ return camp; }, get b(){ return b; }, tap:tap, KINDS:KINDS };
+})();
+</script>
+</body>
+</html>

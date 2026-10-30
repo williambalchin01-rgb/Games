@@ -182,6 +182,21 @@
     </div>
   </a>
 
+  <a class="game" href="./oath.html">
+    <svg class="art" viewBox="0 0 52 52" aria-hidden="true">
+      <rect x="4" y="4" width="44" height="44" rx="4" fill="#131A21"/>
+      <rect x="22" y="14" width="8" height="8" fill="#4A535C"/>
+      <circle cx="14" cy="38" r="6" fill="#2E4A73" stroke="#C9B26B" stroke-width="1.6"/>
+      <circle cx="37" cy="13" r="6" fill="#4E7A2A"/>
+      <path d="M14 38 L35 15" stroke="#FFE3A0" stroke-width="1.4"/>
+    </svg>
+    <div>
+      <h2>Iron Oath</h2>
+      <p>Lead a squad of super-soldiers through six missions against a greenskin warband. Hit, wound, save, damage, one model at a time.</p>
+      <div class="meta" id="oath-meta"></div>
+    </div>
+  </a>
+
   <a class="game" href="./front-office.html">
     <svg class="art" viewBox="0 0 52 52" aria-hidden="true">
       <rect x="6" y="10" width="40" height="32" rx="4" fill="#1B2A22"/>
@@ -358,6 +373,11 @@
     if(so.ports) sb.push(so.ports.length + (so.ports.length === 1 ? " airport" : " airports"));
     if(so.delivered) sb.push(so.delivered + " delivered");
     document.getElementById("stopover-meta").textContent = sb.join("  \u00B7  ");
+  }
+
+  var oa = read("arcade.oath.v1");
+  if(oa && oa.roster){
+    document.getElementById("oath-meta").textContent = oa.done ? "Oath kept" : "Mission " + (oa.mi + 1) + " of 6";
   }
 
   var fo = read("arcade.frontoffice.v1");
