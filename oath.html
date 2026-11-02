@@ -41,6 +41,29 @@
   .tag[data-k="rank"]{color:var(--sel);border-color:rgba(224,164,88,.5)}
   .btn{width:100%;padding:13px;border:1px solid var(--accent);color:var(--accent);border-radius:var(--radius);background:var(--surface);font-size:14px}
   .scroll{flex:1;overflow-y:auto;min-height:0;display:flex;flex-direction:column;gap:10px}
+  .die[data-roll="true"]{background:#3A4652;color:#AFBAC4;transform:rotate(8deg)}
+  .cnt{font-size:11.5px;color:var(--muted);margin-left:4px}
+  .out[data-bad="true"]{color:#E0574A}
+  .srow{display:flex;gap:10px;align-items:center;width:100%;text-align:left;padding:8px 0;border-bottom:1px solid var(--line)}
+  .srow:last-child{border-bottom:none}
+  .srow canvas{flex:none;border-radius:8px}
+  .sbody{flex:1;min-width:0;font-size:13.5px}
+  .sbody small{display:block;color:var(--muted);font-size:11.5px;margin-top:2px}
+  .sbody .st[data-bad="true"]{color:#E0574A}
+  .card{display:flex;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:12px}
+  .card canvas{flex:none;border-radius:10px}
+  .cbody{flex:1;min-width:0}
+  .cname{font-size:18px;font-weight:300}
+  .cbody small{display:block;color:var(--muted);font-size:11.5px;margin-top:2px}
+  .trait{font-size:12.5px;margin-top:8px;line-height:1.4}
+  .quote{font-size:12.5px;margin-top:6px;font-style:italic;color:#AFBAC4}
+  .stats{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;text-align:center;margin-bottom:6px}
+  .stats b{display:block;font-size:16px;font-weight:400}
+  .stats small{font-size:10px;letter-spacing:.1em;color:var(--muted)}
+  .seg{display:flex;gap:6px;flex-wrap:wrap}
+  .seg button{padding:8px 12px;border:1px solid var(--line);border-radius:20px;font-size:12.5px}
+  .seg button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
+  #mini{flex:none;border-radius:6px}
   .banner{text-align:center;padding:18px 10px}
   .banner h2{margin:0 0 6px;font-weight:300;font-size:24px}
   .banner p{margin:0;color:var(--muted);font-size:13.5px}
@@ -272,11 +295,16 @@
     var before = def.w;
     for(i = 0; i < failed && def.w > 0; i++){ def.w = Math.max(0, def.w - w.D); }
     dmg = before - def.w;
+    if(!opts.sim && dmg) def.taken = (def.taken || 0) + dmg;
     if(def.w <= 0){
       def.w = 0;
-      if(att.side === "p") att.kills = (att.kills || 0) + 1;
+      if(att.side === "p" && !opts.sim){
+        att.kills = (att.kills || 0) + 1;
+        (att.slew = att.slew || []).push(def.kind);
+      }
+      if(def.side === "p" && !opts.sim) def.fellTo = KINDS[att.kind].name + "'s " + w.name.toLowerCase();
     }
-    return { att:att, def:def, w:w, hits:hits, hitNeed:hitNeed, wounds:wounds, woundNeed:woundNeed,
+    return { att:att, def:def, w:w, before:before, hits:hits, hitNeed:hitNeed, wounds:wounds, woundNeed:woundNeed,
              saves:saves, sv:sv > 6 ? null : sv, cover:cover, dmg:dmg, slain:def.w <= 0 };
   }
 
@@ -302,7 +330,7 @@
       var p = spots.splice(Math.floor(r() * spots.length), 1)[0];
       b.units.push({ id:"p" + i, sid:s.id, side:"p", kind:s.kind, name:s.name, x:p[0], y:p[1],
                      w:KINDS[s.kind].W + (s.bonusW || 0), maxW:KINDS[s.kind].W + (s.bonusW || 0),
-                     BS:KINDS[s.kind].BS - (s.bonusBS || 0), bonusA:s.bonusA || 0, done:false, kills:0 });
+                     BS:KINDS[s.kind].BS - (s.bonusBS || 0), bonusA:s.bonusA || 0, done:false, kills:0, look:s.look, rank:s.rank });
     });
     spots = [];
     for(x = 0; x < COLS; x++) for(y = 0; y < 3; y++) if(!b.tiles[idx(x, y)]) spots.push([x, y]);
@@ -442,53 +470,125 @@
   /* ---------------------------------------------------------------------
      THE CAMPAIGN
      --------------------------------------------------------------------- */
-  function newCampaign(){
-    var names = NAMES.slice().sort(function(){ return rng() - 0.5; });
-    var kinds = ["sgt","bro","bro","gunner","sniper"];
-    return { mi:0, battle:null, nextId:5, roster:kinds.map(function(k, i){
-      return { id:i, kind:k, name:(k === "sgt" ? "Sergeant " : "Brother ") + names[i], xp:0, rank:0, missions:0 };
-    }), done:false };
+  /* Who they are. Nothing here changes a dice roll - it is so that the
+     brother who dies on the relay was someone: where he came from, how he
+     carries himself, what he has done. */
+  var HOMEWORLDS = ["the hive-world Calvex","the ash wastes of Morrow","feral Tharsis","the shrine-moon Ilos",
+                    "orbital hab Kessel-9","the ice world Haldane","the forge-world Vey","the ocean world Pelagia",
+                    "the death world Ruun","the frontier colony Gaunt's Reach"];
+  var TRAITS = [
+    { n:"Stoic",        d:"Says little. Misses less.",                          q:"Words are ammunition. Spend them carefully." },
+    { n:"Zealous",      d:"First into the breach, every time.",                q:"Every one I kill is a prayer answered." },
+    { n:"Grim humour",  d:"Jokes in the worst moments. Keeps the squad sane.", q:"Cheer up, brother. They can only kill us once." },
+    { n:"Methodical",   d:"Counts every round and checks every angle.",        q:"Patience. The gap always comes." },
+    { n:"Hot-blooded",  d:"Hates the greenskins with a personal passion.",     q:"Let them come. All of them." },
+    { n:"Devout",       d:"Recites the litanies under fire.",                  q:"My armour is my faith, and it has never failed." },
+    { n:"Old soldier",  d:"Has outlived three squads. Does not talk about it.", q:"I have seen worse. Not much worse." },
+    { n:"Proud",        d:"Keeps his armour immaculate, even in the mud.",     q:"We are watched. Fight like it." },
+    { n:"Vengeful",     d:"Lost his first squad to the Grukk. Keeps count.",   q:"That is forty-one. I will tell you when I am done." },
+    { n:"Steady",       d:"The one the others look to when it goes wrong.",    q:"Breathe. Aim. Again." }
+  ];
+  var STRIPES = ["#C9B26B","#B8432F","#E6EBEF","#4FA88B","#7A9CC6","#D08A3A","#9C6FC1","#2A2F36"];
+  var LENSES = ["#5CE07A","#E0574A","#6FC7FF","#FFD45C"];
+  var RANK_NAMES = ["", "Veteran", "Honoured", "Paragon"];
+
+  function makeSoldier(kind, id, taken){
+    var free = NAMES.filter(function(n){ return taken.indexOf(n) < 0; });
+    var name = free[Math.floor(rng() * free.length)] || NAMES[id % NAMES.length];
+    var s = { id:id, kind:kind, short:name, name:(kind === "sgt" ? "Sergeant " : "Brother ") + name,
+              xp:0, rank:0, missions:0, kills:0, slew:{}, falls:0, deeds:[] };
+    // a fresh soldier is rolled fresh; persona() below only fills gaps in old saves
+    s.home = HOMEWORLDS[Math.floor(rng() * HOMEWORLDS.length)];
+    s.trait = Math.floor(rng() * TRAITS.length);
+    s.look = { stripe:STRIPES[Math.floor(rng() * STRIPES.length)], lens:LENSES[Math.floor(rng() * LENSES.length)],
+               scar:rng() < 0.35, age:Math.floor(60 + rng() * 140) };
+    persona(s);
+    return s;
   }
+  // also fills in soldiers from saves made before they had one
+  function persona(s){
+    var r = mulberry(s.id * 7919 + 13);
+    if(!s.short) s.short = s.name.replace(/^(Sergeant|Brother) /, "");
+    if(!s.home) s.home = HOMEWORLDS[Math.floor(r() * HOMEWORLDS.length)];
+    if(s.trait === undefined) s.trait = Math.floor(r() * TRAITS.length);
+    if(!s.look) s.look = { stripe:STRIPES[Math.floor(r() * STRIPES.length)], lens:LENSES[Math.floor(r() * LENSES.length)],
+                           scar:r() < 0.35, age:Math.floor(60 + r() * 140) };
+    s.kills = s.kills || 0; s.slew = s.slew || {}; s.falls = s.falls || 0; s.deeds = s.deeds || [];
+    return s;
+  }
+  function newCampaign(){
+    var kinds = ["sgt","bro","bro","gunner","sniper"], taken = [];
+    var roster = kinds.map(function(k, i){ var s = makeSoldier(k, i, taken); taken.push(s.short); return s; });
+    return { mi:0, battle:null, nextId:5, roster:roster, fallen:[], done:false, pace:"normal", step:false };
+  }
+  function takenNames(c){ return c.roster.concat(c.fallen || []).map(function(s){ return s.short; }); }
   var RANKS = [0, 3, 7, 12];
+  function deed(s, text){ s.deeds.unshift(text); if(s.deeds.length > 10) s.deeds.length = 10; }
+
   /* Survivors earn experience: a point for living through it, one for each
      kill. Each rank gives a little more - a wound, a steadier aim, a
      harder blow. A brother who fell rolls a die: on a 1 he is gone, and a
-     new one takes his place. */
+     new one takes his place. Returns the report the debrief screen shows,
+     one row per brother who took the field. */
   function debrief(c, b){
-    var lines = [];
+    var m = MISSIONS[b.mi], rows = [], lines = [];
+    var best = 0;
+    b.units.forEach(function(u){ if(u.side === "p") best = Math.max(best, u.kills || 0); });
+    c.fallen = c.fallen || [];
     c.roster.forEach(function(s){
+      persona(s);
       var u = b.units.filter(function(x){ return x.sid === s.id; })[0];
       if(!u) return;
+      var row = { id:s.id, kills:u.kills || 0, xp:0, status:"", promo:"" };
       var xp = (u.w > 0 ? 1 : 0) + (u.kills || 0) + (b.over === "won" ? 1 : 0);
-      s.xp += xp; s.missions++;
+      row.xp = xp;
+      s.xp += xp; s.missions++; s.kills += u.kills || 0;
+      (u.slew || []).forEach(function(k){ s.slew[k] = (s.slew[k] || 0) + 1; });
+      if((u.slew || []).indexOf("boss") >= 0) deed(s, "Slew Big Boss Skarg at " + m.name + ".");
+      else if((u.slew || []).indexOf("nob") >= 0) deed(s, "Cut down a Grukk nob at " + m.name + ".");
+      if((u.kills || 0) >= 3) deed(s, (u.kills) + " kills at " + m.name + ".");
+      if(best > 0 && (u.kills || 0) === best){ s.mvp = (s.mvp || 0) + 1; row.best = true; }
       var rank = RANKS.filter(function(r){ return s.xp >= r; }).length - 1;
       while(s.rank < rank){
         s.rank++;
-        if(s.rank === 1){ s.bonusW = (s.bonusW || 0) + 1; lines.push(s.name + " promoted: +1 wound."); }
-        if(s.rank === 2){ s.bonusBS = (s.bonusBS || 0) + 1; lines.push(s.name + " promoted: hits more often with his gun."); }
-        if(s.rank === 3){ s.bonusA = (s.bonusA || 0) + 1; lines.push(s.name + " promoted: +1 attack in combat."); }
+        var what = s.rank === 1 ? "+1 wound" : s.rank === 2 ? "a steadier aim" : "+1 attack in combat";
+        if(s.rank === 1) s.bonusW = (s.bonusW || 0) + 1;
+        if(s.rank === 2) s.bonusBS = (s.bonusBS || 0) + 1;
+        if(s.rank === 3) s.bonusA = (s.bonusA || 0) + 1;
+        row.promo = RANK_NAMES[s.rank] + ": " + what;
+        deed(s, "Raised to " + RANK_NAMES[s.rank] + " after " + m.name + ".");
       }
       if(u.w <= 0){
+        s.falls++;
         var roll = d6();
-        if(roll === 1){ s.dead = true; lines.push(s.name + " fell, and did not rise (rolled a 1)."); }
-        else lines.push(s.name + " fell, but the apothecary saved him (rolled a " + roll + ").");
-      }
+        if(roll === 1){
+          s.dead = true;
+          s.diedAt = m.name; s.diedTo = u.fellTo || "the Grukk";
+          row.status = "Killed in action (rolled a 1)";
+          deed(s, "Fell at " + m.name + " to " + s.diedTo + ". Did not rise.");
+        } else {
+          row.status = "Fell - the apothecary saved him (rolled a " + roll + ")";
+          deed(s, "Fell at " + m.name + " to " + (u.fellTo || "the Grukk") + "; brought back by the apothecary.");
+        }
+      } else row.status = u.taken ? "Wounded, still standing" : "Unhurt";
+      rows.push(row);
     });
     // after the second victory, a sixth brother is sent to the squad
     if(b.over === "won" && c.mi === 1 && c.roster.length < 6){
-      var free = NAMES.filter(function(n){ return !c.roster.some(function(r){ return r.name.indexOf(n) >= 0; }); });
-      var nb = { id:c.nextId++, kind:"bro", name:"Brother " + free[0], xp:0, rank:0, missions:0 };
+      var nb = makeSoldier("bro", c.nextId++, takenNames(c));
+      deed(nb, "Sent to reinforce the squad after " + m.name + ".");
       c.roster.push(nb);
       lines.push(nb.name + " is sent to reinforce the squad.");
     }
     c.roster.forEach(function(s, i){
       if(!s.dead) return;
-      var names = NAMES.filter(function(n){ return !c.roster.some(function(r){ return r.name.indexOf(n) >= 0; }); });
-      var nn = { id:c.nextId++, kind:s.kind, name:(s.kind === "sgt" ? "Sergeant " : "Brother ") + names[Math.floor(rng() * names.length)], xp:0, rank:0, missions:0 };
-      lines.push(nn.name + " joins the squad.");
+      c.fallen.push(s);
+      var nn = makeSoldier(s.kind, c.nextId++, takenNames(c));
+      deed(nn, "Joined the squad to replace " + s.name + ".");
+      lines.push(nn.name + " joins the squad in " + s.short + "'s place.");
       c.roster[i] = nn;
     });
-    return lines;
+    return { mission:m.name, result:b.over, rows:rows, lines:lines };
   }
 
   /* =====================================================================
@@ -503,13 +603,148 @@
   }
 
   var KEY = "arcade.oath.v1";
-  var camp = null, b = null, sel = null, mode = null, busy = false, lastAtk = [], note = "";
+  var camp = null, b = null, sel = null, aim = null, busy = false, lastAtk = [], note = "";
+  var acting = null, waitingStep = false, dispW = {}, flash = null, view = null;
   var canvas = null, ctx = null, T = 34;
 
   function save(){ try{ camp.battle = b; localStorage.setItem(KEY, JSON.stringify(camp)); }catch(e){} }
   function load(){ try{ return JSON.parse(localStorage.getItem(KEY)); }catch(e){ return null; } }
 
-  /* ---------------- drawing ---------------- */
+  /* How long things take. Normal is already deliberate; Slow is for
+     savouring it. Every pause in a battle goes through here. */
+  function P(ms){ return ms * (camp && camp.pace === "slow" ? 1.6 : 1); }
+  function wait(ms, fn){ setTimeout(fn, P(ms)); }
+
+  /* ---------------------------------------------------------------------
+     ART
+
+     Drawn, not loaded: a helmet for every brother, built from his own
+     colours - a stripe, a lens colour, the odd scar - with what marks out
+     his job: a sergeant's crest and laurels, a gunner's targeting lens, a
+     marksman's hood and scope. The same drawing serves the board token and
+     the portrait on his card.
+     --------------------------------------------------------------------- */
+  var ARMOUR = "#2E4A73", ARMOUR_DK = "#22385A", TRIM = "#C9B26B";
+  function helmet(c, x, y, r, kind, look, dead){
+    look = look || { stripe:TRIM, lens:"#5CE07A" };
+    c.save();
+    c.translate(x, y);
+    if(kind === "sniper"){
+      // the hood, behind and over the helmet
+      c.fillStyle = "#33452F";
+      c.beginPath(); c.moveTo(-r * 1.05, r * 0.9); c.quadraticCurveTo(-r * 1.15, -r * 1.25, 0, -r * 1.2);
+      c.quadraticCurveTo(r * 1.15, -r * 1.25, r * 1.05, r * 0.9); c.closePath(); c.fill();
+    }
+    if(kind === "sgt"){
+      // crest: a red plume over the top
+      c.strokeStyle = "#B8432F"; c.lineWidth = r * 0.12; c.lineCap = "round";
+      for(var i = -3; i <= 3; i++){
+        c.beginPath(); c.moveTo(i * r * 0.08, -r * 0.8); c.lineTo(i * r * 0.17, -r * 1.22 + Math.abs(i) * r * 0.06); c.stroke();
+      }
+    }
+    // the dome
+    c.fillStyle = ARMOUR;
+    c.beginPath();
+    c.moveTo(-r * 0.78, r * 0.35);
+    c.bezierCurveTo(-r * 0.9, -r * 0.6, -r * 0.5, -r * 0.95, 0, -r * 0.95);
+    c.bezierCurveTo(r * 0.5, -r * 0.95, r * 0.9, -r * 0.6, r * 0.78, r * 0.35);
+    c.lineTo(r * 0.5, r * 0.8); c.lineTo(-r * 0.5, r * 0.8); c.closePath(); c.fill();
+    // personal stripe down the middle
+    c.fillStyle = look.stripe;
+    c.fillRect(-r * 0.09, -r * 0.94, r * 0.18, r * 0.62);
+    // faceplate and the grille
+    c.fillStyle = ARMOUR_DK;
+    c.beginPath(); c.moveTo(-r * 0.36, r * 0.12); c.lineTo(r * 0.36, r * 0.12); c.lineTo(r * 0.22, r * 0.78); c.lineTo(-r * 0.22, r * 0.78); c.closePath(); c.fill();
+    c.strokeStyle = "#11192A"; c.lineWidth = Math.max(1, r * 0.06);
+    for(var g = 0; g < 3; g++){ c.beginPath(); c.moveTo(-r * 0.14, r * (0.36 + g * 0.13)); c.lineTo(r * 0.14, r * (0.36 + g * 0.13)); c.stroke(); }
+    // eyes
+    c.fillStyle = dead ? "#3A424A" : look.lens;
+    c.shadowColor = dead ? "transparent" : look.lens; c.shadowBlur = r * 0.35;
+    c.beginPath(); c.ellipse(-r * 0.33, -r * 0.12, r * 0.2, r * 0.12, 0.28, 0, Math.PI * 2); c.fill();
+    if(kind === "gunner"){
+      c.fillStyle = dead ? "#3A424A" : "#E0574A";
+      c.beginPath(); c.arc(r * 0.33, -r * 0.12, r * 0.2, 0, Math.PI * 2); c.fill();
+    } else {
+      c.beginPath(); c.ellipse(r * 0.33, -r * 0.12, r * 0.2, r * 0.12, -0.28, 0, Math.PI * 2); c.fill();
+    }
+    c.shadowBlur = 0;
+    if(kind === "gunner"){ c.strokeStyle = "#9AA7B2"; c.lineWidth = Math.max(1, r * 0.07); c.beginPath(); c.arc(r * 0.33, -r * 0.12, r * 0.27, 0, Math.PI * 2); c.stroke(); }
+    if(kind === "sniper"){
+      c.strokeStyle = "#9AA7B2"; c.lineWidth = Math.max(1, r * 0.07);
+      c.beginPath(); c.arc(-r * 0.33, -r * 0.12, r * 0.25, 0, Math.PI * 2); c.stroke();
+      c.beginPath(); c.moveTo(-r * 0.58, -r * 0.12); c.lineTo(-r * 0.85, -r * 0.2); c.stroke();
+    }
+    if(kind === "sgt"){
+      // laurels on the brow
+      c.strokeStyle = TRIM; c.lineWidth = Math.max(1, r * 0.08);
+      c.beginPath(); c.arc(0, -r * 0.1, r * 0.62, Math.PI * 1.15, Math.PI * 1.85); c.stroke();
+    }
+    if(look.scar){
+      c.strokeStyle = "rgba(200,205,210,.75)"; c.lineWidth = Math.max(1, r * 0.05);
+      c.beginPath(); c.moveTo(r * 0.15, -r * 0.75); c.lineTo(r * 0.55, -r * 0.35); c.stroke();
+    }
+    if(dead){ c.fillStyle = "rgba(21,28,36,.45)"; c.beginPath(); c.arc(0, 0, r * 1.3, 0, Math.PI * 2); c.fill(); }
+    c.restore();
+  }
+
+  // a full portrait: helmet, shoulders, squad number and rank chevrons
+  function portrait(cv, px, s, dead){
+    var k = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = cv.height = px * k;
+    cv.style.width = cv.style.height = px + "px";
+    var c = cv.getContext("2d");
+    c.scale(k, k);
+    var g = c.createRadialGradient(px / 2, px * 0.4, 0, px / 2, px * 0.4, px * 0.7);
+    g.addColorStop(0, "#26313C"); g.addColorStop(1, "#141B22");
+    c.fillStyle = g; c.fillRect(0, 0, px, px);
+    // shoulders
+    [-1, 1].forEach(function(side){
+      c.fillStyle = ARMOUR;
+      c.beginPath(); c.ellipse(px / 2 + side * px * 0.33, px * 0.93, px * 0.24, px * 0.2, 0, Math.PI, Math.PI * 2); c.fill();
+      c.strokeStyle = TRIM; c.lineWidth = px * 0.025; c.stroke();
+    });
+    c.fillStyle = ARMOUR_DK; c.fillRect(px * 0.36, px * 0.72, px * 0.28, px * 0.28);
+    // squad number on the left pauldron, rank chevrons on the right
+    c.fillStyle = s.look.stripe; c.font = "700 " + Math.round(px * 0.11) + "px -apple-system,system-ui,sans-serif"; c.textAlign = "center";
+    c.fillText(String(s.id + 1), px * 0.18, px * 0.92);
+    c.strokeStyle = TRIM; c.lineWidth = px * 0.022;
+    for(var i = 0; i < s.rank; i++){
+      var yy = px * (0.86 - i * 0.045);
+      c.beginPath(); c.moveTo(px * 0.76, yy - px * 0.02); c.lineTo(px * 0.82, yy + px * 0.015); c.lineTo(px * 0.88, yy - px * 0.02); c.stroke();
+    }
+    helmet(c, px / 2, px * 0.47, px * (s.kind === "gunner" ? 0.31 : 0.29), s.kind, s.look, dead);
+  }
+
+  // the horde, drawn smaller and meaner
+  function grukk(c, x, y, r, kind){
+    c.save(); c.translate(x, y);
+    var skin = kind === "boss" ? "#5E8F2C" : "#5A8A2A";
+    if(kind === "rokkit"){ c.fillStyle = "#6B6F75"; c.save(); c.rotate(-0.6); c.fillRect(-r * 0.2, -r * 1.25, r * 0.4, r * 1.3); c.fillStyle = "#B8432F"; c.fillRect(-r * 0.2, -r * 1.35, r * 0.4, r * 0.18); c.restore(); }
+    c.fillStyle = skin;
+    c.beginPath(); c.ellipse(0, r * 0.05, r * 0.82, r * 0.78, 0, 0, Math.PI * 2); c.fill();
+    if(kind === "nob" || kind === "boss"){
+      c.fillStyle = "#6B6F75";
+      c.beginPath(); c.ellipse(0, -r * 0.35, r * 0.8, r * 0.45, 0, Math.PI, Math.PI * 2); c.fill();
+      c.fillStyle = kind === "boss" ? "#D9D2C0" : "#BFB8A6";
+      [-1, 1].forEach(function(sd){
+        c.beginPath(); c.moveTo(sd * r * 0.6, -r * 0.5); c.quadraticCurveTo(sd * r * 1.2, -r * 0.7, sd * r * (kind === "boss" ? 1.25 : 1.05), -r * (kind === "boss" ? 1.35 : 1.05));
+        c.lineTo(sd * r * 0.45, -r * 0.62); c.closePath(); c.fill();
+      });
+    }
+    // brow, eyes, tusks
+    c.fillStyle = "#3F6620"; c.fillRect(-r * 0.6, -r * 0.25, r * 1.2, r * 0.2);
+    c.fillStyle = "#FF5A3C";
+    c.beginPath(); c.arc(-r * 0.3, -r * 0.02, r * 0.12, 0, Math.PI * 2); c.arc(r * 0.3, -r * 0.02, r * 0.12, 0, Math.PI * 2); c.fill();
+    c.fillStyle = "#EDE6D3";
+    c.beginPath(); c.moveTo(-r * 0.38, r * 0.45); c.lineTo(-r * 0.28, r * 0.12); c.lineTo(-r * 0.18, r * 0.45); c.fill();
+    c.beginPath(); c.moveTo(r * 0.38, r * 0.45); c.lineTo(r * 0.28, r * 0.12); c.lineTo(r * 0.18, r * 0.45); c.fill();
+    if(kind === "shoot"){ c.fillStyle = "#4A535C"; c.fillRect(r * 0.45, r * 0.25, r * 0.75, r * 0.22); }
+    c.restore();
+  }
+
+  /* ---------------------------------------------------------------------
+     THE BOARD
+     --------------------------------------------------------------------- */
   function size(){
     var box = el("app").getBoundingClientRect();
     var avail = Math.min(box.width, (window.innerHeight - 300) * COLS / ROWS);
@@ -520,8 +755,9 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
   function cx(x){ return x * T + T / 2; }
+  function shownW(u){ return dispW[u.id] !== undefined ? dispW[u.id] : u.w; }
 
-  function draw(flash){
+  function draw(){
     if(!ctx || !b) return;
     ctx.fillStyle = "#10161C"; ctx.fillRect(0, 0, COLS * T, ROWS * T);
     for(var y = 0; y < ROWS; y++) for(var x = 0; x < COLS; x++){
@@ -547,10 +783,10 @@
       ctx.fillStyle = ctx.strokeStyle;
       ctx.beginPath(); ctx.moveTo(cx(o.x), o.y * T + 6); ctx.lineTo(o.x * T + T - 7, cx(o.y)); ctx.lineTo(cx(o.x), o.y * T + T - 6); ctx.lineTo(o.x * T + 7, cx(o.y)); ctx.closePath(); ctx.fill();
     });
-    // what the selected model can do
+    // what the selected brother can do
     if(sel && sel.w > 0 && !sel.done && b.turn === "p" && !busy){
       if(!sel.moved){
-        var r = reach(b, sel, engaged(b, sel) ? KINDS[sel.kind].M : KINDS[sel.kind].M);
+        var r = reach(b, sel, KINDS[sel.kind].M);
         Object.keys(r).forEach(function(k){
           if(!r[k].d) return;
           k = +k;
@@ -567,36 +803,52 @@
         ctx.setLineDash([]);
       });
     }
-    b.units.forEach(function(u){ if(u.w > 0) drawUnit(u); });
+    // a move being considered: the path, and a ghost where it ends
+    if(aim && aim.kind === "move"){
+      ctx.strokeStyle = "rgba(79,168,139,.9)"; ctx.lineWidth = 2; ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      aim.path.forEach(function(p, i){ if(i) ctx.lineTo(cx(p.x), cx(p.y)); else ctx.moveTo(cx(p.x), cx(p.y)); });
+      ctx.stroke(); ctx.setLineDash([]);
+      ctx.globalAlpha = 0.45; helmet(ctx, cx(aim.x), cx(aim.y), T * 0.36, sel.kind, sel.look); ctx.globalAlpha = 1;
+    }
+    if(aim && aim.kind === "target"){
+      ctx.strokeStyle = "#FFFFFF"; ctx.lineWidth = 2.5;
+      ctx.strokeRect(aim.t.x * T + 1, aim.t.y * T + 1, T - 2, T - 2);
+      ctx.strokeStyle = "rgba(255,227,160,.5)"; ctx.lineWidth = 1.5; ctx.setLineDash([3, 4]);
+      ctx.beginPath(); ctx.moveTo(cx(sel.x), cx(sel.y)); ctx.lineTo(cx(aim.t.x), cx(aim.t.y)); ctx.stroke(); ctx.setLineDash([]);
+    }
+    b.units.forEach(function(u){ if(shownW(u) > 0) drawUnit(u); });
+    if(acting){
+      ctx.strokeStyle = "#E0A458"; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(cx(acting.x), cx(acting.y), T * 0.5, 0, Math.PI * 2); ctx.stroke();
+    }
     if(flash){
       ctx.strokeStyle = flash.melee ? "#E0574A" : "#FFE3A0"; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.moveTo(cx(flash.a.x), cx(flash.a.y)); ctx.lineTo(cx(flash.d.x), cx(flash.d.y)); ctx.stroke();
       if(flash.text){
-        ctx.fillStyle = "#E0574A"; ctx.font = "700 14px -apple-system,system-ui,sans-serif"; ctx.textAlign = "center";
+        ctx.fillStyle = "#E0574A"; ctx.font = "700 15px -apple-system,system-ui,sans-serif"; ctx.textAlign = "center";
+        ctx.strokeStyle = "#10161C"; ctx.lineWidth = 3; ctx.strokeText(flash.text, cx(flash.d.x), flash.d.y * T - 2);
         ctx.fillText(flash.text, cx(flash.d.x), flash.d.y * T - 2);
       }
     }
   }
   function drawUnit(u){
-    var x = cx(u.x), y = cx(u.y), R = T * (u.kind === "boss" ? 0.44 : u.kind === "nob" ? 0.4 : 0.36);
-    var p = u.side === "p";
+    var x = cx(u.x), y = cx(u.y), p = u.side === "p", w = shownW(u);
     ctx.globalAlpha = u.done ? 0.55 : 1;
-    ctx.fillStyle = p ? "#2E4A73" : "#4E7A2A";
-    ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI * 2); ctx.fill();
-    ctx.lineWidth = 2; ctx.strokeStyle = p ? "#C9B26B" : "#2C3A16";
-    if(sel === u) ctx.strokeStyle = "#FFFFFF";
+    ctx.fillStyle = p ? "#1C2A3D" : "#26331A";
+    ctx.beginPath(); ctx.arc(x, y, T * 0.45, 0, Math.PI * 2); ctx.fill();
+    ctx.lineWidth = sel === u ? 2.5 : 1.5;
+    ctx.strokeStyle = sel === u ? "#FFFFFF" : p ? "#C9B26B" : "#3E5A22";
     ctx.stroke();
-    ctx.fillStyle = "#E6EBEF"; ctx.font = "600 " + Math.round(T * 0.34) + "px -apple-system,system-ui,sans-serif";
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText(KINDS[u.kind].tag, x, y + 1);
-    ctx.textBaseline = "alphabetic";
+    if(p) helmet(ctx, x, y + T * 0.04, T * 0.3, u.kind, u.look);
+    else grukk(ctx, x, y + T * 0.04, T * (u.kind === "boss" ? 0.36 : u.kind === "nob" ? 0.33 : 0.29), u.kind);
     if(u.maxW > 1){
       for(var i = 0; i < u.maxW; i++){
-        ctx.fillStyle = i < u.w ? (p ? "#4FA88B" : "#E0A458") : "#2C3945";
-        ctx.fillRect(x - u.maxW * 2.5 + i * 5, y + R + 1, 4, 3);
+        ctx.fillStyle = i < w ? (p ? "#4FA88B" : "#E0A458") : "#2C3945";
+        ctx.fillRect(x - u.maxW * 2.5 + i * 5, y + T * 0.45 - 2, 4, 3);
       }
     }
-    if(b.ow[u.id]){ ctx.strokeStyle = "#E0A458"; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x, y, R + 3, -2.4, -0.7); ctx.stroke(); }
+    if(b.ow[u.id]){ ctx.strokeStyle = "#E0A458"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x, y, T * 0.45 + 2, -2.4, -0.7); ctx.stroke(); }
     ctx.globalAlpha = 1;
   }
 
@@ -612,95 +864,175 @@
     return best;
   }
 
-  /* ---------------- dice on screen ---------------- */
-  function diceHtml(rolls, need){
+  /* ---------------------------------------------------------------------
+     DICE, ONE STAGE AT A TIME
+
+     Each attack is revealed in steps - who and with what, then the hit
+     dice tumble and settle, then the wound dice, then the saves, then
+     what it cost. The result is already decided; the reveal is so you
+     can follow it, and feel it.
+     --------------------------------------------------------------------- */
+  function stagesOf(a){
+    var st = ["head", "hit"];
+    if(a.wounds.length) st.push("wound");
+    if(a.saves.length && a.sv) st.push("save");
+    st.push("dmg");
+    return st;
+  }
+  function diceHtml(rolls, need, rolling){
     return '<span class="dice">' + rolls.map(function(r){
-      return '<span class="die" data-ok="' + (need !== null && (need === "fail" ? false : r >= need)) + '">' + r + "</span>";
+      if(rolling) return '<span class="die" data-roll="true">' + (1 + Math.floor(Math.random() * 6)) + "</span>";
+      return '<span class="die" data-ok="' + (r >= need) + '">' + r + "</span>";
     }).join("") + "</span>";
   }
   function attackHtml(a){
-    var s = '<div class="line"><b>' + shortName(a.att) + "</b> → " + shortName(a.def) + " · " + a.w.name + (a.cover ? " · target in cover" : "") + "</div>";
-    s += '<div class="step"><b>Hit ' + a.hitNeed + "+</b>" + diceHtml(a.hits, a.hitNeed) + "</div>";
-    if(a.wounds.length) s += '<div class="step"><b>Wound ' + a.woundNeed + "+</b>" + diceHtml(a.wounds, a.woundNeed) + "</div>";
-    if(a.saves.length && a.sv) s += '<div class="step"><b>Save ' + a.sv + "+</b>" + diceHtml(a.saves, a.sv) + "</div>";
-    else if(a.wounds.some(function(r){ return r >= a.woundNeed; })) s += '<div class="step"><b>No save</b></div>';
-    s += '<div class="step"><b>' + (a.slain ? "Slain" : a.dmg ? a.dmg + " damage" : "No damage") + "</b></div>";
+    var stages = stagesOf(a), shown = a.stage === undefined ? stages.length : a.stage;
+    var s = '<div class="line"><b>' + shortName(a.att) + "</b> → " + shortName(a.def) + " · " + a.w.name + (a.cover ? " · in cover" : "") + "</div>";
+    for(var i = 1; i < stages.length && i <= shown; i++){
+      var stg = stages[i], rolling = a.rolling === stg;
+      if(stg === "hit") s += '<div class="step"><b>Hit ' + a.hitNeed + "+</b>" + diceHtml(a.hits, a.hitNeed, rolling) + count(a.hits, a.hitNeed, rolling, "hit") + "</div>";
+      if(stg === "wound") s += '<div class="step"><b>Wound ' + a.woundNeed + "+</b>" + diceHtml(a.wounds, a.woundNeed, rolling) + count(a.wounds, a.woundNeed, rolling, "wound") + "</div>";
+      if(stg === "save") s += '<div class="step"><b>Save ' + a.sv + "+</b>" + diceHtml(a.saves, a.sv, rolling) + count(a.saves, a.sv, rolling, "saved") + "</div>";
+      if(stg === "dmg"){
+        var noSave = a.wounds.some(function(r){ return r >= a.woundNeed; }) && !a.sv;
+        s += '<div class="step"><b class="out" data-bad="' + (a.dmg > 0) + '">' + (noSave ? "No save. " : "") + (a.slain ? "Slain" : a.dmg ? a.dmg + " damage" : "No damage") + "</b></div>";
+      }
+    }
     return s;
+  }
+  function count(rolls, need, rolling, word){
+    if(rolling) return "";
+    var n = rolls.filter(function(r){ return r >= need; }).length;
+    return '<span class="cnt">' + n + " " + word + (word === "hit" || word === "wound" ? (n === 1 ? "" : "s") : "") + "</span>";
   }
   function shortName(u){ return u.side === "p" ? u.name.replace(/^(Sergeant|Brother) /, "") : KINDS[u.kind].name; }
 
-  /* ---------------- animation ---------------- */
   function walk(u, path, done){
     var i = 1;
     (function step(){
       if(i >= path.length){ done(); return; }
       u.x = path[i].x; u.y = path[i].y; i++;
       draw();
-      setTimeout(step, 70);
+      wait(170, step);
     })();
   }
   function showAttacks(list, done){
     if(!list.length){ done(); return; }
-    lastAtk = lastAtk.concat(list);
+    // the board shows wounds as they are revealed, not as they were rolled
+    list.forEach(function(a){ if(dispW[a.def.id] === undefined) dispW[a.def.id] = a.before; });
+    lastAtk = list;
+    list.forEach(function(a){ a.stage = -1; });
     var i = 0;
-    (function next(){
-      if(i >= list.length){ done(); return; }
-      var a = list[i++];
-      draw({ a:a.att, d:a.def, melee:a.w.melee, text:a.slain ? "✕" : a.dmg ? "-" + a.dmg : "" });
-      renderLog();
-      setTimeout(function(){ draw(); next(); }, 650);
+    (function nextAttack(){
+      if(i >= list.length){ dispW = {}; flash = null; draw(); done(); return; }
+      var a = list[i++], stages = stagesOf(a), k = 0;
+      a.stage = 0;
+      flash = { a:a.att, d:a.def, melee:a.w.melee };
+      renderLog(); draw();
+      wait(650, function nextStage(){
+        k++;
+        if(k >= stages.length){ nextAttack(); return; }
+        var stg = stages[k];
+        a.stage = k;
+        if(stg === "dmg"){
+          dispW[a.def.id] = a.before - a.dmg;
+          flash = { a:a.att, d:a.def, melee:a.w.melee, text:a.slain ? "✕" : a.dmg ? "-" + a.dmg : "" };
+          renderLog(); draw();
+          wait(a.dmg ? 1000 : 700, nextStage);
+          return;
+        }
+        // the dice tumble, then settle
+        a.rolling = stg;
+        var t0 = Date.now();
+        (function tumble(){
+          renderLog();
+          if(Date.now() - t0 < P(480)){ setTimeout(tumble, 70); return; }
+          a.rolling = null;
+          renderLog();
+          wait(650, nextStage);
+        })();
+      });
     })();
   }
 
-  /* ---------------- the player's go ---------------- */
+  /* What an attack is likely to do, for the button that commits to it:
+     the real rules run a few hundred times on copies. */
+  function odds(att, def, w, opts){
+    var n = 300, kills = 0, dmg = 0, last = null;
+    var keep = rng;
+    for(var i = 0; i < n; i++){
+      var a2 = Object.assign({}, att), d2 = Object.assign({}, def);
+      last = attack(b, a2, d2, w, Object.assign({ sim:true }, opts));
+      dmg += last.dmg;
+      if(last.slain) kills++;
+    }
+    rng = keep;
+    return { kill:Math.round(kills / n * 100), dmg:dmg / n, hitNeed:last.hitNeed, woundNeed:last.woundNeed, sv:last.sv, cover:last.cover,
+             A:w.A + (opts.charge ? 1 : 0) + (w.rapid && dist(att, def) <= w.range / 2 ? 1 : 0) + (w.melee ? (att.bonusA || 0) : 0) };
+  }
+
+  /* ---------------------------------------------------------------------
+     YOUR GO
+
+     Pick a brother, then a place or a foe. Nothing happens until you
+     press the button that says what will happen.
+     --------------------------------------------------------------------- */
   function tap(x, y){
     if(busy || !b || b.over || b.turn !== "p") return;
     var u = unitAt(b, x, y);
     if(u && u.side === "p"){
-      if(sel && sel !== u && (sel.moved) && !sel.done){ note = "Finish " + shortName(sel) + "'s activation first."; renderBattle(); return; }
+      if(sel && sel !== u && sel.moved && !sel.done){ note = "Finish " + shortName(sel) + "'s activation first."; renderBattle(); return; }
+      aim = null;
       if(u.done){ note = shortName(u) + " has already gone this round."; sel = u; renderBattle(); return; }
       sel = u; note = ""; renderBattle(); return;
     }
     if(!sel || sel.done) return;
     if(u && u.side === "e"){
-      if(adjacent(sel, u)){ doFight(u, false); return; }
-      if(canShoot(b, sel, u)){ doShoot(u); return; }
-      var c = !sel.moved && chargeSpot(sel, u);
-      if(c){ doCharge(u, c); return; }
-      note = "Out of reach."; renderBattle(); return;
+      var opts = [];
+      if(adjacent(sel, u)) opts.push({ act:"fight" });
+      else {
+        if(canShoot(b, sel, u)) opts.push({ act:"shoot" });
+        var c = !sel.moved && chargeSpot(sel, u);
+        if(c) opts.push({ act:"charge", spot:c });
+      }
+      if(!opts.length){ aim = null; note = "Out of reach."; renderBattle(); return; }
+      opts.forEach(function(o){
+        var w = weapon(sel, o.act === "shoot" ? "ranged" : "melee");
+        var ghost = o.spot ? Object.assign({}, sel, { x:o.spot.x, y:o.spot.y }) : sel;
+        o.odds = odds(ghost, u, w, { moved:sel.moved, charge:o.act === "charge" });
+        o.w = w;
+      });
+      aim = { kind:"target", t:u, opts:opts };
+      renderBattle(); return;
     }
     if(!sel.moved){
-      var r = reach(b, sel, KINDS[sel.kind].M);
-      var k = idx(x, y);
-      if(r[k] && r[k].d > 0){
-        var wasEngaged = engaged(b, sel);
-        busy = true; lastAtk = [];
-        walk(sel, pathTo(r, x, y), function(){
-          sel.moved = true;
-          var ow = overwatch(b, sel, function(){});
-          showAttacks(ow, function(){
-            busy = false;
-            if(sel.w <= 0 || wasEngaged){ finishActivation(); return; }
-            if(checkEnd(b)){ renderBattle(); return; }
-            renderBattle();
-          });
-        });
-      }
+      var r = reach(b, sel, KINDS[sel.kind].M), k = idx(x, y);
+      if(r[k] && r[k].d > 0){ aim = { kind:"move", x:x, y:y, path:pathTo(r, x, y) }; note = ""; renderBattle(); }
     }
   }
-  function doShoot(t){
-    busy = true; lastAtk = [];
-    var a = attack(b, sel, t, weapon(sel, "ranged"), { moved:sel.moved });
-    showAttacks([a], finishActivation);
+  function doMove(){
+    var path = aim.path, wasEngaged = engaged(b, sel);
+    aim = null; busy = true; lastAtk = [];
+    renderBattle();
+    walk(sel, path, function(){
+      sel.moved = true;
+      var ow = overwatch(b, sel, function(){});
+      showAttacks(ow, function(){
+        busy = false;
+        if(sel.w <= 0 || wasEngaged){ finishActivation(); return; }
+        if(checkEnd(b)){ renderBattle(); return; }
+        renderBattle();
+      });
+    });
   }
-  function doFight(t, charge){
-    busy = true; lastAtk = [];
-    showAttacks(fight(b, sel, t, charge), finishActivation);
-  }
-  function doCharge(t, spot){
-    busy = true; lastAtk = [];
+  function doAct(o){
+    var t = aim.t;
+    aim = null; busy = true; lastAtk = [];
+    renderBattle();
+    if(o.act === "shoot"){ showAttacks([attack(b, sel, t, o.w, { moved:sel.moved })], finishActivation); return; }
+    if(o.act === "fight"){ showAttacks(fight(b, sel, t, false), finishActivation); return; }
     var r = reach(b, sel, KINDS[sel.kind].M + 2);
-    walk(sel, pathTo(r, spot.x, spot.y), function(){
+    walk(sel, pathTo(r, o.spot.x, o.spot.y), function(){
       var ow = overwatch(b, sel, function(){});
       showAttacks(ow, function(){
         if(sel.w <= 0){ finishActivation(); return; }
@@ -716,56 +1048,101 @@
     finishActivation();
   }
   function finishActivation(){
-    busy = false;
-    if(sel){ sel.done = true; }
+    busy = false; aim = null;
+    if(sel) sel.done = true;
     sel = null;
     advance();
   }
 
-  /* ---------------- whose go next ---------------- */
+  /* ---------------------------------------------------------------------
+     THEIR GO
+
+     Each Grukk is picked out and what it means to do is said before it
+     does it - then it moves at a walk and its dice roll like yours. In
+     Step mode it waits for you to say go.
+     --------------------------------------------------------------------- */
   function advance(){
     if(checkEnd(b)){ save(); renderBattle(); return; }
+    var before = b.round;
     var next = passTurn(b);
     if(next === "round"){
-      endRound(b, function(t){ note = t; });
+      var scored = "";
+      endRound(b, function(t){ scored = t; });
       save();
       if(b.over){ renderBattle(); return; }
+      note = (scored ? scored + " " : "") + "Round " + b.round + " begins.";
+      lastAtk = [];
       renderBattle();
       return;
     }
     save();
     renderBattle();
-    if(next === "e") setTimeout(enemyGo, 350);
+    if(next === "e"){
+      if(camp.step){ waitingStep = true; renderBattle(); }
+      else wait(500, enemyGo);
+    }
+  }
+  function describe(u, plan){
+    var who = KINDS[u.kind].name;
+    if(plan.act === "fight") return who + " lays into " + shortName(plan.target) + ".";
+    if(plan.act === "charge") return who + " charges " + shortName(plan.target) + "!";
+    var shots = alive(b, "p").some(function(p){ return dist(p, plan) <= weapon(u, "ranged").range && canSee(b, plan, p); });
+    return who + (plan.x === u.x && plan.y === u.y ? " stands and " : " advances" + (shots ? " and " : ".")) + (shots ? "opens fire." : plan.x === u.x && plan.y === u.y ? "waits." : "");
   }
   function enemyGo(){
+    waitingStep = false;
     var u = foeOrder(b)[0];
     if(!u){ advance(); return; }
     busy = true; lastAtk = [];
     var plan = enemyPlan(b, u);
-    function done(){ u.done = true; busy = false; advance(); }
-    if(plan.act === "fight"){ showAttacks(fight(b, u, plan.target, false), done); return; }
-    var r = reach(b, u, KINDS[u.kind].M + (plan.act === "charge" ? 2 : 0));
-    var path = pathTo(r, plan.x, plan.y);
-    walk(u, path, function(){
-      var ow = path.length > 1 ? overwatch(b, u, function(){}) : [];
-      showAttacks(ow, function(){
-        if(u.w <= 0){ done(); return; }
-        if(plan.act === "charge"){ showAttacks(fight(b, u, plan.target, true), done); return; }
-        // shoot whatever is in its sights, weakest first
-        var targets = alive(b, "p").filter(function(p){ return canShoot(b, u, p); }).sort(function(a, c){ return a.w - c.w; });
-        if(targets.length) showAttacks([attack(b, u, targets[0], weapon(u, "ranged"), { moved:path.length > 1 })], done);
-        else done();
+    acting = u;
+    note = describe(u, plan);
+    renderBattle();
+    function done(){ u.done = true; busy = false; acting = null; advance(); }
+    wait(900, function(){
+      if(plan.act === "fight"){ showAttacks(fight(b, u, plan.target, false), done); return; }
+      var r = reach(b, u, KINDS[u.kind].M + (plan.act === "charge" ? 2 : 0));
+      var path = pathTo(r, plan.x, plan.y);
+      walk(u, path, function(){
+        var ow = path.length > 1 ? overwatch(b, u, function(){}) : [];
+        showAttacks(ow, function(){
+          if(u.w <= 0){ done(); return; }
+          if(plan.act === "charge"){ showAttacks(fight(b, u, plan.target, true), done); return; }
+          var targets = alive(b, "p").filter(function(p){ return canShoot(b, u, p); }).sort(function(a, c){ return a.w - c.w; });
+          if(targets.length) showAttacks([attack(b, u, targets[0], weapon(u, "ranged"), { moved:path.length > 1 })], done);
+          else wait(400, done);
+        });
       });
     });
   }
 
-  /* ---------------- screens ---------------- */
+  /* ---------------------------------------------------------------------
+     SCREENS
+     --------------------------------------------------------------------- */
   function render(){
     var app = el("app"); app.innerHTML = ""; canvas = null; ctx = null;
     if(!camp){ camp = newCampaign(); save(); }
+    camp.roster.forEach(persona);
+    (camp.fallen || []).forEach(persona);
+    if(view && view.kind === "card"){ renderCard(app, view.id); return; }
+    if(camp.report){ renderDebrief(app); return; }
     if(camp.done){ renderVictory(app); return; }
     if(b){ renderBattleShell(app); return; }
     renderBriefing(app);
+  }
+  function findSoldier(id){
+    return camp.roster.concat(camp.fallen || []).filter(function(s){ return s.id === id; })[0];
+  }
+  function soldierRow(s, extra, onTap){
+    var row = h("button", { "class":"srow" });
+    var cv = document.createElement("canvas");
+    portrait(cv, 52, s, s.dead);
+    row.appendChild(cv);
+    var k = KINDS[s.kind];
+    row.appendChild(h("span", { "class":"sbody" }, '<span class="nm">' + s.name + (s.rank ? ' <span class="tag" data-k="rank">' + RANK_NAMES[s.rank] + "</span>" : "") + "</span>" +
+      "<small>" + k.name + " · " + TRAITS[s.trait].n + " · " + s.kills + (s.kills === 1 ? " kill" : " kills") + "</small>" + (extra || "")));
+    row.onclick = onTap || function(){ view = { kind:"card", id:s.id, back:null }; render(); };
+    return row;
   }
 
   function renderBriefing(app){
@@ -773,36 +1150,102 @@
     app.appendChild(h("div", { "class":"statline" }, '<span class="big">' + (camp.mi + 1) + '<span class="lbl">of ' + MISSIONS.length + '</span></span><span class="mid">The Iron Oath</span><span class="big">' + camp.roster.length + '<span class="lbl">Squad</span></span>'));
     var s = h("div", { "class":"scroll" });
     app.appendChild(s);
-    var p = h("div", { "class":"panel" }, "<h3>Mission " + (camp.mi + 1) + " · " + (m.type === "hold" ? "Hold the relays" : "Purge") + "</h3>" +
+    s.appendChild(h("div", { "class":"panel" }, "<h3>Mission " + (camp.mi + 1) + " · " + (m.type === "hold" ? "Hold the relays" : "Purge") + "</h3>" +
       "<p style=\"font-size:18px;font-weight:300\">" + m.name + "</p><p>" + m.brief + "</p>" +
-      "<p style=\"color:var(--muted);font-size:12.5px\">" + (m.type === "hold" ? "Score a VP for each relay you control at the end of rounds 2 to 5. Four VP wins." : "Kill three-quarters of them in five rounds" + (m.foes.boss ? " - and the Big Boss must die." : ".")) + "</p>");
-    s.appendChild(p);
-    var r = h("div", { "class":"panel" }, "<h3>The squad</h3>");
-    camp.roster.forEach(function(sq){
-      var k = KINDS[sq.kind], w = WEAPONS[k.ranged];
-      r.appendChild(h("div", { "class":"row" }, "<span>" + sq.name + "<small>" + k.name + " · " + w.name + " · W" + (k.W + (sq.bonusW || 0)) + " BS" + (k.BS - (sq.bonusBS || 0)) + "+ · " + sq.xp + " xp</small></span>" +
-        (sq.rank ? '<span class="tag" data-k="rank">Rank ' + sq.rank + "</span>" : "")));
-    });
+      "<p style=\"color:var(--muted);font-size:12.5px\">" + (m.type === "hold" ? "Score a VP for each relay you control at the end of rounds 2 to 5. Four VP wins." : "Kill three-quarters of them in five rounds" + (m.foes.boss ? " - and the Big Boss must die." : ".")) + "</p>"));
+    var r = h("div", { "class":"panel" }, "<h3>The squad · tap a brother for his record</h3>");
+    camp.roster.forEach(function(sq){ r.appendChild(soldierRow(sq)); });
     s.appendChild(r);
-    if(camp.debrief && camp.debrief.length){
-      s.appendChild(h("div", { "class":"panel" }, "<h3>After the last mission</h3>" + camp.debrief.map(function(l){ return "<p>" + l + "</p>"; }).join("")));
+    if(camp.fallen && camp.fallen.length){
+      var f = h("div", { "class":"panel" }, "<h3>Remembered</h3>");
+      camp.fallen.forEach(function(sq){ f.appendChild(soldierRow(sq, "<small>Fell at " + sq.diedAt + "</small>")); });
+      s.appendChild(f);
     }
+    var set = h("div", { "class":"panel" }, "<h3>Pace</h3>");
+    var row1 = h("div", { "class":"seg" });
+    [["normal","Normal"],["slow","Slow"]].forEach(function(o){
+      var bt = h("button", { "aria-pressed":String(camp.pace === o[0]) }, o[1]);
+      bt.onclick = function(){ camp.pace = o[0]; save(); render(); };
+      row1.appendChild(bt);
+    });
+    var stepB = h("button", { "aria-pressed":String(!!camp.step) }, "Step through their turns");
+    stepB.onclick = function(){ camp.step = !camp.step; save(); render(); };
+    row1.appendChild(stepB);
+    set.appendChild(row1);
+    s.appendChild(set);
     var go = h("button", { "class":"btn" }, "Deploy");
-    go.onclick = function(){ b = newBattle(camp.roster, camp.mi, Math.floor(Math.random() * 1e9)); sel = null; note = "Your go. Tap a brother to pick him."; lastAtk = []; save(); render(); };
+    go.onclick = function(){ b = newBattle(camp.roster, camp.mi, Math.floor(Math.random() * 1e9)); sel = null; aim = null; note = "Your go. Tap a brother to pick him."; lastAtk = []; save(); render(); };
     s.appendChild(go);
-    s.appendChild(h("p", { "class":"howto" }, "Tap a brother, then a green tile to move, an amber-ringed foe to shoot, a red one to fight or a dashed one to charge. Then the Grukk take a go. Turns alternate one model at a time."));
+    s.appendChild(h("p", { "class":"howto" }, "Tap a brother, then a green tile to move or a ringed foe to shoot, charge or fight. Each choice shows its odds before you commit."));
+  }
+
+  function renderCard(app, id){
+    var s = findSoldier(id);
+    if(!s){ view = null; render(); return; }
+    var k = KINDS[s.kind], tr = TRAITS[s.trait];
+    var rw = WEAPONS[k.ranged], mw = WEAPONS[k.melee];
+    var sc = h("div", { "class":"scroll" });
+    app.appendChild(sc);
+    var top = h("div", { "class":"card" });
+    var cv = document.createElement("canvas");
+    portrait(cv, 116, s, s.dead);
+    top.appendChild(cv);
+    top.appendChild(h("div", { "class":"cbody" }, '<div class="cname">' + s.name + "</div>" +
+      "<small>" + k.name + (s.rank ? " · " + RANK_NAMES[s.rank] : "") + "</small>" +
+      "<small>From " + s.home + " · " + s.look.age + " years in service</small>" +
+      '<div class="trait"><b>' + tr.n + "</b> — " + tr.d + "</div>" +
+      '<div class="quote">“' + tr.q + "”</div>" + (s.dead ? '<div class="tag" data-k="dead" style="display:inline-block;margin-top:6px">Fell at ' + s.diedAt + "</div>" : "")));
+    sc.appendChild(top);
+    var W = k.W + (s.bonusW || 0), BS = k.BS - (s.bonusBS || 0), A = mw.A + (s.bonusA || 0);
+    sc.appendChild(h("div", { "class":"panel" }, "<h3>Profile</h3>" +
+      '<div class="stats">' + [["M", k.M], ["WS", k.WS + "+"], ["BS", BS + "+"], ["T", k.T], ["W", W], ["Sv", k.Sv + "+"], ["A", A]].map(function(p){
+        return "<div><b>" + p[1] + "</b><small>" + p[0] + "</small></div>"; }).join("") + "</div>" +
+      '<div class="row"><span>' + rw.name + "<small>Range " + rw.range + " · A" + rw.A + " · S" + rw.S + " · AP" + rw.AP + " · D" + rw.D + (rw.rapid ? " · rapid fire" : "") + (rw.heavy ? " · heavy" : "") + "</small></span></div>" +
+      '<div class="row"><span>' + mw.name + "<small>Melee · A" + A + " · S" + mw.S + " · AP" + mw.AP + " · D" + mw.D + "</small></span></div>"));
+    var slew = Object.keys(s.slew).map(function(kk){ return s.slew[kk] + " " + KINDS[kk].name.toLowerCase() + (s.slew[kk] > 1 ? "s" : ""); }).join(", ");
+    var next = RANKS[s.rank + 1];
+    sc.appendChild(h("div", { "class":"panel" }, "<h3>Service record</h3>" +
+      row("Missions", s.missions) + row("Kills", s.kills + (slew ? "<small>" + slew + "</small>" : "")) +
+      row("Squad's best", (s.mvp || 0) + (s.mvp === 1 ? " time" : " times")) + row("Fallen and saved", s.falls - (s.dead ? 1 : 0)) +
+      row("Experience", s.xp + (next !== undefined && !s.dead ? "<small>" + (next - s.xp) + " to " + RANK_NAMES[s.rank + 1] + "</small>" : ""))));
+    var d = h("div", { "class":"panel" }, "<h3>Deeds</h3>");
+    if(!s.deeds.length) d.appendChild(h("p", { style:"color:var(--muted)" }, "Nothing yet. Give him time."));
+    s.deeds.forEach(function(t){ d.appendChild(h("p", {}, t)); });
+    sc.appendChild(d);
+    var back = h("button", { "class":"btn" }, "Back");
+    back.onclick = function(){ view = null; render(); };
+    sc.appendChild(back);
+  }
+  function row(a, v){ return '<div class="row"><span>' + a + "</span><span style=\"text-align:right\">" + v + "</span></div>"; }
+
+  function renderDebrief(app){
+    var rep = camp.report, won = rep.result === "won";
+    var sc = h("div", { "class":"scroll" });
+    app.appendChild(sc);
+    sc.appendChild(h("div", { "class":"banner" }, "<h2>" + (won ? "Victory" : "Defeat") + "</h2><p>" + rep.mission + "</p>"));
+    var p = h("div", { "class":"panel" }, "<h3>Debrief · tap a brother for his card</h3>");
+    rep.rows.forEach(function(r){
+      var s = findSoldier(r.id); if(!s) return;
+      var extra = "<small>This mission: " + r.kills + (r.kills === 1 ? " kill" : " kills") + " · +" + r.xp + " xp" + (r.best ? " · squad's best" : "") + "</small>" +
+        '<small class="st" data-bad="' + /Killed/.test(r.status) + '">' + r.status + "</small>" + (r.promo ? '<small style="color:var(--sel)">Promoted — ' + r.promo + "</small>" : "");
+      p.appendChild(soldierRow(s, extra));
+    });
+    sc.appendChild(p);
+    if(rep.lines.length) sc.appendChild(h("div", { "class":"panel" }, "<h3>The squad</h3>" + rep.lines.map(function(l){ return "<p>" + l + "</p>"; }).join("")));
+    var go = h("button", { "class":"btn" }, won ? (camp.done ? "The end of the oath" : "Next mission") : "Try again");
+    go.onclick = function(){ camp.report = null; save(); render(); };
+    sc.appendChild(go);
   }
 
   function renderBattleShell(app){
     app.appendChild(h("div", { "class":"statline", id:"stats" }));
-    var row = h("div", { "class":"boardrow" });
+    var rowEl = h("div", { "class":"boardrow" });
     canvas = h("canvas", { id:"board" });
-    row.appendChild(canvas);
-    app.appendChild(row);
+    rowEl.appendChild(canvas);
+    app.appendChild(rowEl);
     ctx = canvas.getContext("2d");
     app.appendChild(h("div", { "class":"unitbar", id:"unitbar" }));
-    var acts = h("div", { "class":"acts", id:"acts" });
-    app.appendChild(acts);
+    app.appendChild(h("div", { "class":"acts", id:"acts" }));
     app.appendChild(h("div", { "class":"log", id:"log" }));
     canvas.addEventListener("click", function(e){
       var r = canvas.getBoundingClientRect();
@@ -810,7 +1253,9 @@
     });
     size();
     renderBattle();
-    if(b.turn === "e" && !b.over) setTimeout(enemyGo, 400);
+    if(b.turn === "e" && !b.over && !busy){
+      if(camp.step){ waitingStep = true; renderBattle(); } else wait(500, enemyGo);
+    }
   }
 
   function renderBattle(){
@@ -819,24 +1264,45 @@
     var score = b.type === "hold" ? b.vp + '<span class="lbl">VP</span>' : kills(b) + "/" + purgeTarget(b) + '<span class="lbl">Kills</span>';
     el("stats").innerHTML = '<span class="big">' + b.round + '<span class="lbl">of ' + ROUNDS + '</span></span><span class="mid">' + m.name + " · " + (b.turn === "p" ? "your go" : "the Grukk") + '</span><span class="big">' + score + "</span>";
     var bar = el("unitbar");
-    if(sel){
-      var k = KINDS[sel.kind], w = weapon(sel, "ranged"), mw = weapon(sel, "melee");
-      bar.innerHTML = "<div><div class=\"nm\">" + sel.name + "</div><small>W " + sel.w + "/" + sel.maxW + " · M" + k.M + " · BS" + stat(sel, "BS") + "+ · WS" + k.WS + "+ · T" + k.T + " · Sv" + k.Sv + "+</small>" +
-        "<small>" + w.name + ": range " + w.range + ", A" + w.A + ", S" + w.S + ", AP" + w.AP + ", D" + w.D + (w.rapid ? ", rapid fire" : "") + (w.heavy ? ", heavy" : "") + " · " + mw.name + ": A" + mw.A + ", S" + mw.S + ", AP" + mw.AP + "</small></div>";
-    } else bar.innerHTML = "<div><small>" + (note || (b.turn === "p" ? "Tap a brother who has not gone yet." : "The Grukk are moving…")) + "</small></div>";
-    if(sel && note) bar.innerHTML += "";
+    var who = sel || (acting && acting.side === "p" ? acting : null);
+    if(sel && !acting){
+      var k = KINDS[sel.kind], w = weapon(sel, "ranged");
+      bar.innerHTML = '<canvas id="mini"></canvas><div><div class="nm">' + sel.name + "</div><small>W " + sel.w + "/" + sel.maxW + " · M" + k.M + " · BS" + stat(sel, "BS") + "+ · T" + k.T + " · Sv" + k.Sv + "+ · " + w.name + "</small>" +
+        (note ? "<small>" + note + "</small>" : "") + "</div>";
+      var s = findSoldier(sel.sid);
+      if(s) portrait(el("mini"), 40, s, false);
+    } else bar.innerHTML = "<div><small" + (acting ? ' style="color:var(--sel);font-size:13px"' : "") + ">" + (note || (b.turn === "p" ? "Tap a brother who has not gone yet." : "The Grukk are moving…")) + "</small></div>";
     var acts = el("acts"); acts.innerHTML = "";
     if(b.over){
       var won = b.over === "won";
-      acts.appendChild(h("div", { "class":"banner", style:"flex:1" }, "<h2>" + (won ? "Victory" : "Defeat") + "</h2><p>" + (won ? "The Grukk are broken here." : "The squad falls back to fight again.") + "</p>"));
-      var nb = h("button", {}, "Debrief");
+      var nb = h("button", { "data-on":"true" }, (won ? "Victory" : "Defeat") + " — debrief");
       nb.onclick = function(){
-        camp.debrief = debrief(camp, b);
+        camp.report = debrief(camp, b);
         if(won) camp.mi++;
         if(camp.mi >= MISSIONS.length) camp.done = true;
         b = null; save(); render();
       };
       acts.appendChild(nb);
+    } else if(waitingStep){
+      var nx = h("button", { "data-on":"true" }, "Next: the Grukk act");
+      nx.onclick = function(){ if(!busy) enemyGo(); };
+      acts.appendChild(nx);
+    } else if(b.turn === "p" && aim && aim.kind === "move"){
+      var mv = h("button", { "data-on":"true" }, "Move here");
+      mv.onclick = doMove;
+      var cn = h("button", {}, "Cancel");
+      cn.onclick = function(){ aim = null; renderBattle(); };
+      acts.appendChild(mv); acts.appendChild(cn);
+    } else if(b.turn === "p" && aim && aim.kind === "target"){
+      aim.opts.forEach(function(o){
+        var label = { shoot:"Shoot", charge:"Charge", fight:"Fight" }[o.act] + " · " + o.odds.kill + "% kill";
+        var bt = h("button", { "data-on":"true" }, label);
+        bt.onclick = function(){ doAct(o); };
+        acts.appendChild(bt);
+      });
+      var cn2 = h("button", {}, "Cancel");
+      cn2.onclick = function(){ aim = null; renderBattle(); };
+      acts.appendChild(cn2);
     } else if(b.turn === "p"){
       var ow = h("button", {}, "Overwatch");
       ow.disabled = !sel || sel.done || busy;
@@ -851,28 +1317,49 @@
   }
   function renderLog(){
     var l = el("log"); if(!l) return;
-    if(lastAtk.length) l.innerHTML = lastAtk.slice(-2).map(attackHtml).join("");
-    else l.innerHTML = '<div class="line" style="color:var(--muted)">' + (sel && note ? note : "Dice appear here.") + "</div>";
+    if(aim && aim.kind === "target"){
+      l.innerHTML = aim.opts.map(function(o){
+        var d = o.odds;
+        return '<div class="line"><b>' + { shoot:"Shoot", charge:"Charge", fight:"Fight" }[o.act] + "</b> " + KINDS[aim.t.kind].name + " with " + o.w.name + "</div>" +
+          '<div class="step">' + d.A + (d.A === 1 ? " attack" : " attacks") + " · hit " + d.hitNeed + "+ · wound " + d.woundNeed + "+ · " + (d.sv ? "they save on " + d.sv + "+" : "no save") + (d.cover ? " (cover)" : "") + "</div>" +
+          '<div class="step">About ' + d.dmg.toFixed(1) + " damage on average · <b style=\"min-width:0\">" + d.kill + "% to kill</b>" + (o.act !== "shoot" ? " · it strikes back if it lives" : "") + "</div>";
+      }).join("");
+      return;
+    }
+    if(lastAtk.length) l.innerHTML = lastAtk.filter(function(a){ return a.stage === undefined || a.stage >= 0; }).map(attackHtml).join("");
+    else l.innerHTML = '<div class="line" style="color:var(--muted)">' + (aim && aim.kind === "move" ? "Move " + shortName(sel) + " here? Press Move to commit." : "Dice appear here.") + "</div>";
+    l.scrollTop = l.scrollHeight;
   }
 
   function renderVictory(app){
-    app.appendChild(h("div", { "class":"banner" }, "<h2>Skarg is dead</h2><p>The warband is broken and the oath is kept. The squad's names go on the roll of honour.</p>"));
+    var sc = h("div", { "class":"scroll" });
+    app.appendChild(sc);
+    sc.appendChild(h("div", { "class":"banner" }, "<h2>Skarg is dead</h2><p>The warband is broken and the oath is kept. Their names go on the roll of honour.</p>"));
     var r = h("div", { "class":"panel" }, "<h3>Roll of honour</h3>");
-    camp.roster.forEach(function(s){ r.appendChild(h("div", { "class":"row" }, "<span>" + s.name + "<small>" + KINDS[s.kind].name + " · " + s.missions + " missions</small></span><span>" + s.xp + " xp</span>")); });
-    app.appendChild(r);
+    camp.roster.concat(camp.fallen || []).forEach(function(s){ r.appendChild(soldierRow(s, s.dead ? "<small>Fell at " + s.diedAt + "</small>" : "")); });
+    sc.appendChild(r);
     var b2 = h("button", { "class":"btn" }, "A new oath");
-    b2.onclick = function(){ camp = newCampaign(); b = null; save(); render(); };
-    app.appendChild(b2);
+    b2.onclick = function(){ var keep = { pace:camp.pace, step:camp.step }; camp = newCampaign(); camp.pace = keep.pace; camp.step = keep.step; b = null; save(); render(); };
+    sc.appendChild(b2);
   }
 
   el("restart").onclick = function(){
     if(!window.confirm("Abandon this campaign and start a new one?")) return;
-    camp = newCampaign(); b = null; sel = null; save(); render();
+    camp = newCampaign(); b = null; sel = null; aim = null; view = null; busy = false; save(); render();
   };
   window.addEventListener("resize", function(){ if(canvas){ size(); draw(); } });
 
   camp = load();
-  if(camp){ b = camp.battle || null; }
+  if(camp){
+    b = camp.battle || null;
+    camp.fallen = camp.fallen || [];
+    if(!camp.pace) camp.pace = "normal";
+    if(b) b.units.forEach(function(u){
+      if(u.side !== "p") return;
+      var s = camp.roster.filter(function(x){ return x.id === u.sid; })[0];
+      if(s){ persona(s); u.look = s.look; }
+    });
+  }
   render();
 
   window.__oath = { get camp(){ return camp; }, get b(){ return b; }, tap:tap, KINDS:KINDS };
